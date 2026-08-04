@@ -7,7 +7,16 @@ See docs/rfc-001-dsl.md for the full contract.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any, Callable
+
+from engine.core.graph import CyclicModelError, DependencyGraph
+
+#: Cache sentinel. `dict.get` with a default beats `try/except KeyError`
+#: here because a projection is dominated by *misses* — every (variable,
+#: t) is computed exactly once — and raising an exception per miss costs
+#: more than the lookup it saves on a hit.
+_MISS = object()
 
 
 class VarSpec:
@@ -92,7 +101,7 @@ class Model:
     couples_model_points = False
 
     def __init__(self, mp: Any, assumptions: Any, proj_len: int,
-                 scenarios: Any = None):
+                 scenarios: Any = None, *, record_graph: bool = False):
         if proj_len < 1:
             raise ValueError("proj_len must be >= 1")
         self.mp = mp
@@ -100,6 +109,19 @@ class Model:
         self.proj_len = proj_len
         self.scenarios = scenarios
         self._cache: dict[tuple[str, int], Any] = {}
+        #: Variables currently being evaluated, innermost last. Maintained
+        #: for two reasons: a same-period cycle is `key in self._active`,
+        #: caught at depth two instead of a thousand frames later, and the
+        #: top of the stack is who to attribute a dependency edge to.
+        self._stack: list[tuple[str, int]] = []
+        self._active: set[tuple[str, int]] = set()
+        #: Dependency edges, recorded only when asked for. Recording
+        #: costs a dict lookup, a tuple and a set insert on *every*
+        #: evaluation including cache hits, which is ~16% of the per-policy
+        #: interpreter — measurable, and pure waste on a production run that
+        #: will never look at the graph. `Model.trace` turns it on.
+        self.record_graph = record_graph
+        self._edges: dict[str, set[tuple[str, int]]] = defaultdict(set)
         for name in self.var_names():
             spec = getattr(type(self), name).__var_spec__
             setattr(self, name, self._bind(spec))
@@ -166,21 +188,90 @@ class Model:
         return sorted(names)
 
     def _bind(self, spec: VarSpec) -> Callable[[int], Any]:
+        name = spec.name
+        fn = spec.fn
+        cache = self._cache
+        stack = self._stack
+        active = self._active
+        record = self.record_graph
+        edges = self._edges
+
         def evaluate(t: int):
             if not isinstance(t, int) or isinstance(t, bool):
-                raise TypeError(f"{spec.name}(t): t must be an int, got {t!r}")
+                raise TypeError(f"{name}(t): t must be an int, got {t!r}")
             if t < 0 or t > self.proj_len:
                 raise IndexError(
-                    f"{spec.name}({t}) outside projection range [0, {self.proj_len}]"
+                    f"{name}({t}) outside projection range [0, {self.proj_len}]"
                 )
-            key = (spec.name, t)
-            if key not in self._cache:
-                self._cache[key] = spec.fn(self, t)
-            return self._cache[key]
+            key = (name, t)
+            if record:
+                # A node for this variable, so one that reads nothing still
+                # appears; and the edge from whoever asked, carrying the
+                # offset between their period and this one. Recorded on a
+                # cache hit too — a dependency that is only ever served from
+                # the cache is still a dependency.
+                edges[name]
+                if stack:
+                    caller, caller_t = stack[-1]
+                    edges[caller].add((name, t - caller_t))
+            value = cache.get(key, _MISS)
+            if value is not _MISS:
+                return value
+            if key in active:
+                raise CyclicModelError(self._cycle_message(key))
+            active.add(key)
+            stack.append(key)
+            try:
+                value = fn(self, t)
+            finally:
+                stack.pop()
+                active.discard(key)
+            cache[key] = value
+            return value
 
-        evaluate.__name__ = spec.name
+        evaluate.__name__ = name
         evaluate.__doc__ = spec.doc
         return evaluate
+
+    def _cycle_message(self, key) -> str:
+        """The cycle, as the path that closed it."""
+        path = self._stack[self._stack.index(key):] + [key]
+        chain = " -> ".join(f"{n}({t})" for n, t in path)
+        return (
+            f"{key[0]} depends on itself within one period: {chain}. A "
+            "variable may read an earlier period of itself — that is what a "
+            "projection is — but not the period it is computing."
+        )
+
+    def graph(self) -> "DependencyGraph":
+        """The dependency graph of everything evaluated so far.
+
+        Only what has actually run is in it, so ask after a projection — or
+        use :meth:`trace`, which runs one for you.
+        """
+        if not self.record_graph:
+            raise RuntimeError(
+                "this model was built without graph recording, so there is "
+                "no graph to return. Build it with record_graph=True, or "
+                f"call {type(self).__name__}.trace(...), which does."
+            )
+        return DependencyGraph(self._edges, pooled=self.pooled_names())
+
+    @classmethod
+    def trace(cls, mp: Any, assumptions: Any, proj_len: int = 3,
+              scenarios: Any = None, names: list[str] | None = None
+              ) -> "DependencyGraph":
+        """Build a model's dependency graph by running a short projection.
+
+        Three periods by default, which is the fewest that exercises both a
+        variable's ``t == 0`` branch and its recursive one. A longer trace
+        cannot find new edges in a well-formed model — a ``@var`` body may
+        not branch on model-point data — but it costs more.
+        """
+        model = cls(mp, assumptions, proj_len, scenarios, record_graph=True)
+        for name in names or cls.var_names():
+            model.series(name)
+        return model.graph()
 
     def series(self, name: str) -> list:
         """All values of a variable for ``t = 0 .. proj_len``.
