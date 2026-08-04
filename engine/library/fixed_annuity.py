@@ -47,12 +47,21 @@ class FixedAnnuity(Model):
             self.age(t), t, sex=getattr(self.mp, "sex", None)
         )
 
+    def _decrements(self, t):
+        """Mortality alone. A single-decrement model has nothing to
+        compete, so every method in engine/data/decrements.py returns the
+        same rate — which is worth stating by going through the same call
+        rather than by special-casing it here."""
+        return {"mortality": self.q_x(t)}
+
     @var
     def pols_if(self, t):
         """Surviving annuitants at the start of year t."""
         if t == 0:
             return self.mp.init_pols * 1.0
-        return self.pols_if(t - 1) * (1.0 - self.q_x(t - 1))
+        return self.assumptions.decrements.split(
+            self.pols_if(t - 1), self._decrements(t - 1)
+        )[1]
 
     @var(assumption="crediting_rate")
     def fund_eoy_per_pol(self, t):

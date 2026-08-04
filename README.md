@@ -132,6 +132,19 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Multiple decrements** ([RFC-004](docs/rfc-004-decrements.md)): the
+  assumption basis states each decrement on its own — mortality *if nothing
+  else removed lives*, lapse *if nobody died*. Turning those into who
+  actually leaves by each cause is now an assumption rather than an artefact
+  of the order the multiplications were written in. Three methods, each
+  exact under its own statement about when in the period people leave:
+  `sequential` (the default, and the old behaviour operand for operand),
+  `udd`, and `constant_force`. Every method agrees on total survival to the
+  bit, so switching one cannot move an in-force count — only the attribution
+  of exits. This closes the loop the frequency work left open: the gap
+  between `sequential` at frequency *m* and `constant_force` at frequency 1
+  closes first order in 1/m, so the answer a monthly projection was
+  converging on is now available in one annual step.
 - **Reproducibility** ([RFC-003](docs/rfc-003-run-registry.md)): a run
   records two digests — one of the question (model source, assumptions,
   model points, scenarios, projection length, outputs) and one of the
@@ -144,6 +157,5 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   bitwise-equivalence claim stated as an audit trail.
 
 Next: the unit-linked family sub-annually (its charges and scenario returns
-are annual-shaped and need a modelling decision first), multi-decrement
-tables, reductions beyond a sum, kernel fusion, and scenario-set file
-adapters.
+are annual-shaped and need a modelling decision first), reductions beyond a
+sum, kernel fusion, and scenario-set file adapters.

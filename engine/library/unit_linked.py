@@ -65,22 +65,37 @@ class UnitLinkedGMDB(Model):
         """Annual lapse rate applying during year t (after mortality)."""
         return self.assumptions.lapse * self.in_term(t)
 
+    def _decrements(self, t):
+        """Independent rates competing during year t, in the order the
+        sequential method applies them (see engine/data/decrements.py)."""
+        return {"mortality": self.q_x(t), "lapse": self.lapse_rate(t)}
+
+    def _survivors(self, t):
+        return self.assumptions.decrements.split(
+            self.pols_if(t), self._decrements(t)
+        )[1]
+
+    def _exits(self, t, cause):
+        return self.assumptions.decrements.split(
+            self.pols_if(t), self._decrements(t)
+        )[0][cause]
+
     @var
     def pols_if(self, t):
         """Policies in force at the start of year t."""
         if t == 0:
             return self.mp.init_pols * 1.0
-        survived = (
-            self.pols_if(t - 1)
-            * (1.0 - self.q_x(t - 1))
-            * (1.0 - self.lapse_rate(t - 1))
-        )
-        return survived * (t <= self.mp.term_years - 1)
+        return self._survivors(t - 1) * (t <= self.mp.term_years - 1)
 
     @var
     def pols_death(self, t):
         """Deaths during year t."""
-        return self.pols_if(t) * self.q_x(t)
+        return self._exits(t, "mortality")
+
+    @var
+    def pols_lapse(self, t):
+        """Lapses during year t."""
+        return self._exits(t, "lapse")
 
     @var
     def fund_ret(self, t):
@@ -135,12 +150,11 @@ class UnitLinkedGMDB(Model):
         ``t == term_years`` (zero at every other time)."""
         if t == 0:
             return self.mp.premium * 0.0
-        survivors = (
-            self.pols_if(t - 1)
-            * (1.0 - self.q_x(t - 1))
-            * (1.0 - self.lapse_rate(t - 1))
+        return (
+            self._survivors(t - 1)
+            * self.fund_eoy(t - 1)
+            * (t == self.mp.term_years)
         )
-        return survivors * self.fund_eoy(t - 1) * (t == self.mp.term_years)
 
     @var(assumption="interest")
     def v(self, t):
@@ -324,27 +338,37 @@ class UnitLinkedGMxB(Model):
             self.guarantee_value(t), self.fund_eoy(t)
         ) * self.in_term(t)
 
+    def _decrements(self, t):
+        """Independent rates competing during year t, in the order the
+        sequential method applies them (see engine/data/decrements.py)."""
+        return {"mortality": self.q_x(t), "lapse": self.lapse_rate(t)}
+
+    def _survivors(self, t):
+        return self.assumptions.decrements.split(
+            self.pols_if(t), self._decrements(t)
+        )[1]
+
+    def _exits(self, t, cause):
+        return self.assumptions.decrements.split(
+            self.pols_if(t), self._decrements(t)
+        )[0][cause]
+
     @var
     def pols_if(self, t):
         """Policies in force at the start of year t."""
         if t == 0:
             return self.mp.init_pols * 1.0
-        survived = (
-            self.pols_if(t - 1)
-            * (1.0 - self.q_x(t - 1))
-            * (1.0 - self.lapse_rate(t - 1))
-        )
-        return survived * (t <= self.mp.term_years - 1)
+        return self._survivors(t - 1) * (t <= self.mp.term_years - 1)
 
     @var
     def pols_death(self, t):
         """Deaths during year t."""
-        return self.pols_if(t) * self.q_x(t)
+        return self._exits(t, "mortality")
 
     @var
     def pols_lapse(self, t):
-        """Lapses during year t, after mortality."""
-        return self.pols_if(t) * (1.0 - self.q_x(t)) * self.lapse_rate(t)
+        """Lapses during year t."""
+        return self._exits(t, "lapse")
 
     @var
     def pols_maturity(self, t):
@@ -352,12 +376,7 @@ class UnitLinkedGMxB(Model):
         ``t == term_years``."""
         if t == 0:
             return self.mp.init_pols * 0.0
-        survivors = (
-            self.pols_if(t - 1)
-            * (1.0 - self.q_x(t - 1))
-            * (1.0 - self.lapse_rate(t - 1))
-        )
-        return survivors * (t == self.mp.term_years)
+        return self._survivors(t - 1) * (t == self.mp.term_years)
 
     # --- cashflows --------------------------------------------------------
 
