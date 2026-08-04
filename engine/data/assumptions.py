@@ -82,6 +82,9 @@ class MortalityTable:
     def ages(self) -> range:
         return range(self.min_age, self.max_age + 1)
 
+    def __fingerprint__(self):
+        return {"basis": self.basis}
+
 
 class DynamicLapse:
     """Lapse rate as a function of how well funded a guarantee is.
@@ -149,6 +152,10 @@ class DynamicLapse:
     def rate(self, guarantee, account_value):
         return self.base * self.multiplier(guarantee, account_value)
 
+    def __fingerprint__(self):
+        return {"base": self.base, "sensitivity": self.sensitivity,
+                "floor": self.floor, "cap": self.cap}
+
 
 class Assumptions:
     """A named, read-only bundle of assumptions passed to a model."""
@@ -198,6 +205,23 @@ class Assumptions:
         #: it counts years and every rate below is the annual one unchanged.
         self.freq = freq
         self.fractional_ages = fractional_ages
+
+    def __fingerprint__(self):
+        """Every assumption that can change a projected number."""
+        return {
+            "mortality": self.mortality,
+            "dynamic_lapse": self.dynamic_lapse,
+            "interest": self.interest,
+            "expense_per_policy": self.expense_per_policy,
+            "crediting_rate": self.crediting_rate,
+            "amc": self.amc,
+            "gmdb_fee": self.gmdb_fee,
+            "gmab_fee": self.gmab_fee,
+            "gmwb_fee": self.gmwb_fee,
+            "base_year": self.base_year,
+            "freq": self.freq,
+            "fractional_ages": self.fractional_ages,
+        }
 
     # --- per-period views of annual assumptions ---------------------------
     #

@@ -126,6 +126,33 @@ class MortalityBasis:
         self.use_improvement = bool(use_improvement) and bool(improvement)
         self._build_improvement(improvement)
 
+    def __fingerprint__(self):
+        """What defines this basis: its rates and its conventions.
+
+        Deliberately *not* ``vars(self)``. The improvement lookup caches are
+        filled on demand, so hashing them would make an assumption set's
+        identity depend on which calendar years happened to be asked for.
+        """
+        identity = {
+            "sexes": self.sexes,
+            "min_age": self.min_age,
+            "max_age": self.max_age,
+            "rates": self._q,
+            "year_start": self.year_start,
+            "calc": self.calc,
+            "actual_daycount": self.actual_daycount,
+            "blend_male_percent": self.blend_male_percent,
+            "blend": self.blend,
+            "omega": self.omega,
+            "improvement_kind": self.improvement_kind,
+        }
+        if self.improvement_kind == "constant":
+            identity["improvement"] = self._imp
+        elif self.improvement_kind == "generational":
+            identity["improvement"] = self._gen_step
+            identity["improvement_max_year"] = self.improvement_max_year
+        return identity
+
     # --- improvement ------------------------------------------------------
 
     def _build_improvement(self, improvement):

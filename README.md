@@ -123,7 +123,18 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   every anniversary but shifts exits from mortality to lapse, converging on
   the continuous multi-decrement answer.
 
+- **Reproducibility** ([RFC-003](docs/rfc-003-run-registry.md)): a run
+  records two digests — one of the question (model source, assumptions,
+  model points, scenarios, projection length, outputs) and one of the
+  answer. Same question with a different answer is a determinism failure and
+  the registry refuses it. The digest is content-addressed and checked from
+  a **subprocess with a different `PYTHONHASHSEED`**, because a digest that
+  is not stable across processes certifies nothing; anything it cannot
+  encode raises rather than being skipped. The two executors produce
+  different run ids and the same results digest, which is the
+  bitwise-equivalence claim stated as an audit trail.
+
 Next: the unit-linked family sub-annually (its charges and scenario returns
 are annual-shaped and need a modelling decision first), select-and-ultimate
-and multi-decrement tables, reductions beyond a sum, kernel fusion,
-scenario-set file adapters, and the run registry.
+and multi-decrement tables, reductions beyond a sum, kernel fusion, and
+scenario-set file adapters.

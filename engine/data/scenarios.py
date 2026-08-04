@@ -24,6 +24,9 @@ class ScenarioSet:
         self.returns = arr
         self.n_scenarios, self.horizon = arr.shape
 
+    def __fingerprint__(self):
+        return {"returns": self.returns}
+
     def ret(self, t: int) -> np.ndarray:
         """Returns for period t across scenarios, shape (n_scenarios,)."""
         if not 0 <= t < self.horizon:

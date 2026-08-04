@@ -19,6 +19,9 @@ class ModelPoint:
         inner = ", ".join(f"{k}={v!r}" for k, v in self.__dict__.items())
         return f"ModelPoint({inner})"
 
+    def __fingerprint__(self):
+        return dict(self.__dict__)
+
 
 def from_dicts(rows: Iterable[dict]) -> list[ModelPoint]:
     return [ModelPoint(**row) for row in rows]
