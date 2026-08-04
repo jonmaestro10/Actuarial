@@ -279,10 +279,11 @@ Named here so the next phase has a list rather than a memory:
   lookups. `TermLife` reads it, since term assurance is priced on select
   rates; its model points take a `duration_in_force` for a block already
   part way through the select period.
-- **No multi-decrement tables** (PLAN §5.1). The natural follow-on from the
-  frequency work, which showed exits shifting between mortality and lapse as
-  the decrements interleave more finely: a dependent-rate table would state
-  that answer directly rather than converging on it.
+- ~~No multi-decrement tables~~ (PLAN §5.1). Done, and again without moving
+  a bit: [RFC-004](rfc-004-decrements.md). Independent rates become
+  dependent ones by a stated method rather than by the order the
+  multiplications were written in, and `constant_force` states directly the
+  answer the frequency work was converging on.
 - Select rates are **not** yet available to the pooled and payout templates
   through `ValuationBasis`. The plumbing is there — `survival(axis, dob,
   sex, entry)` takes a date of selection — but no annuity template passes

@@ -21,6 +21,11 @@ split between mortality and lapse, because the two decrements interleave
 rather than being applied whole in sequence. That is the finer and more
 correct answer, and it is what tests/test_frequency.py pins.
 
+The limit that converges to is available directly:
+``Assumptions(decrements="constant_force")`` states it at any frequency,
+without projecting monthly to approach it. ``"sequential"`` — the default —
+is the fixed order this template has always applied.
+
 Term assurance is priced on **select** rates, so ``q_x`` looks mortality up
 by duration as well as by age. Supply a ``MortalityBasis`` carrying a select
 table and the first years of cover are read from it; supply an ultimate-only
@@ -91,22 +96,44 @@ class TermLife(Model):
         """Lapse rate applying during period t (after mortality)."""
         return self.assumptions.periodic_lapse() * self.in_term(t)
 
+    # Mortality and lapse compete for the same lives during a period. The
+    # assumption set owns how they combine — see engine/data/decrements.py.
+    # The default, `sequential`, is the fixed order this template always
+    # applied, reproduced operand for operand.
+
+    def _decrements(self, t):
+        """Independent rates competing during period t, in the order the
+        sequential method applies them."""
+        return {"mortality": self.q_x(t), "lapse": self.lapse_rate(t)}
+
+    def _survivors(self, t):
+        return self.assumptions.decrements.split(
+            self.pols_if(t), self._decrements(t)
+        )[1]
+
+    def _exits(self, t, cause):
+        return self.assumptions.decrements.split(
+            self.pols_if(t), self._decrements(t)
+        )[0][cause]
+
     @var
     def pols_if(self, t):
         """Policies in force at the start of year t."""
         if t == 0:
             return self.mp.init_pols * 1.0
-        survived = (
-            self.pols_if(t - 1)
-            * (1.0 - self.q_x(t - 1))
-            * (1.0 - self.lapse_rate(t - 1))
+        return self._survivors(t - 1) * (
+            t <= self.assumptions.periods(self.mp.term_years) - 1
         )
-        return survived * (t <= self.assumptions.periods(self.mp.term_years) - 1)
 
     @var
     def pols_death(self, t):
         """Deaths during year t."""
-        return self.pols_if(t) * self.q_x(t)
+        return self._exits(t, "mortality")
+
+    @var
+    def pols_lapse(self, t):
+        """Lapses during year t."""
+        return self._exits(t, "lapse")
 
     @var
     def claims(self, t):

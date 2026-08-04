@@ -19,6 +19,7 @@ from typing import Mapping
 
 import numpy as np
 
+from engine.data.decrements import Decrements
 from engine.data.mortality import MortalityBasis
 
 #: Sex code for a table that does not distinguish.
@@ -172,7 +173,8 @@ class Assumptions:
                  dynamic_lapse: "DynamicLapse | None" = None,
                  gmdb_fee: float = 0.0, gmab_fee: float = 0.0,
                  gmwb_fee: float = 0.0, base_year: int | None = None,
-                 freq: int = 1, fractional_ages: str = "udd"):
+                 freq: int = 1, fractional_ages: str = "udd",
+                 decrements: "Decrements | str | None" = None):
         if freq < 1 or 12 % freq:
             raise ValueError(f"payment frequency {freq} must divide 12")
         if not 0.0 <= lapse < 1.0:
@@ -210,6 +212,12 @@ class Assumptions:
         #: it counts years and every rate below is the annual one unchanged.
         self.freq = freq
         self.fractional_ages = fractional_ages
+        #: How competing decrements combine within a period. Defaults to
+        #: ``sequential`` — the fixed order the templates have always
+        #: applied — so supplying nothing changes nothing, bit for bit.
+        if isinstance(decrements, str) or decrements is None:
+            decrements = Decrements(decrements or "sequential")
+        self.decrements = decrements
 
     def __fingerprint__(self):
         """Every assumption that can change a projected number."""
@@ -226,6 +234,7 @@ class Assumptions:
             "base_year": self.base_year,
             "freq": self.freq,
             "fractional_ages": self.fractional_ages,
+            "decrements": self.decrements,
         }
 
     # --- per-period views of annual assumptions ---------------------------
