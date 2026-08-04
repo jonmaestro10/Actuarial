@@ -22,6 +22,7 @@ import numpy as np
 from engine.data.decrements import Decrements
 from engine.data.expenses import Commission, ExpenseScale, Expenses
 from engine.data.mortality import MortalityBasis
+from engine.data.reinsurance import NoReinsurance, Treaty
 
 #: Sex code for a table that does not distinguish.
 UNISEX = "U"
@@ -177,7 +178,8 @@ class Assumptions:
                  freq: int = 1, fractional_ages: str = "udd",
                  decrements: "Decrements | str | None" = None,
                  expenses: "Expenses | None" = None,
-                 commission: "Commission | None" = None):
+                 commission: "Commission | None" = None,
+                 reinsurance: "Treaty | None" = None):
         if freq < 1 or 12 % freq:
             raise ValueError(f"payment frequency {freq} must divide 12")
         if not 0.0 <= lapse < 1.0:
@@ -220,6 +222,9 @@ class Assumptions:
         )
         #: Commission is off unless asked for, so no existing result moves.
         self.commission = commission if commission is not None else Commission()
+        #: The reinsurance treaty covering this block. Off unless asked for,
+        #: so a gross-only projection is unchanged.
+        self.reinsurance = reinsurance if reinsurance is not None else NoReinsurance()
         self.crediting_rate = crediting_rate
         self.amc = amc
         self.gmdb_fee = gmdb_fee
@@ -244,6 +249,7 @@ class Assumptions:
             "interest": self.interest,
             "expenses": self.expenses,
             "commission": self.commission,
+            "reinsurance": self.reinsurance,
             "crediting_rate": self.crediting_rate,
             "amc": self.amc,
             "gmdb_fee": self.gmdb_fee,
