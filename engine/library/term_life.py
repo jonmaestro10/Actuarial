@@ -37,7 +37,19 @@ Model point fields: ``age_at_entry`` (int), ``term_years`` (int),
 ``duration_in_force`` (int, default 0) for a block already part way through
 its select period at projection time zero.
 Assumption bindings: ``mortality`` (table), ``lapse`` (flat annual rate),
-``interest`` (flat annual rate), ``expense_per_policy``.
+``interest`` (flat annual rate), ``expenses``, ``commission``.
+
+Expenses come in three lines because they fall at three different times and
+a pricing basis argues about them separately: **acquisition** once at
+inception, **renewal** every period and indexed for inflation, and
+**claim** costs on each death settled. Each is quoted on the three usual
+bases at once — per policy, percent of premium, per mille sum assured — and
+each annual figure is divided by the frequency in one place. Commission runs
+at an initial rate for the first years of a policy and a renewal rate after,
+optionally with clawback from early lapses. A bare ``expense_per_policy``
+is the renewal per-policy loading of a basis with nothing else in it, so the
+scalar form keeps its exact numbers; commission and clawback are off unless
+asked for. See engine/data/expenses.py.
 
 Formulas are written in indicator style — conditions on model-point data
 appear as multiplicative ``(t < term) * 1.0`` factors, never as ``if``
@@ -149,13 +161,78 @@ class TermLife(Model):
             * self.in_term(t)
         )
 
-    @var(assumption="expense_per_policy")
+    # --- expenses and commission -----------------------------------------
+
+    def _expense_bases(self):
+        """What the three expense loadings are quoted against.
+
+        Annual figures, both of them: the loadings are annual and get
+        divided once, in one place, which is what keeps ``freq = 1`` an
+        exact identity.
+        """
+        return {"premium": self.mp.annual_premium,
+                "sum_assured": self.mp.sum_assured}
+
+    @var(assumption="expenses")
+    def initial_expenses(self, t):
+        """Acquisition expenses, incurred once at inception.
+
+        Not indexed: they fall at projection time zero, so there is nothing
+        to index them over.
+        """
+        amount = self.assumptions.expenses.initial.amount(**self._expense_bases())
+        return self.mp.init_pols * amount * (t == 0)
+
+    @var(assumption="expenses")
     def expenses(self, t):
-        """Maintenance expenses at the start of period t."""
+        """Maintenance expenses at the start of period t, indexed.
+
+        The annual renewal loading divided by the frequency, inflated to the
+        start of the period. A bare ``expense_per_policy`` is the
+        per-policy component of this with everything else zero, so the
+        scalar form keeps its exact numbers.
+        """
+        a = self.assumptions
+        annual = a.expenses.renewal.amount(**self._expense_bases())
         return (
             self.pols_if(t)
-            * self.assumptions.per_period(self.assumptions.expense_per_policy)
+            * (a.per_period(annual) * a.inflation_index(t))
             * self.in_term(t)
+        )
+
+    @var(assumption="expenses")
+    def claim_expenses(self, t):
+        """Cost of settling the claims arising in period t.
+
+        Indexed to the **end** of the period, where the claim is paid — the
+        same convention the discounting uses for a claim.
+        """
+        a = self.assumptions
+        amount = a.expenses.claim.amount(**self._expense_bases())
+        return self.pols_death(t) * amount * a.inflation_index(t + 1)
+
+    @var(assumption="commission")
+    def commission(self, t):
+        """Commission on the premium collected at the start of period t.
+
+        The initial/renewal boundary is a **policy duration** boundary, so
+        it sits where it sits whatever the projection frequency.
+        """
+        a = self.assumptions
+        return self.premiums(t) * a.commission.rate(self.duration(t))
+
+    @var(assumption="commission")
+    def commission_clawback(self, t):
+        """Initial commission recovered from policies lapsing in period t.
+
+        A negative cashflow to the insurer's outgo — recorded positive here
+        and subtracted where it is used, so the sign is stated at the point
+        of use rather than carried around.
+        """
+        a = self.assumptions
+        recoverable = self.mp.annual_premium * a.commission.initial_percent
+        return self.pols_lapse(t) * recoverable * a.commission.clawback_fraction(
+            self.duration(t)
         )
 
     @var(assumption="interest")
@@ -174,7 +251,41 @@ class TermLife(Model):
         return sum(self.claims(t) * self.v(t + 1) for t in range(self.proj_len))
 
     def pv_expenses(self):
+        """Maintenance expenses only — acquisition and claim costs are
+        separate lines because they fall at different times and a pricing
+        basis argues about them separately."""
         return sum(self.expenses(t) * self.v(t) for t in range(self.proj_len))
 
+    def pv_initial_expenses(self):
+        return sum(
+            self.initial_expenses(t) * self.v(t) for t in range(self.proj_len)
+        )
+
+    def pv_claim_expenses(self):
+        return sum(
+            self.claim_expenses(t) * self.v(t + 1) for t in range(self.proj_len)
+        )
+
+    def pv_commission(self):
+        """Commission paid, net of what early lapses give back."""
+        return sum(
+            (self.commission(t) - self.commission_clawback(t)) * self.v(t)
+            for t in range(self.proj_len)
+        )
+
     def net_pv(self):
-        return self.pv_premiums() - self.pv_claims() - self.pv_expenses()
+        """Premiums less every outgo: claims, all three expense lines, and
+        commission net of clawback.
+
+        With no expense basis and no commission beyond the legacy
+        per-policy amount, every added term is identically zero and this is
+        the figure it always was.
+        """
+        return (
+            self.pv_premiums()
+            - self.pv_claims()
+            - self.pv_expenses()
+            - self.pv_initial_expenses()
+            - self.pv_claim_expenses()
+            - self.pv_commission()
+        )
