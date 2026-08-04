@@ -46,12 +46,14 @@ class Model:
     cashflows, so end-of-period discounting at ``t + 1`` stays in range.
     """
 
-    def __init__(self, mp: Any, assumptions: Any, proj_len: int):
+    def __init__(self, mp: Any, assumptions: Any, proj_len: int,
+                 scenarios: Any = None):
         if proj_len < 1:
             raise ValueError("proj_len must be >= 1")
         self.mp = mp
         self.assumptions = assumptions
         self.proj_len = proj_len
+        self.scenarios = scenarios
         self._cache: dict[tuple[str, int], Any] = {}
         for name in self.var_names():
             spec = getattr(type(self), name).__var_spec__

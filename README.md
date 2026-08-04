@@ -56,6 +56,13 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
 - Product templates: level-premium term assurance, single-premium deferred
   fixed annuity — each with closed-form golden tests.
 - Model points round-trip through Parquet (`pip install -e ".[data]"`).
+- **Stochastic executor**: `run_stochastic()` broadcasts model points
+  against a `ScenarioSet` into `(time, model point, scenario)` slabs with
+  no template changes. First VA-family template: unit-linked with GMDB
+  rider (guarantee strain, fee income, maturity values). Golden layers:
+  zero-vol closed forms, bitwise slab-vs-single-scenario consistency, a
+  risk-neutral martingale test, and pinned-seed determinism.
 
-Next: scenario dimension for stochastic runs, tracer-based compilation,
-and the VA/VPLA template family.
+Next: kernel fusion/compilation (stochastic runs are memory-bound in
+pure NumPy), GMAB/GMWB riders and dynamic lapse for the VA family,
+scenario-set file adapters, and the run registry.

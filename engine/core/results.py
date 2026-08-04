@@ -75,3 +75,24 @@ class ArrayRunResult(RunResult):
 
     def aggregate(self, name: str) -> list[float]:
         return self._stacked[name].sum(axis=1).tolist()
+
+
+class StochasticRunResult:
+    """Result of a stochastic run: one ``(proj_len + 1, n_modelpoints,
+    n_scenarios)`` float64 array per variable. Stays in arrays — stochastic
+    output is bulk data, and reductions are the useful views."""
+
+    def __init__(self, stacked: dict[str, np.ndarray], mp_ids: list):
+        self._stacked = stacked
+        self.mp_ids = mp_ids
+
+    def array(self, name: str) -> np.ndarray:
+        return self._stacked[name]
+
+    def aggregate(self, name: str) -> np.ndarray:
+        """Sum across model points: shape (proj_len + 1, n_scenarios)."""
+        return self._stacked[name].sum(axis=1)
+
+    def scenario_mean(self, name: str) -> np.ndarray:
+        """Mean across scenarios of the aggregate: shape (proj_len + 1,)."""
+        return self.aggregate(name).mean(axis=1)

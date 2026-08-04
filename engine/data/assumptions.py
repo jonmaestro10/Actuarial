@@ -69,11 +69,14 @@ class Assumptions:
 
     def __init__(self, *, mortality: MortalityTable, lapse: float = 0.0,
                  interest: float = 0.0, expense_per_policy: float = 0.0,
-                 crediting_rate: float = 0.0):
+                 crediting_rate: float = 0.0, amc: float = 0.0):
         if not 0.0 <= lapse < 1.0:
             raise ValueError(f"lapse rate {lapse} outside [0, 1)")
+        if not 0.0 <= amc < 1.0:
+            raise ValueError(f"AMC {amc} outside [0, 1)")
         self.mortality = mortality
         self.lapse = lapse
         self.interest = interest
         self.expense_per_policy = expense_per_policy
         self.crediting_rate = crediting_rate
+        self.amc = amc
