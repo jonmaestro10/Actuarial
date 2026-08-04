@@ -274,12 +274,39 @@ class Assumptions:
             method=self.fractional_ages, duration=duration,
         )
 
+    def to_periodic(self, annual_rate):
+        """An annual proportional *deduction* as a per-period one.
+
+        ``1 - (1 - annual) ** (1/freq)``, so ``freq`` periods of it compound
+        back to exactly the annual figure: splitting the year cannot change
+        how much of the thing survives it. Exactly ``annual_rate`` at
+        ``freq = 1``, bit for bit, without evaluating a power.
+
+        This is the right conversion for anything that removes a proportion
+        of what it acts on — lapse, and the annual management charge, which
+        is structurally the same operation on a fund rather than on a
+        population. It is **not** ``(1 + annual) ** (1/freq) - 1``: that is
+        the conversion for a rate that *accumulates*, and applying it to a
+        deduction leaves twelve monthly charges short of the annual one:
+        1.2% a year collects 1.1869%, a 1.31 basis point leak.
+        """
+        if self.freq == 1:
+            return annual_rate
+        return 1.0 - (1.0 - annual_rate) ** (1.0 / self.freq)
+
     def periodic_lapse(self):
         """Lapse over one period, from the annual rate under a constant force
         — so ``freq`` periods of it compound back to the annual rate."""
-        if self.freq == 1:
-            return self.lapse
-        return 1.0 - (1.0 - self.lapse) ** (1.0 / self.freq)
+        return self.to_periodic(self.lapse)
+
+    def periodic_amc(self):
+        """Annual management charge over one period.
+
+        Converted the same way as lapse, and for the same reason: an AMC
+        removes a proportion of the fund, so ``freq`` deductions must leave
+        the same fund a single annual deduction would.
+        """
+        return self.to_periodic(self.amc)
 
     def per_period(self, annual_amount):
         """An annual cashflow spread evenly over the periods of a year."""

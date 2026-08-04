@@ -132,6 +132,21 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **The unit-linked family sub-annually**: `UnitLinkedGMDB` and
+  `UnitLinkedGMxB` run at any frequency dividing 12, which needed a
+  modelling decision per charge rather than only plumbing. The **AMC
+  converts geometrically** — `1 - (1 - amc)^(1/freq)`, so `freq` deductions
+  leave the fund exactly where one annual deduction would, and *not*
+  `(1 + amc)^(1/freq) - 1`, which is the conversion for a rate that
+  accumulates and leaks 1.31 bp a year on a 1.2% charge. **Rider fees and
+  the guaranteed withdrawal spread**, being annual entitlements on amounts
+  they do not erode. **The GMWB ratchet still steps annually**, because it
+  is an anniversary event and a monthly projection must not lock in twelve
+  high-water marks a year. `freq = 1` is the identity bit for bit across all
+  48 output series of both templates. What a finer step does change is worth
+  the run: a surviving policy pays identical total charges, but fee income
+  falls 3.3% from annual to monthly, because a policy that lapses in March
+  stops paying then instead of after a full year's AMC.
 - **ESG file adapters** ([RFC-005](docs/rfc-005-esg.md)): scenarios can come
   from a generator's output file rather than only from an in-process
   generator, in either of the two layouts every vendor's output reduces to —
@@ -171,6 +186,5 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   different run ids and the same results digest, which is the
   bitwise-equivalence claim stated as an audit trail.
 
-Next: the unit-linked family sub-annually (its charges and scenario returns
-are annual-shaped and need a modelling decision first), reductions beyond a
-sum, kernel fusion, and multi-node scale-out.
+Next: reductions beyond a sum for `@pool`, kernel fusion, and multi-node
+scale-out.
