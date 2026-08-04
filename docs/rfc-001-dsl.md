@@ -154,8 +154,21 @@ has to remember to set.
   weighted median for a smoothing rule). `pool_sum` covers the products in
   the library today; the general shape is a reduction registry with a stated
   determinism guarantee per reduction.
-- Cycle detection with a readable error path (needs the tracer).
+- ~~Cycle detection with a readable error path (needs the tracer).~~ Done:
+  `engine/core/graph.py`. The tracer records edges while the model runs, so
+  it sees through helper methods a static scan would miss, and every edge
+  carries the offset between the reading period and the period read — which
+  is what separates a cycle from the recursion a projection is built on. A
+  same-period cycle now raises `CyclicModelError` at depth two with the
+  chain that closed it, instead of exhausting the stack a thousand frames
+  later. Always on; measured at ~5% of the per-policy interpreter and
+  nothing measurable on the vectorized executor.
 - Typed variables (`NUM`/`BOOL`/array) — revisit when the compiler needs
   dtype information.
+- Kernel fusion itself (PLAN §4.2). The graph now supplies what a compiler
+  needs first — a traced dependency graph, a deterministic topological order
+  over the same-period edges, and the look-back window a forward loop would
+  have to keep alive — but nothing is compiled yet, and calling the tracer
+  fusion would be a claim the code cannot support.
 - Multi-entity models (policy + fund + reinsurance treaty interacting) —
   Phase 2, driven by the VA/VPLA library's needs.

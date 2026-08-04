@@ -132,6 +132,23 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **The variable dependency graph** ([RFC-001](docs/rfc-001-dsl.md)):
+  traced by *running* the model rather than by reading it, which is the only
+  approach that works — `TermLife.pols_if` reaches `q_x` through two helper
+  methods that a static scan would see straight past. Every edge carries the
+  offset between the reading period and the period read, and that distinction
+  is the whole thing: `pols_if` reading `pols_if(t-1)` is what a projection
+  *is*, while reading it at `t` is a model that cannot be evaluated. A
+  same-period cycle now raises with the chain that closed it, at depth two,
+  instead of exhausting the stack a thousand frames later. The graph answers
+  lineage both ways — what could have moved this number, and what will I
+  change if I touch this formula — and renders itself as a Mermaid diagram.
+  It also supplies what PLAN §4.2's compilation step needs *first*: a
+  deterministic topological order over the same-period edges and the
+  look-back window a forward loop must keep alive. Nothing is compiled yet.
+  Recording is opt-in because it costs ~16% of the per-policy interpreter;
+  cycle detection is always on and costs ~5% there and nothing measurable on
+  the vectorized executor.
 - **Tax hooks** (PLAN §5.1 Layer 0 — the last one): deliberately small,
   because tax regimes differ by jurisdiction more than any other assumption
   and a library that shipped one as *the* tax calculation would be wrong
