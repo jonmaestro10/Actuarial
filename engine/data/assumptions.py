@@ -1,8 +1,15 @@
-"""Assumption objects.
+"""Assumption objects for the annual templates.
 
-Phase 0 keeps these deliberately small: a mortality table keyed by integer
-age, flat lapse, flat interest, flat crediting. Versioned/immutable
-assumption snapshots and table I/O arrive with the data layer in Phase 1.
+Flat lapse, flat interest, flat crediting, and a mortality table keyed by
+integer age. The mortality is no longer a second implementation: it is a
+unisex, non-improving view over
+:class:`~engine.data.mortality.MortalityBasis`, the VPLA basis promoted in
+docs/rfc-002-basis.md and held to bitwise parity against the original.
+
+That matters beyond tidiness. ``Assumptions.mortality`` will equally take a
+full ``MortalityBasis``, so the annual templates get sex-distinct rates and
+improvement scales without being rewritten — they already look mortality up
+through ``q_at``/``clip_age``, which both classes provide.
 """
 
 from __future__ import annotations
@@ -12,9 +19,18 @@ from typing import Mapping
 
 import numpy as np
 
+from engine.data.mortality import MortalityBasis
+
+#: Sex code for a table that does not distinguish.
+UNISEX = "U"
+
 
 class MortalityTable:
-    """Annual mortality rates ``q_x`` keyed by contiguous integer ages.
+    """Annual ``q_x`` by contiguous integer age, one set of rates for all.
+
+    A thin view over ``MortalityBasis`` rather than its own lookup, so there
+    is exactly one implementation of "read a rate out of a table, hold the
+    last age flat" in the engine.
 
     Lookups outside the table raise rather than extrapolate: silently
     invented rates are an accuracy bug, not a convenience. Templates that
@@ -26,14 +42,16 @@ class MortalityTable:
         if not qx:
             raise ValueError("empty mortality table")
         keys = sorted(qx)
-        self.min_age, self.max_age = keys[0], keys[-1]
-        if keys != list(range(self.min_age, self.max_age + 1)):
+        if keys != list(range(keys[0], keys[-1] + 1)):
             raise ValueError("mortality table ages must be contiguous")
         for age in keys:
             if not 0.0 <= qx[age] <= 1.0:
                 raise ValueError(f"q_x[{age}] = {qx[age]} outside [0, 1]")
         self._qx = MappingProxyType(dict(qx))
-        self._dense = np.array([qx[age] for age in keys], dtype=np.float64)
+        self.basis = MortalityBasis(
+            {UNISEX: dict(qx)}, year_start=0, use_improvement=False
+        )
+        self.min_age, self.max_age = self.basis.min_age, self.basis.max_age
 
     @classmethod
     def flat(cls, q: float, min_age: int = 0, max_age: int = 130) -> "MortalityTable":
@@ -45,19 +63,13 @@ class MortalityTable:
         except KeyError:
             raise KeyError(f"age {age} not in mortality table") from None
 
-    def q_at(self, ages):
+    def q_at(self, ages, sex=None, year=None):
         """Vectorized lookup: scalar or integer array of ages, all in range."""
-        idx = np.asarray(ages)
-        if np.any(idx < self.min_age) or np.any(idx > self.max_age):
-            raise KeyError(
-                f"age(s) outside mortality table range "
-                f"[{self.min_age}, {self.max_age}]"
-            )
-        return self._dense[idx - self.min_age]
+        return self.basis.q_at(ages)
 
     def clip_age(self, ages):
         """Clamp ages into table range, for indicator-masked lookups only."""
-        return np.clip(ages, self.min_age, self.max_age)
+        return self.basis.clip_age(ages)
 
     @property
     def ages(self) -> range:
@@ -134,12 +146,13 @@ class DynamicLapse:
 class Assumptions:
     """A named, read-only bundle of assumptions passed to a model."""
 
-    def __init__(self, *, mortality: MortalityTable, lapse: float = 0.0,
+    def __init__(self, *, mortality: "MortalityTable | MortalityBasis",
+                 lapse: float = 0.0,
                  interest: float = 0.0, expense_per_policy: float = 0.0,
                  crediting_rate: float = 0.0, amc: float = 0.0,
                  dynamic_lapse: "DynamicLapse | None" = None,
                  gmdb_fee: float = 0.0, gmab_fee: float = 0.0,
-                 gmwb_fee: float = 0.0):
+                 gmwb_fee: float = 0.0, base_year: int | None = None):
         if not 0.0 <= lapse < 1.0:
             raise ValueError(f"lapse rate {lapse} outside [0, 1)")
         if not 0.0 <= amc < 1.0:
@@ -154,6 +167,12 @@ class Assumptions:
                 f"{dynamic_lapse.base}; set one or the other"
             )
         self.mortality = mortality
+        #: Calendar year of projection time zero, for improvement scales.
+        #: Defaults to the basis's own base year, where improvement is
+        #: neutral — so supplying a plain table changes nothing.
+        self.base_year = (
+            getattr(mortality, "year_start", 0) if base_year is None else base_year
+        )
         # A flat lapse assumption is the zero-sensitivity dynamic one, so
         # templates never branch on which was supplied.
         self.dynamic_lapse = dynamic_lapse or DynamicLapse(lapse)
@@ -165,3 +184,19 @@ class Assumptions:
         self.gmdb_fee = gmdb_fee
         self.gmab_fee = gmab_fee
         self.gmwb_fee = gmwb_fee
+
+    def annual_q(self, ages, sex=None, offset: int = 0):
+        """``q_x`` at whole ages, ``offset`` years after projection time zero.
+
+        The single mortality lookup the annual templates use. Ages are
+        clipped into the table before the read, because a template projecting
+        past the end of a product phase reaches ages it masks out anyway.
+
+        Pass a full ``MortalityBasis`` as ``mortality`` and the same call
+        picks up sex-distinct rates and an improvement scale; pass a plain
+        ``MortalityTable`` and it is the raw table, unchanged.
+        """
+        table = self.mortality
+        return table.q_at(
+            table.clip_age(ages), sex=sex, year=self.base_year + offset
+        )

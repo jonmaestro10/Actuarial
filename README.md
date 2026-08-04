@@ -98,7 +98,6 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   [docs/vpla-review.md](docs/vpla-review.md) is the structural review the
   above came from, with the defects found and the architectural gap the
   pooled variable-payment product opens up in the DSL.
-
 - **Pooled products**: a `@pool` variable reduces across the model-point
   axis inside the time loop, which is what a variable-payment adjustment, a
   with-profits bonus or an asset share needs and a per-policy formula cannot
@@ -107,6 +106,14 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   precision when the fund earns the valuation rate and mortality runs to
   assumption. The executor stops chunking a pooled model automatically,
   since a reduction over a chunk reduces over the wrong population.
+- **One mortality lookup**: the engine had two implementations of "read a
+  rate out of a table" — the validated VPLA basis, and a separate integer-age
+  table three of the templates used. There is now one. `MortalityTable` is a
+  unisex, non-improving view over `MortalityBasis`, and every template reads
+  mortality through `Assumptions.annual_q`. No golden value moved, and the
+  annual templates gained sex-distinct rates and generational improvement
+  without being rewritten.
 
-Next: moving the remaining templates onto the basis, reductions beyond a
+Next: putting the annual templates on a `TimeAxis` so they get fractional
+ages too, select-and-ultimate and multi-decrement tables, reductions beyond a
 sum, kernel fusion, scenario-set file adapters, and the run registry.
