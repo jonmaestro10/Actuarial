@@ -46,6 +46,13 @@ class Model:
     cashflows, so end-of-period discounting at ``t + 1`` stays in range.
     """
 
+    #: Set on a subclass whose variables reduce across the model-point axis
+    #: — a pooled bonus or crediting rate, say. The vectorized executor
+    #: keeps such a block whole instead of chunking it, because a chunk
+    #: would reduce over the wrong population. Nothing in the library sets
+    #: this yet; see docs/vpla-review.md §7.1.
+    couples_model_points = False
+
     def __init__(self, mp: Any, assumptions: Any, proj_len: int,
                  scenarios: Any = None):
         if proj_len < 1:
@@ -58,6 +65,32 @@ class Model:
         for name in self.var_names():
             spec = getattr(type(self), name).__var_spec__
             setattr(self, name, self._bind(spec))
+        self.setup()
+
+    def setup(self) -> None:
+        """Precompute whole-projection data, once, before any ``@var`` runs.
+
+        Some inputs are cheapest to build for the entire time axis in one
+        call rather than a period at a time — survival curves off a
+        fractional-age basis, discount vectors off a yield curve. Computing
+        them here keeps the formulas declarative and keeps the calendar work
+        out of the projection loop.
+
+        The same rules apply as to a ``@var`` body: pure, no I/O, no
+        dependence on evaluation order. Nothing set here may depend on a
+        ``@var``, because none have been evaluated yet.
+        """
+
+    def at(self, slab, t: int):
+        """One period out of a ``(n_policies, n_periods)`` array from
+        ``setup()``, shaped to broadcast the way the executor expects.
+
+        The stochastic executor puts model-point fields in columns so they
+        broadcast against per-scenario rows; a slab column has to be shaped
+        the same way or it would broadcast against the scenario axis instead.
+        """
+        value = slab[..., t]
+        return value[..., None] if self.scenarios is not None else value
 
     @classmethod
     def var_names(cls) -> list[str]:

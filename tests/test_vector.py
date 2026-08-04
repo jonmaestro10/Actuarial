@@ -6,6 +6,7 @@ round identically, so results must agree *bitwise* — any drift means one
 path is doing different arithmetic and is a bug, not noise.
 """
 
+import numpy as np
 import pytest
 
 from engine.core.runner import run
@@ -81,3 +82,70 @@ def test_batch_preserves_integer_dtype_for_table_indexing():
     batch = to_batch(TERM_MPS)
     assert batch.age_at_entry.dtype.kind == "i"
     assert batch.sum_assured.dtype.kind == "f"
+
+
+# --- chunked execution -----------------------------------------------------
+
+
+def test_chunking_is_bitwise_identical_to_one_block():
+    """Chunking is a memory-layout decision, not a numerical one: model
+    points are independent, so splitting the block cannot move a bit. This is
+    what licenses the executor to choose a chunk size on its own."""
+    from engine.core.vector import default_chunk_size
+
+    whole = run_vectorized(
+        TermLife, TERM_MPS, ASSUMPTIONS, proj_len=40, outputs=TERM_VARS,
+        chunk_size=len(TERM_MPS),
+    )
+    for chunk_size in (1, 2, 3, len(TERM_MPS) + 5):
+        chunked = run_vectorized(
+            TermLife, TERM_MPS, ASSUMPTIONS, proj_len=40,
+            outputs=TERM_VARS, chunk_size=chunk_size,
+        )
+        assert chunked.mp_ids == whole.mp_ids
+        for name in TERM_VARS:
+            assert np.array_equal(chunked.array(name), whole.array(name)), (
+                f"chunk_size={chunk_size} var={name}"
+            )
+
+
+def test_default_chunk_shrinks_as_the_projection_lengthens():
+    from engine.core.vector import MIN_CHUNK_POLICIES, default_chunk_size
+
+    annual = default_chunk_size(60)
+    monthly = default_chunk_size(720)
+    assert annual > monthly >= MIN_CHUNK_POLICIES
+    # Never degenerate, however long the projection.
+    assert default_chunk_size(100_000) == MIN_CHUNK_POLICIES
+
+
+def test_a_model_that_couples_model_points_is_not_chunked():
+    """The flag a pooled variable will need: reducing across model points
+    inside a chunk would reduce over the wrong population, so the runner has
+    to keep the block whole. Asserted by observing the batch each instance
+    actually receives."""
+    seen = []
+
+    class Coupled(TermLife):
+        couples_model_points = True
+
+        def setup(self):
+            seen.append(self.mp.n)
+
+    run_vectorized(
+        Coupled, TERM_MPS, ASSUMPTIONS, proj_len=40, outputs=TERM_VARS,
+        chunk_size=1,
+    )
+    assert seen == [len(TERM_MPS)]
+
+    seen.clear()
+
+    class Independent(TermLife):
+        def setup(self):
+            seen.append(self.mp.n)
+
+    run_vectorized(
+        Independent, TERM_MPS, ASSUMPTIONS, proj_len=40, outputs=TERM_VARS,
+        chunk_size=1,
+    )
+    assert seen == [1] * len(TERM_MPS)

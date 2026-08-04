@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
-test = ["pytest>=8"]
+test = ["pytest>=8", "python-dateutil>=2.8"]
 data = ["pyarrow>=15"]
 
 [tool.setuptools.packages.find]

@@ -37,11 +37,12 @@ result.aggregate("claims")   # deterministic per-time-step totals
 
 | Path | Contents |
 |---|---|
-| `engine/core/` | `@var` DSL, model base, runner, deterministic aggregation |
-| `engine/data/` | Assumptions and model points (Parquet/Arrow I/O: Phase 1) |
+| `engine/core/` | `@var` DSL, model base, executors, calendar, deterministic aggregation |
+| `engine/data/` | Assumptions, mortality basis, yield curves, model points, scenarios |
 | `engine/library/` | Product templates — each ships with golden tests |
 | `tests/` | DSL mechanics, closed-form golden tests, reference reconciliation |
-| `docs/` | RFCs and design notes |
+| `scripts/` | Benchmarks and the VPLA parity harness |
+| `docs/` | RFCs, design notes, and prior-art reviews |
 
 ## Status
 
@@ -58,11 +59,47 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
 - Model points round-trip through Parquet (`pip install -e ".[data]"`).
 - **Stochastic executor**: `run_stochastic()` broadcasts model points
   against a `ScenarioSet` into `(time, model point, scenario)` slabs with
-  no template changes. First VA-family template: unit-linked with GMDB
-  rider (guarantee strain, fee income, maturity values). Golden layers:
-  zero-vol closed forms, bitwise slab-vs-single-scenario consistency, a
-  risk-neutral martingale test, and pinned-seed determinism.
+  no template changes. Golden layers: zero-vol closed forms, bitwise
+  slab-vs-single-scenario consistency, a risk-neutral martingale test, and
+  pinned-seed determinism.
+- **VA/unit-linked library**: `UnitLinkedGMDB` (the seed) and
+  `UnitLinkedGMxB` — GMDB, GMAB and GMWB on one contract, with a
+  ratcheting benefit base, fund-capped rider charges, and **dynamic lapse**
+  driven by how well funded the guarantees are. Turning every rider off
+  makes the two templates bitwise identical. Closed forms cover the GMWB
+  account run-down and its exact exhaustion year, the ratchet's running
+  maximum, and the GMAB maturity payment; an independent forward-loop
+  reference with every rider on reconciles at 1e-12.
+- **Layer 0 basis, taken from VPLA** ([RFC-002](docs/rfc-002-basis.md)):
+  `MortalityBasis` (fractional-age UDD/linear splits with actual or 30/360
+  day count, 1-D and generational improvement scales, a limiting age),
+  `YieldCurve` (term structure at any payment frequency), and annuity
+  factors — single life, life-and-certain, joint life, reversionary — over a
+  whole block at once. The VPLA calculations were validated against Society
+  of Actuaries calculators, so they were promoted whole rather than
+  rewritten: **408,000 period mortality rates are compared for bitwise
+  equality** against a literal transcription of the original, and
+  `scripts/vpla_parity.py` reruns that against a real VPLA checkout on the
+  actual CPM2014/CPM2014B tables. Same numbers, ~400x faster per life.
+- **Any payment frequency in the projection loop**: `t` counts payment
+  periods, not years. A `TimeAxis` places each period on a real calendar
+  date from each policy's own valuation date, and a `setup()` hook lets a
+  template build survival curves and discount vectors for the whole axis in
+  one call before the loop starts ([RFC-001](docs/rfc-001-dsl.md)). First
+  template on it: `PayoutAnnuity` — monthly, with certain periods and
+  reversionary benefits projected as cashflows, its terms reconciled
+  **bitwise** to the Layer 0 annuity factor.
+- **Chunked execution**: the vectorized executor splits a block so the
+  working set stays in cache — ~3.6x on a monthly block, and bitwise
+  identical, because model points are independent. 100,000 annuitants x 720
+  monthly periods on the full basis runs in under two minutes
+  (`scripts/benchmark_monthly.py`).
+- **VPLA review and reconciliation**:
+  [docs/vpla-review.md](docs/vpla-review.md) is the structural review the
+  above came from, with the defects found and the architectural gap the
+  pooled variable-payment product opens up in the DSL.
 
-Next: kernel fusion/compilation (stochastic runs are memory-bound in
-pure NumPy), GMAB/GMWB riders and dynamic lapse for the VA family,
-scenario-set file adapters, and the run registry.
+Next: the cross-model-point reduction the pooled variable-payment product
+needs — the last thing between the engine and a full VPLA — then moving the
+remaining templates onto the basis, kernel fusion, scenario-set file
+adapters, and the run registry.
