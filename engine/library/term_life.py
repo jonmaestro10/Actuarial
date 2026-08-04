@@ -41,8 +41,9 @@ class TermLife(Model):
     @var(assumption="mortality")
     def q_x(self, t):
         """Annual mortality rate applying during year t (0 after the term)."""
-        table = self.assumptions.mortality
-        return table.q_at(table.clip_age(self.age(t))) * self.in_term(t)
+        return self.assumptions.annual_q(
+            self.age(t), sex=getattr(self.mp, "sex", None), offset=t
+        ) * self.in_term(t)
 
     @var(assumption="lapse")
     def lapse_rate(self, t):

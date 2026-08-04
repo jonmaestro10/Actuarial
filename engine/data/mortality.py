@@ -1,8 +1,9 @@
 """The VPLA mortality basis, made first class and vectorized.
 
-``engine/data/assumptions.py`` carries a deliberately minimal annual
-``MortalityTable`` for the toy templates. This module is the real basis, a
-direct promotion of ``application/mortality_table.py`` from
+This is the engine's only mortality lookup. ``MortalityTable`` in
+``engine/data/assumptions.py`` is a unisex, non-improving *view* over it for
+the annual templates, not a second implementation. A direct promotion of
+``application/mortality_table.py`` from
 jonmaestro10/VPLA — validated there against Society of Actuaries
 calculators — with three layers:
 
@@ -279,6 +280,51 @@ class MortalityBasis:
         ) + (1.0 - w) * self._q[female, idx] * self.improvement_factor(
             female, clipped, year
         )
+
+    def clip_age(self, ages):
+        """Clamp ages into the table's range.
+
+        For indicator-masked lookups only: a template projecting past the end
+        of a product phase reaches ages it never actually uses, and clipping
+        keeps the lookup in range without inventing a rate that then gets
+        multiplied by zero anyway. Everything else should pass a real age and
+        let it raise.
+        """
+        return np.clip(np.asarray(ages, dtype=np.int64), self.min_age, self.max_age)
+
+    def q_at(self, ages, sex=None, year=None):
+        """``q_x`` by whole age — the annual view of this basis.
+
+        The lookup the annual templates use, and the same one
+        ``period_mortality`` uses per age: table rate, held flat above the
+        last tabulated age, times the improvement factor for the calendar
+        year. With no improvement scale it is the raw table.
+
+        ``sex`` may be omitted when the basis carries only one. ``year``
+        defaults to ``year_start``, where improvement is neutral, so a
+        caller that does not model calendar time gets the base table.
+        """
+        ages = np.asarray(ages, dtype=np.int64)
+        if np.any(ages < self.min_age) or np.any(ages > self.max_age):
+            raise KeyError(
+                f"age(s) outside mortality table range "
+                f"[{self.min_age}, {self.max_age}]"
+            )
+        if sex is None:
+            if len(self.sexes) != 1:
+                raise ValueError(
+                    f"basis carries sexes {self.sexes}; q_at needs one of them"
+                )
+            sex_index = np.zeros_like(ages)
+        else:
+            sex_index = self.sex_indices(sex).reshape(-1)
+            # Ages arrive per policy, or per (policy, scenario) under the
+            # stochastic executor. Align on the leading model-point axis.
+            while sex_index.ndim < np.ndim(ages):
+                sex_index = sex_index[..., None]
+            sex_index = np.broadcast_to(sex_index, np.shape(ages))
+        year = self.year_start if year is None else year
+        return self.q(ages, sex_index, np.broadcast_to(year, np.shape(ages)))
 
     def sex_indices(self, sex) -> np.ndarray:
         codes = np.atleast_1d(np.asarray(sex, dtype=object))

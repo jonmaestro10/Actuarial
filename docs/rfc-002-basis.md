@@ -193,9 +193,16 @@ Named here so the next phase has a list rather than a memory:
   variable kind (RFC-001) and `VariablePayoutAnnuity`, which is the full
   VPLA product — pooled adjustment, revaluation frequency, cohort mortality
   release — reconciled against the reference `valuation_step`.
-- Only the payout annuity is on the new basis. The term-life, fixed-annuity
-  and unit-linked templates still run annually on the flat
-  `assumptions.MortalityTable`; moving them is mechanical but changes their
-  golden values, so it wants its own change note.
+- ~~Only the payout annuity is on the new basis.~~ Done, and without moving
+  a golden value: `MortalityTable` is now a unisex, non-improving view over
+  `MortalityBasis` rather than a second lookup, and every template reads
+  mortality through `Assumptions.annual_q`. The annual templates therefore
+  accept sex-distinct rates and improvement scales unchanged
+  (`tests/test_one_mortality_basis.py`).
+- The annual templates still index by `age_at_entry + t` rather than by a
+  date, so they get the *table* from the basis but not its fractional-age
+  splits. Moving them onto a `TimeAxis` — as `PayoutAnnuity` already is —
+  would change their golden values, so it wants its own change note.
+- No select-and-ultimate period and no multi-decrement tables (PLAN §5.1).
 - Mortality is unisex-or-blended; no select-and-ultimate period, and no
   multi-decrement tables.

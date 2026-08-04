@@ -42,8 +42,9 @@ class FixedAnnuity(Model):
     @var(assumption="mortality")
     def q_x(self, t):
         """Annual mortality rate applying during year t (both phases)."""
-        table = self.assumptions.mortality
-        return table.q_at(table.clip_age(self.age(t)))
+        return self.assumptions.annual_q(
+            self.age(t), sex=getattr(self.mp, "sex", None), offset=t
+        )
 
     @var
     def pols_if(self, t):
