@@ -30,7 +30,7 @@ YEAR_START = 2014
 
 RATES = {
     sex: {
-        age: min(0.0004 * 1.09 ** (age - MIN_AGE) * (1.0 if sex == "M" else 0.85), 1.0)
+        age: min(0.0004 * 1.09 ** (age - MIN_AGE) * (1.0 if sex == "M" else 0.85), 0.6)
         for age in range(MIN_AGE, MAX_AGE + 1)
     }
     for sex in ("M", "F")
@@ -283,3 +283,76 @@ def test_bad_configuration_is_refused():
 
 def test_omega_is_the_vpla_limiting_age():
     assert OMEGA == 120
+
+
+# --- the additive UDD split can exceed 1 -----------------------------------
+
+# A table reaching q = 1 at its last age, like CPM2014 does.
+SATURATING = {
+    sex: {age: (1.0 if age >= 110 else 0.02) for age in range(MIN_AGE, MAX_AGE + 1)}
+    for sex in ("M", "F")
+}
+
+
+def test_period_mortality_can_exceed_one_exactly_as_vpla_does():
+    """VPLA splits a period straddling a birthday by *adding* the two parts,
+    and a sum of that shape is not a probability: past roughly q = 0.8 it
+    exceeds 1. CPM2014 — the production table — reaches q = 1 at its last
+    age, so any valuation off a policy anniversary hits this above age 115.
+
+    The rate is reproduced rather than corrected, because parity on
+    ``period_mortality`` is the whole promise of this class and hiding the
+    defect would make the parity harness lie about it.
+    """
+    kwargs = dict(year_start=YEAR_START, use_improvement=False, calc="udd",
+                  actual_daycount=True)
+    reference = ReferenceMortalityTable(SATURATING, **kwargs)
+    basis = MortalityBasis(SATURATING, **kwargs)
+    dob, valuation = date(1946, 6, 30), date(2021, 1, 1)  # mid policy year
+
+    rates = basis.period_mortality([dob], [valuation], ["M"], 1, 60)[0]
+    over_one = np.flatnonzero(rates > 1.0)
+    assert over_one.size, "expected the additive split to exceed 1"
+    for k in over_one[:3]:
+        want = reference.mortality_period(
+            dob, valuation + relativedelta(months=12 * int(k)), "M", 1
+        )
+        assert rates[k] == want  # bitwise, defect and all
+        assert want > 1.0
+
+
+def test_survival_never_leaves_the_unit_interval():
+    """The consequence of the above, and the one place the basis refuses to
+    follow: accumulating ``1 - q`` with ``q > 1`` sends survival negative and
+    it never recovers. A survival probability is clipped into [0, 1] before
+    it is accumulated, so the curve stays a curve."""
+    kwargs = dict(year_start=YEAR_START, use_improvement=False, calc="udd",
+                  actual_daycount=True)
+    reference = ReferenceMortalityTable(SATURATING, **kwargs)
+    basis = MortalityBasis(SATURATING, **kwargs)
+    dob, valuation = date(1946, 6, 30), date(2021, 1, 1)
+
+    theirs = reference.survival_factors(dob, valuation, "M", 1, 60)
+    assert min(theirs) < 0.0, "the original goes negative here"
+
+    ours = basis.survival_curve([dob], [valuation], ["M"], 1, 60)[0]
+    assert np.all(ours >= 0.0)
+    assert np.all(ours <= 1.0)
+    assert np.all(np.diff(ours) <= 0.0)  # and stays non-increasing
+    # Identical right up to the point the original stops being a probability.
+    first_bad = int(np.argmax(np.asarray(theirs) < 0.0))
+    assert list(ours[:first_bad]) == theirs[:first_bad]
+
+
+def test_the_clip_is_a_no_op_on_a_well_formed_table():
+    """It only ever engages on rates the split has already broken — which is
+    why every bitwise comparison in this file still holds."""
+    _, basis = build(GENERATIONAL_SCALE, True, "udd", True)
+    reference, _ = build(GENERATIONAL_SCALE, True, "udd", True)
+    for dob in DOBS:
+        for valuation in VALUATIONS:
+            rates = basis.period_mortality([dob], [valuation], ["M"], 12, 720)[0]
+            assert np.all(rates <= 1.0)
+            assert list(basis.survival_curve([dob], [valuation], ["M"], 12, 720)[0]) == (
+                reference.survival_factors(dob, valuation, "M", 12, 720)
+            )

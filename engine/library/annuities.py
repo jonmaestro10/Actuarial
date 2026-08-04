@@ -85,6 +85,28 @@ def deferred_annuity_values(discount, survival):
     return np.cumsum(terms[..., ::-1], axis=-1)[..., ::-1]
 
 
+def prospective_annuity_factors(discount, survival, freq: int):
+    """``ä_{x+t}`` for every ``t`` — the annuity factor a life still in
+    payment attracts at each future period, per survivor.
+
+    This is VPLA's ``annuity_factors_future_value``: the time-0 value of the
+    payments from period ``t`` onward, re-based onto a survivor at ``t`` by
+    dividing out the discount and survival to that point.
+
+    One fix over the original, which divides straight through: survival
+    reaches exactly zero at the end of the table, and the original silently
+    produces ``inf`` or ``nan`` there (docs/vpla-review.md §6.5). A period
+    nobody reaches has no factor, so it is zero.
+    """
+    discount, survival = _aligned(discount, survival)
+    remaining = np.cumsum((discount * survival)[..., ::-1], axis=-1)[..., ::-1]
+    reachable = discount * survival
+    return np.divide(
+        remaining, reachable * freq,
+        out=np.zeros_like(remaining), where=reachable > 0.0,
+    )
+
+
 def joint_life_factor(discount, survival_x, survival_y):
     """``ä_xy = Σ_k v_k · ₖp_x · ₖp_y`` — payments while **both** live.
 

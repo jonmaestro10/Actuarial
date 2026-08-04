@@ -116,6 +116,14 @@ worse than a loud one:
 - **Money rounding is not reproduced.** VPLA applies `np.around(..., 2)`
   inside its roll-forward. Rounding is an output policy; in a recursion it
   makes results depend on payment frequency and destroys reconciliation.
+- **A survival probability stays a probability.** `period_mortality` is
+  reproduced exactly, including the additive fractional-age split that
+  exceeds 1 above roughly `q = 0.8` (review §6.15) — parity is the promise,
+  and correcting the rate would make the parity harness lie about the
+  defect. But `survival_curve` clips the per-period factor into `[0, 1]`
+  before accumulating it, so the curve cannot go negative and stay there.
+  On a well-formed table the clip never engages, which is why every bitwise
+  comparison in the suite still holds; on CPM2014 above age 115 it does.
 
 The constant improvement scale extrapolates backwards for a valuation before
 `year_start` while the generational scale does not — an asymmetry in the
@@ -181,8 +189,10 @@ Named here so the next phase has a list rather than a memory:
 - ~~Model points carry no second life.~~ Done: `PayoutAnnuity` takes
   `spouse_dob` / `spouse_sex` / `joint_percent`, and projects the
   reversionary benefit as a cashflow rather than only as a factor.
-- The pool adjustment still has no home in the DSL (review §7.1). It is now
-  the last thing between the engine and a full VPLA product.
+- ~~The pool adjustment still has no home in the DSL.~~ Done: the `@pool`
+  variable kind (RFC-001) and `VariablePayoutAnnuity`, which is the full
+  VPLA product — pooled adjustment, revaluation frequency, cohort mortality
+  release — reconciled against the reference `valuation_step`.
 - Only the payout annuity is on the new basis. The term-life, fixed-annuity
   and unit-linked templates still run annually on the flat
   `assumptions.MortalityTable`; moving them is mechanical but changes their

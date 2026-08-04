@@ -108,16 +108,52 @@ cannot fit (path-dependent algorithms better written as loops) will get an
 explicit `@procedural` marker: still traced for lineage, excluded from
 kernel fusion, flagged in generated model documentation.
 
+## `@pool` — reductions across the model-point axis
+
+A `@var` is one formula per model point. A `@pool` is one formula per
+*block*: its body reduces across the model-point axis, so every policy sees
+the same value at a given `t`.
+
+```python
+@pool
+def adjustment(self, t):
+    return self.pool_sum(self.assets(t)) / self.pool_sum(self.liability(t)) - 1.0
+
+@var
+def pension(self, t):
+    return self.pension_carried(t) * (1.0 + self.adjustment(t))
+```
+
+This is what a pooled variable-payment adjustment, a with-profits bonus
+declaration or an asset share needs, and what a per-policy formula cannot
+express — no member's pension can be computed from that member's own data
+alone.
+
+The contract is otherwise unchanged, and the graph must still be acyclic. A
+pooled variable may read per-policy variables at the same `t`, and per-policy
+variables may read it; what it may not do is depend on a per-policy variable
+that in turn depends on it. In a variable-payment pool the liability being
+valued is the one carried *into* the period, not the one the adjustment
+produces — which is what keeps that acyclic.
+
+Reduce with `self.pool_sum`, which sums the model-point axis and leaves any
+scenario axis alone, so the same formula reduces within each scenario rather
+than across them. It uses NumPy's pairwise summation: deterministic for a
+fixed block order and length, which is what reproducibility needs.
+
+Declaring one has a real consequence for execution. The vectorized executor
+normally chunks a block for cache locality — safe precisely because model
+points are independent — and it stops doing so for a model with pooled
+variables, because a reduction over a chunk is a reduction over the wrong
+population. That is detected from the variable kind, not from a flag anyone
+has to remember to set.
+
 ## Open questions (deliberately deferred)
 
-- **Reductions across the model-point axis.** Every `@var` today is a
-  function of *one* model point, which is what lets the vectorized executor
-  chunk a block for cache locality without moving a number. A pooled
-  variable-payment adjustment, a with-profits bonus declaration or an asset
-  share is a reduction over the whole population inside the time loop, and
-  has no spelling. `Model.couples_model_points` marks a model that would
-  need one, so the runner stops chunking it; the variable kind itself is
-  still to be designed. See docs/vpla-review.md §7.1.
+- Reductions other than a sum (a pooled maximum for a guarantee floor, a
+  weighted median for a smoothing rule). `pool_sum` covers the products in
+  the library today; the general shape is a reduction registry with a stated
+  determinism guarantee per reduction.
 - Cycle detection with a readable error path (needs the tracer).
 - Typed variables (`NUM`/`BOOL`/array) — revisit when the compiler needs
   dtype information.
