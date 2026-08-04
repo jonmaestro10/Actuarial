@@ -56,6 +56,14 @@ class ModelPointBatch:
 
 
 def to_batch(modelpoints: Iterable[ModelPoint]) -> ModelPointBatch:
+    """Struct-of-arrays view of a set of model points.
+
+    A batch passes straight through, so a caller that has already built one
+    — a nested run flattening restarted states, say — is not made to take it
+    apart into objects and put it back together.
+    """
+    if isinstance(modelpoints, ModelPointBatch):
+        return modelpoints
     mps = list(modelpoints)
     if not mps:
         raise ValueError("no model points supplied")

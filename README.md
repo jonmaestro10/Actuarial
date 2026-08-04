@@ -132,6 +132,25 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Nested stochastic** ([RFC-006](docs/rfc-006-nested.md)): PLAN §4.4's
+  "real killer workload", and the last Phase 2 exit criterion. An outer
+  projection runs the block under real-world scenarios; at dates along each
+  outer path the guarantees are valued by a risk-neutral projection starting
+  from the state that path has reached. The load-bearing piece is that
+  restarting is **exact** — `Model.restart_fields(t)` works because the
+  `t == 0` branch of every stock variable reads one model-point field, so a
+  template's state and its model point are the same list of numbers, and a
+  contract restarted mid-life reproduces the straight-through projection
+  **bitwise** across fourteen variables including the ratcheting benefit
+  base. What makes the cost tractable is batching rather than cleverness:
+  the outer states at one date are model points, so **one** inner projection
+  values all of them, and the number of inner runs is the number of
+  valuation dates rather than the number of outer nodes
+  (`scripts/benchmark_nested.py`: 200 policies × 100 outer × 200 inner at 5
+  dates = 20M inner cells in 59 s). Every value carries its Monte Carlo
+  standard error, and outer nodes at a date share inner scenarios on purpose
+  — the interesting quantity is how guarantee cost *differs* between states,
+  and independent draws would bury that under noise about nothing.
 - **The windowed forward loop**: PLAN §4.2 asks for the recursion over `t`
   to become "a forward loop over preallocated arrays", and both array
   executors now are one — periods written straight into their row of the
@@ -259,5 +278,8 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   different run ids and the same results digest, which is the
   bitwise-equivalence claim stated as an audit trail.
 
-Layer 0 in PLAN §5.1 is now complete. Next: reductions beyond a sum for
-`@pool`, kernel fusion, and multi-node scale-out.
+Layer 0 in PLAN §5.1 is complete, as are the Phase 2 exit criteria except
+multi-node scale-out. Next: kernel fusion (the graph and the forward loop
+are in place; nothing is compiled yet), reductions beyond a sum for `@pool`,
+LSMC proxies checked against the nested prototype, and multi-node
+scale-out.
