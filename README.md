@@ -132,6 +132,20 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Tax hooks** (PLAN §5.1 Layer 0 — the last one): deliberately small,
+  because tax regimes differ by jurisdiction more than any other assumption
+  and a library that shipped one as *the* tax calculation would be wrong
+  everywhere else while looking authoritative. A rate, a base, and an
+  explicit statement of **what happens to a loss** — relieved in full,
+  not at all, or carried forward against later profits. The first year of a
+  policy reliably loses money, so that choice is worth more than most
+  assumption changes anybody argues about, and the three are ordered:
+  `full < carry_forward < none`. Tax runs on a **profit signature**, not on
+  a present value: under full relief the two agree exactly (asserted as an
+  identity), and under either other relief the gap is precisely the value of
+  the losses that never got relieved — which a present-value calculation
+  would quietly assume away. Investment tax reduces what a fund earns, on
+  the unit-linked and deferred-annuity templates.
 - **Reinsurance** (PLAN §5.1 Layer 0, and the last of them): quota share,
   surplus and per-risk excess of loss, on original or risk-premium terms
   with ceding commission. The proportional treaties satisfy an invariant
@@ -213,5 +227,5 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   different run ids and the same results digest, which is the
   bitwise-equivalence claim stated as an audit trail.
 
-Next: tax hooks (the last Layer 0 primitive), reductions beyond a sum for
+Layer 0 in PLAN §5.1 is now complete. Next: reductions beyond a sum for
 `@pool`, kernel fusion, and multi-node scale-out.

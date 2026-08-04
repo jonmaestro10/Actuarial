@@ -23,6 +23,7 @@ from engine.data.decrements import Decrements
 from engine.data.expenses import Commission, ExpenseScale, Expenses
 from engine.data.mortality import MortalityBasis
 from engine.data.reinsurance import NoReinsurance, Treaty
+from engine.data.tax import TaxBasis
 
 #: Sex code for a table that does not distinguish.
 UNISEX = "U"
@@ -179,7 +180,8 @@ class Assumptions:
                  decrements: "Decrements | str | None" = None,
                  expenses: "Expenses | None" = None,
                  commission: "Commission | None" = None,
-                 reinsurance: "Treaty | None" = None):
+                 reinsurance: "Treaty | None" = None,
+                 tax: "TaxBasis | None" = None):
         if freq < 1 or 12 % freq:
             raise ValueError(f"payment frequency {freq} must divide 12")
         if not 0.0 <= lapse < 1.0:
@@ -225,6 +227,9 @@ class Assumptions:
         #: The reinsurance treaty covering this block. Off unless asked for,
         #: so a gross-only projection is unchanged.
         self.reinsurance = reinsurance if reinsurance is not None else NoReinsurance()
+        #: Tax basis. A zero-rate basis is the default, so a pre-tax
+        #: projection is unchanged and no template needs a branch.
+        self.tax = tax if tax is not None else TaxBasis()
         self.crediting_rate = crediting_rate
         self.amc = amc
         self.gmdb_fee = gmdb_fee
@@ -250,6 +255,7 @@ class Assumptions:
             "expenses": self.expenses,
             "commission": self.commission,
             "reinsurance": self.reinsurance,
+            "tax": self.tax,
             "crediting_rate": self.crediting_rate,
             "amc": self.amc,
             "gmdb_fee": self.gmdb_fee,
@@ -335,6 +341,19 @@ class Assumptions:
     def per_period(self, annual_amount):
         """An annual cashflow spread evenly over the periods of a year."""
         return annual_amount / self.freq
+
+    def period_accumulation(self):
+        """One period of interest — the factor carrying a start-of-period
+        flow to the end of that period.
+
+        The exact inverse of one step of :meth:`discount`, which is what
+        makes a profit signature built with it discount back to the same
+        present value the individual cashflows do. Exactly ``1 + interest``
+        at ``freq = 1``, without evaluating a power.
+        """
+        if self.freq == 1:
+            return 1.0 + self.interest
+        return (1.0 + self.interest) ** (1.0 / self.freq)
 
     def discount(self, t: int):
         """Discount factor from the start of period ``t`` back to time 0."""

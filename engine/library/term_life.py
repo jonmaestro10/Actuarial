@@ -38,7 +38,7 @@ Model point fields: ``age_at_entry`` (int), ``term_years`` (int),
 its select period at projection time zero.
 Assumption bindings: ``mortality`` (table), ``lapse`` (flat annual rate),
 ``interest`` (flat annual rate), ``expenses``, ``commission``,
-``reinsurance``.
+``reinsurance``, ``tax``.
 
 Expenses come in three lines because they fall at three different times and
 a pricing basis argues about them separately: **acquisition** once at
@@ -57,6 +57,15 @@ the policy: a surplus treaty cedes nothing on a small sum assured and most
 of a large one, and an excess-of-loss cover pays a layer of each claim
 rather than a share of it. ``net_claims`` is what the cedant is left
 carrying. No treaty is the default. See engine/data/reinsurance.py.
+
+``profit_before_tax`` is the profit signature — every cashflow of a period,
+with the start-of-period ones carried to its end at the interest rate — so
+that discounting it at ``v(t + 1)`` gives the same present value as
+discounting each cashflow at its own date. Tax runs on that rather than on a
+present value, because tax is assessed on a period's result, and because a
+present-value calculation would silently assume losses are relieved in full.
+What actually happens to a loss is the ``relief`` on the tax basis, and the
+first year of a policy reliably makes one. See engine/data/tax.py.
 
 Formulas are written in indicator style — conditions on model-point data
 appear as multiplicative ``(t < term) * 1.0`` factors, never as ``if``
@@ -287,6 +296,60 @@ class TermLife(Model):
             self.duration(t)
         )
 
+    # --- profit and tax ---------------------------------------------------
+
+    @var
+    def profit_before_tax(self, t):
+        """Profit emerging over period t, valued at its end.
+
+        The classic profit signature: every cashflow of the period, with the
+        start-of-period ones carried to the period end at the interest rate.
+        Built that way so that discounting it back at ``v(t + 1)`` gives the
+        same present value as discounting each cashflow at its own date —
+        ``pv_profit_before_tax`` and ``net_pv`` agree, which is the check
+        that the signature really is the same business.
+
+        Tax runs on this rather than on a present value, because tax is
+        assessed on a period's result.
+        """
+        start = (
+            self.premiums(t)
+            + self.reinsurance_commission(t)
+            + self.commission_clawback(t)
+            - self.expenses(t)
+            - self.initial_expenses(t)
+            - self.commission(t)
+            - self.reinsurance_premium(t)
+        )
+        end = -self.net_claims(t) - self.claim_expenses(t)
+        return start * self.assumptions.period_accumulation() + end
+
+    @var(assumption="tax")
+    def tax_loss_bf(self, t):
+        """Tax loss carried into period t.
+
+        Only ever non-zero on a ``carry_forward`` basis; the other two
+        reliefs make ``carry_forward_step`` identically zero, so this
+        recursion is the same expression whichever basis is supplied and no
+        template branches on it.
+        """
+        if t == 0:
+            return self.mp.init_pols * 0.0
+        return self.assumptions.tax.carry_forward_step(
+            self.profit_before_tax(t - 1), self.tax_loss_bf(t - 1)
+        )
+
+    @var(assumption="tax")
+    def tax(self, t):
+        """Tax charged on period t's profit, paid at the period end."""
+        return self.assumptions.tax.on_profit(
+            self.profit_before_tax(t), self.tax_loss_bf(t)
+        )
+
+    @var
+    def profit_after_tax(self, t):
+        return self.profit_before_tax(t) - self.tax(t)
+
     @var(assumption="interest")
     def v(self, t):
         """Discount factor from the start of period t back to time 0."""
@@ -340,9 +403,25 @@ class TermLife(Model):
             for t in range(self.proj_len)
         )
 
+    def pv_profit_before_tax(self):
+        """The profit signature discounted back — equal to ``net_pv``, by
+        construction rather than by coincidence."""
+        return sum(
+            self.profit_before_tax(t) * self.v(t + 1)
+            for t in range(self.proj_len)
+        )
+
+    def pv_tax(self):
+        return sum(self.tax(t) * self.v(t + 1) for t in range(self.proj_len))
+
+    def pv_profit_after_tax(self):
+        return self.pv_profit_before_tax() - self.pv_tax()
+
     def net_pv(self):
         """Premiums less every outgo: claims, all three expense lines,
         commission net of clawback, and reinsurance net of recoveries.
+
+        Before tax — ``pv_profit_after_tax`` is the figure net of it.
 
         With no expense basis, no commission and no treaty beyond the legacy
         per-policy expense, every added term is identically zero and this is

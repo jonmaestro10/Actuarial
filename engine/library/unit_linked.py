@@ -54,6 +54,13 @@ each is a stated convention rather than a consequence of the plumbing:
 - **The GMWB ratchet still steps annually.** It is an anniversary event;
   a monthly projection must not lock in twelve high-water marks a year.
 
+The fund earns its scenario return **net of investment tax**
+(``TaxBasis.investment_rate``), which is how a taxed life fund credits
+policyholders. A negative return is relieved in the fund by the same rate —
+one accepted treatment, not the only one, and a regime that disallows it
+overrides ``fund_grown``. The rate is zero unless asked for, and zero is the
+identity to the last bit.
+
 **Scenario returns are per period, not per year.** ``ScenarioSet.horizon``
 counts projection periods, which is what ``run_stochastic`` checks against
 ``proj_len``, so a monthly projection needs monthly returns. Nothing here
@@ -145,7 +152,9 @@ class UnitLinkedGMDB(Model):
     @var
     def fund_grown(self, t):
         """Fund after year-t growth, before charges."""
-        return self.fund_boy(t) * (1.0 + self.fund_ret(t)) * self.in_term(t)
+        return self.fund_boy(t) * (
+            1.0 + self.assumptions.tax.net_investment_return(self.fund_ret(t))
+        ) * self.in_term(t)
 
     @var(assumption="amc")
     def charges_per_pol(self, t):
@@ -326,7 +335,9 @@ class UnitLinkedGMxB(Model):
     @var
     def fund_grown(self, t):
         """Fund after year-t growth, before charges and withdrawals."""
-        return self.fund_boy(t) * (1.0 + self.fund_ret(t)) * self.in_term(t)
+        return self.fund_boy(t) * (
+            1.0 + self.assumptions.tax.net_investment_return(self.fund_ret(t))
+        ) * self.in_term(t)
 
     @var(assumption="amc")
     def charges_due(self, t):
