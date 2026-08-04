@@ -132,6 +132,18 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Reinsurance** (PLAN §5.1 Layer 0, and the last of them): quota share,
+  surplus and per-risk excess of loss, on original or risk-premium terms
+  with ceding commission. The proportional treaties satisfy an invariant
+  asserted directly — **retained plus ceded is the whole sum assured,
+  exactly, for every policy** — and excess of loss makes no such promise
+  because a layer is a function of the claim, not a partition of the risk.
+  The `lines` cap on a surplus treaty is the trap the class exists to make
+  visible: a four-line treaty on a 50,000 retention takes at most 200,000,
+  so a 500,000 policy leaves the cedant carrying 300,000, not 50,000.
+  Aggregate and catastrophe covers are **deliberately absent** — they are
+  statements about a portfolio, and modelling one as if it were per-risk
+  would understate the cedant's exposure.
 - **Expenses, inflation and commission** (PLAN §5.1 Layer 0): an expense
   loading is quoted on three bases at once — per policy, percent of premium,
   per mille sum assured — and falls in three lines that a pricing basis
@@ -201,6 +213,5 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   different run ids and the same results digest, which is the
   bitwise-equivalence claim stated as an audit trail.
 
-Next: tax hooks and reinsurance (the remaining Layer 0 primitives),
-reductions beyond a sum for `@pool`, kernel fusion, and multi-node
-scale-out.
+Next: tax hooks (the last Layer 0 primitive), reductions beyond a sum for
+`@pool`, kernel fusion, and multi-node scale-out.

@@ -37,7 +37,8 @@ Model point fields: ``age_at_entry`` (int), ``term_years`` (int),
 ``duration_in_force`` (int, default 0) for a block already part way through
 its select period at projection time zero.
 Assumption bindings: ``mortality`` (table), ``lapse`` (flat annual rate),
-``interest`` (flat annual rate), ``expenses``, ``commission``.
+``interest`` (flat annual rate), ``expenses``, ``commission``,
+``reinsurance``.
 
 Expenses come in three lines because they fall at three different times and
 a pricing basis argues about them separately: **acquisition** once at
@@ -50,6 +51,12 @@ optionally with clawback from early lapses. A bare ``expense_per_policy``
 is the renewal per-policy loading of a basis with nothing else in it, so the
 scalar form keeps its exact numbers; commission and clawback are off unless
 asked for. See engine/data/expenses.py.
+
+A reinsurance treaty is a property of the block but what it pays depends on
+the policy: a surplus treaty cedes nothing on a small sum assured and most
+of a large one, and an excess-of-loss cover pays a layer of each claim
+rather than a share of it. ``net_claims`` is what the cedant is left
+carrying. No treaty is the default. See engine/data/reinsurance.py.
 
 Formulas are written in indicator style — conditions on model-point data
 appear as multiplicative ``(t < term) * 1.0`` factors, never as ``if``
@@ -221,6 +228,51 @@ class TermLife(Model):
         a = self.assumptions
         return self.premiums(t) * a.commission.rate(self.duration(t))
 
+    # --- reinsurance ------------------------------------------------------
+
+    @var(assumption="reinsurance")
+    def reinsurance_recovery(self, t):
+        """Recovered from the reinsurer on the claims arising in period t.
+
+        A treaty is a property of the block, but what it pays depends on the
+        policy: a surplus treaty cedes nothing on a small sum assured and
+        most of a large one, and an excess-of-loss cover pays a layer of
+        each claim rather than a share of it. Both are the same call.
+        """
+        treaty = self.assumptions.reinsurance
+        return self.pols_death(t) * treaty.recovery_per_claim(
+            self.mp.sum_assured
+        )
+
+    @var
+    def net_claims(self, t):
+        """Death claims the cedant is left carrying."""
+        return self.claims(t) - self.reinsurance_recovery(t)
+
+    @var(assumption="reinsurance")
+    def reinsurance_premium(self, t):
+        """Premium ceded at the start of period t, by policies in force."""
+        a = self.assumptions
+        annual = a.reinsurance.annual_premium(
+            sum_assured=self.mp.sum_assured,
+            office_premium=self.mp.annual_premium,
+        )
+        return self.pols_if(t) * a.per_period(annual) * self.in_term(t)
+
+    @var(assumption="reinsurance")
+    def reinsurance_commission(self, t):
+        """Ceding commission received back on the premium ceded.
+
+        Income, not outgo: it is how the cedant recovers the acquisition
+        cost it has already paid on the ceded portion of the risk.
+        """
+        a = self.assumptions
+        annual = a.reinsurance.annual_commission(
+            sum_assured=self.mp.sum_assured,
+            office_premium=self.mp.annual_premium,
+        )
+        return self.pols_if(t) * a.per_period(annual) * self.in_term(t)
+
     @var(assumption="commission")
     def commission_clawback(self, t):
         """Initial commission recovered from policies lapsing in period t.
@@ -273,12 +325,27 @@ class TermLife(Model):
             for t in range(self.proj_len)
         )
 
-    def net_pv(self):
-        """Premiums less every outgo: claims, all three expense lines, and
-        commission net of clawback.
+    def pv_reinsurance(self):
+        """Net cost of the treaty: premium ceded, less commission received
+        and less what it recovers.
 
-        With no expense basis and no commission beyond the legacy
-        per-policy amount, every added term is identically zero and this is
+        One line rather than three, because a treaty is bought or not as a
+        whole — but the three are available separately as variables for
+        anyone who wants to see where the money went.
+        """
+        return sum(
+            (self.reinsurance_premium(t) - self.reinsurance_commission(t))
+            * self.v(t)
+            - self.reinsurance_recovery(t) * self.v(t + 1)
+            for t in range(self.proj_len)
+        )
+
+    def net_pv(self):
+        """Premiums less every outgo: claims, all three expense lines,
+        commission net of clawback, and reinsurance net of recoveries.
+
+        With no expense basis, no commission and no treaty beyond the legacy
+        per-policy expense, every added term is identically zero and this is
         the figure it always was.
         """
         return (
@@ -288,4 +355,5 @@ class TermLife(Model):
             - self.pv_initial_expenses()
             - self.pv_claim_expenses()
             - self.pv_commission()
+            - self.pv_reinsurance()
         )
