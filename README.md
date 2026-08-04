@@ -132,6 +132,22 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **LSMC proxies, with the error estimate that licenses them**
+  ([RFC-007](docs/rfc-007-lsmc.md)): PLAN §4.4 admits proxy models "as an
+  optional, clearly-labeled acceleration with error estimates", so this
+  arrives *after* the exact nested valuation rather than instead of it —
+  that is what a proxy has to be checked against. Value every outer node
+  with five inner scenarios instead of a thousand, regress the noisy results
+  on the state the template declares, and the surface lands within **2% at
+  200× less inner work**. The finding worth carrying away is that **no
+  in-sample statistic of the fit can tell you whether it worked**: the
+  residual describes how far the noisy node values sit from the surface, not
+  how far the surface sits from the truth, and across settings the ratio ran
+  from 0.11 to 1.84 with no pattern. At degree 3, two inner scenarios per
+  node give a *lower* residual than five while being five times further out
+  — the flattering direction, pinned by a test. And a proxy cannot be
+  measured better than its reference: two independent 1,000-inner references
+  differ by 1.00%, which is what a 2% proxy error is quoted against.
 - **Nested stochastic** ([RFC-006](docs/rfc-006-nested.md)): PLAN §4.4's
   "real killer workload", and the last Phase 2 exit criterion. An outer
   projection runs the block under real-world scenarios; at dates along each
@@ -281,5 +297,4 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
 Layer 0 in PLAN §5.1 is complete, as are the Phase 2 exit criteria except
 multi-node scale-out. Next: kernel fusion (the graph and the forward loop
 are in place; nothing is compiled yet), reductions beyond a sum for `@pool`,
-LSMC proxies checked against the nested prototype, and multi-node
-scale-out.
+cross-validated proxy bases, and multi-node scale-out.
