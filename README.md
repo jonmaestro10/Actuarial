@@ -132,6 +132,21 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **ESG file adapters** ([RFC-005](docs/rfc-005-esg.md)): scenarios can come
+  from a generator's output file rather than only from an in-process
+  generator, in either of the two layouts every vendor's output reduces to —
+  wide (row per scenario, column per period) or long (a tidy
+  `scenario, period, series, value` table, in CSV or Parquet). A
+  `ScenarioSet` now carries **named series**, so equity, bond, short-rate and
+  inflation travel together and a template written against `ret(t)` can be
+  pointed at any of them. The value is in what the readers refuse to guess: a
+  cumulative index converted without its base **raises**, because a
+  generator publishing on 100.0 and one publishing on 1.0 give
+  identical-looking files; a first period identical across every scenario is
+  reported, because that is what reading an index column as a return looks
+  like; and `check_risk_neutral` states the martingale test in **standard
+  errors** rather than basis points, since the same deviation is sampling
+  noise at 1,000 scenarios and damning at 1,000,000.
 - **Multiple decrements** ([RFC-004](docs/rfc-004-decrements.md)): the
   assumption basis states each decrement on its own — mortality *if nothing
   else removed lives*, lapse *if nobody died*. Turning those into who
@@ -158,4 +173,4 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
 
 Next: the unit-linked family sub-annually (its charges and scenario returns
 are annual-shaped and need a modelling decision first), reductions beyond a
-sum, kernel fusion, and scenario-set file adapters.
+sum, kernel fusion, and multi-node scale-out.
