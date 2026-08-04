@@ -69,7 +69,12 @@ class FixedAnnuity(Model):
         elapsed = (t + 1) / self.assumptions.freq if self.assumptions.freq != 1 else t + 1
         return (
             self.mp.premium
-            * (1.0 + self.assumptions.crediting_rate) ** elapsed
+            * (
+                1.0
+                + self.assumptions.tax.net_investment_return(
+                    self.assumptions.crediting_rate
+                )
+            ) ** elapsed
             * self.in_defer(t)
         )
 
