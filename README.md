@@ -132,6 +132,21 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **The windowed forward loop**: PLAN §4.2 asks for the recursion over `t`
+  to become "a forward loop over preallocated arrays", and both array
+  executors now are one — periods written straight into their row of the
+  output slab, and, because the dependency graph says how far back a model
+  can reach, everything older dropped from the memo as the loop advances. A
+  100,000-policy 60-year projection was holding hundreds of megabytes of
+  arrays nothing would read again; freeing them is worth more than any
+  arithmetic in the loop. **1.5x** on a 40k–100k block at the default chunk
+  size, **2.3x** unchunked, **1.9x** on a stochastic slab — and honestly
+  **nothing** on the monthly payout-annuity benchmark, where chunking had
+  already made the memo small. Bitwise identical across 136 output series,
+  five templates and both executors. Correctness does not rest on the traced
+  window being right: a value asked for after it was dropped **raises**,
+  naming the variable and period, rather than being silently recomputed in
+  a way that could cascade.
 - **The variable dependency graph** ([RFC-001](docs/rfc-001-dsl.md)):
   traced by *running* the model rather than by reading it, which is the only
   approach that works — `TermLife.pols_if` reaches `q_x` through two helper
