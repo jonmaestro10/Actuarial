@@ -332,7 +332,50 @@ Ordered by how soon the VA/VPLA line needs them:
 - **Second life on the model point**, for joint and reversionary benefits.
   The closed form in §3.3 (`ä_x + j(ä_y - ä_xy)`) is the specification.
 
-## 8. Verdict
+## 8. Addendum — what running the code confirmed
+
+§3 and §6 were written from reading the source. The basis has since been
+promoted into the engine (docs/rfc-002-basis.md) and reconciled against the
+checkout *as it runs*, via `scripts/vpla_parity.py`. Three things that
+review could only assert are now measured.
+
+**The core is exactly as described.** 36,000 period mortality rates,
+across five table/convention configurations at two payment frequencies on
+the real CPM2014 and CPM2014B tables, are **bitwise identical** between
+VPLA's `MortalityTable` and the engine's `MortalityBasis`. Annuity factors
+agree to 3.2e-14, which is summation order and nothing else. The fractional
+age split, the UDD conditioning, the 30/360 rounding, the generational
+scale's held-flat tail and the limiting age all reproduce exactly.
+
+**§6.1 is worse than stated.** The `joint_survivor_percent` validator does
+not merely mishandle an edge case — it makes the joint annuity
+*uncomputable*. Confirmed on the live class: passing `1.0` stores `None`,
+the `== 0` guard evaluates False, and the arithmetic raises `TypeError`.
+All 36 joint tests in `tests/test_joint_zero_rate.py` error today.
+
+**Two thirds of the committed golden values no longer hold.** Of the 72
+factors committed across the two test files:
+
+| | count | what it means |
+|---|---:|---|
+| Agree with VPLA as it runs | 36 | every single-life case; 0 disagreements with the engine |
+| Reproduce the committed constant | 42 | still-live goldens |
+| Committed constant stale | 14 | VPLA's own code no longer produces them — 12 are single-life monthly, where the engine matches VPLA to the last bit, so the constants drifted, not the arithmetic |
+| Joint constant shadowed | 16 | byte-identical to the corresponding *single-life* constant, the signature of having been recorded while the validator regression sent `joint_annuity_factor` down its `== 0` fall-through |
+
+The 18 **annual** joint constants are the only live evidence for the
+reversionary calculation, and the engine's closed form reproduces all
+eighteen — a factor VPLA can no longer compute at all.
+
+None of this touches the standing of the calculations themselves; the
+mathematics in §3 is sound and reproduces exactly. What it says is that the
+*test suite* guarding it has decayed: it cannot run offline (§6.12), a third
+of its constants are stale or shadowed, and the regression that broke the
+joint path went unnoticed because the tests that would have caught it were
+already unrunnable. That is the specific failure the engine's golden-test
+discipline exists to prevent, and it is now the case study for it.
+
+## 9. Verdict
 
 Take the **actuarial primitives** as reference implementations — they are
 correct, they are validated against published golden values, and §3.3 gives

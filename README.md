@@ -37,10 +37,11 @@ result.aggregate("claims")   # deterministic per-time-step totals
 
 | Path | Contents |
 |---|---|
-| `engine/core/` | `@var` DSL, model base, runner, deterministic aggregation |
-| `engine/data/` | Assumptions and model points (Parquet/Arrow I/O: Phase 1) |
+| `engine/core/` | `@var` DSL, model base, executors, calendar, deterministic aggregation |
+| `engine/data/` | Assumptions, mortality basis, yield curves, model points, scenarios |
 | `engine/library/` | Product templates — each ships with golden tests |
 | `tests/` | DSL mechanics, closed-form golden tests, reference reconciliation |
+| `scripts/` | Benchmarks and the VPLA parity harness |
 | `docs/` | RFCs, design notes, and prior-art reviews |
 
 ## Status
@@ -69,16 +70,23 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   account run-down and its exact exhaustion year, the ratchet's running
   maximum, and the GMAB maturity payment; an independent forward-loop
   reference with every rider on reconciles at 1e-12.
-- **VPLA reconciliation**: [docs/vpla-review.md](docs/vpla-review.md)
-  reviews the prior VPLA system and turns its projection logic into
-  reference model #1 for the VA family — engine annuity factors and
-  survival run-off reconciled against a dependency-free port of its core,
-  plus the reversionary closed form and the variable-payment pool
-  invariant. The review also names what Layer 0 still owes the VA line: a
-  monthly time axis, fractional-age mortality, a yield curve, improvement
-  scales, a second life on the model point, and a way to express
-  cross-model-point reductions in the DSL.
+- **Layer 0 basis, taken from VPLA** ([RFC-002](docs/rfc-002-basis.md)):
+  `MortalityBasis` (fractional-age UDD/linear splits with actual or 30/360
+  day count, 1-D and generational improvement scales, a limiting age),
+  `YieldCurve` (term structure at any payment frequency), and annuity
+  factors — single life, life-and-certain, joint life, reversionary — over a
+  whole block at once. The VPLA calculations were validated against Society
+  of Actuaries calculators, so they were promoted whole rather than
+  rewritten: **408,000 period mortality rates are compared for bitwise
+  equality** against a literal transcription of the original, and
+  `scripts/vpla_parity.py` reruns that against a real VPLA checkout on the
+  actual CPM2014/CPM2014B tables. Same numbers, ~400x faster per life.
+- **VPLA review and reconciliation**:
+  [docs/vpla-review.md](docs/vpla-review.md) is the structural review the
+  above came from, with the defects found and the architectural gap the
+  pooled variable-payment product opens up in the DSL.
 
-Next: the `@pool` cross-model-point reduction the VPLA product needs,
-kernel fusion/compilation (stochastic runs are memory-bound in pure NumPy),
-scenario-set file adapters, and the run registry.
+Next: a monthly time axis in the `@var` executor (the basis is already
+frequency-aware; the projection loop is not), a second life on the model
+point, the `@pool` cross-model-point reduction the VPLA product needs,
+kernel fusion, scenario-set file adapters, and the run registry.

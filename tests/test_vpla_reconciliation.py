@@ -25,6 +25,8 @@ Four things are checked here:
    rather than assumed.
 """
 
+from datetime import date
+
 import pytest
 
 from engine.data.assumptions import Assumptions, MortalityTable
@@ -32,15 +34,13 @@ from engine.data.modelpoints import ModelPoint
 from engine.library.fixed_annuity import FixedAnnuity
 from vpla_reference import (
     OMEGA,
+    ReferenceMortalityTable,
     annuity_factor,
     discount_factors,
     joint_annuity_factor,
     joint_life_factor,
     linear_period_mortality,
-    period_mortality,
     reversionary_closed_form,
-    survival_factors,
-    table_q,
     udd_period_mortality,
     valuation_step,
 )
@@ -57,6 +57,35 @@ MIN_AGE, MAX_AGE = 50, 119
 QX = {age: min(0.0004 * 1.11 ** (age - MIN_AGE), 1.0) for age in range(MIN_AGE, MAX_AGE + 1)}
 
 ASSUMPTIONS = Assumptions(mortality=MortalityTable(QX), interest=INTEREST)
+
+# The reference basis, restricted to the annual on-anniversary case where
+# its fractional-age split collapses to the tabular rate — which is what
+# makes it comparable with the annual `@var` templates at all.
+REFERENCE_BASIS = ReferenceMortalityTable(
+    {"M": QX}, year_start=2000, use_improvement=False
+)
+
+
+def period_mortality(qx, age_at_valuation, n):
+    born = date(2000, 1, 1)
+    valuation = date(2000 + age_at_valuation, 1, 1)
+    return [
+        REFERENCE_BASIS.mortality_period(
+            born, date(valuation.year + k, 1, 1), "M", 1
+        )
+        for k in range(n)
+    ]
+
+
+def survival_factors(q_period):
+    survival = [1.0]
+    for k in range(1, len(q_period)):
+        survival.append(survival[k - 1] * (1.0 - q_period[k - 1]))
+    return survival
+
+
+def table_q(qx, age):
+    return REFERENCE_BASIS.mortality_lookup(age, "M", 2000)
 
 
 def periods_to_table_end(age: int) -> int:
