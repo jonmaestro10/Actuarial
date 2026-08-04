@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 
 def stable_sum(values) -> float:
     """Kahan–Babuška–Neumaier compensated summation.
@@ -41,3 +43,35 @@ class RunResult:
             stable_sum(mp_result[name][t] for mp_result in self.per_mp)
             for t in range(n_steps)
         ]
+
+
+class ArrayRunResult(RunResult):
+    """Array-backed result from the vectorized executor.
+
+    Holds one ``(proj_len + 1, n_modelpoints)`` float64 array per variable;
+    the per-model-point dict view is materialized lazily so bulk workflows
+    (aggregation, writing results tables) never pay for it. Aggregation uses
+    NumPy's pairwise summation — deterministic for a fixed model-point order
+    and comparably accurate to compensated summation.
+    """
+
+    def __init__(self, stacked: dict[str, np.ndarray], mp_ids: list):
+        self._stacked = stacked
+        self.mp_ids = mp_ids
+        self._per_mp: list[dict[str, list]] | None = None
+
+    @property
+    def per_mp(self) -> list[dict[str, list]]:
+        if self._per_mp is None:
+            n = len(self.mp_ids)
+            self._per_mp = [
+                {name: arr[:, i].tolist() for name, arr in self._stacked.items()}
+                for i in range(n)
+            ]
+        return self._per_mp
+
+    def array(self, name: str) -> np.ndarray:
+        return self._stacked[name]
+
+    def aggregate(self, name: str) -> list[float]:
+        return self._stacked[name].sum(axis=1).tolist()

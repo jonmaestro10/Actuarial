@@ -45,6 +45,17 @@ result.aggregate("claims")   # deterministic per-time-step totals
 
 ## Status
 
-Phase 0 of the [roadmap](PLAN.md#8-roadmap): interpreted executor with the
-term-life template passing closed-form and independent-reference golden
-tests. Next: vectorized executor, fixed annuity template, Parquet I/O.
+Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
+
+- Interpreted executor **and** vectorized NumPy executor behind the same
+  `run()` contract; the golden suite asserts they agree **bitwise** on
+  every template. Templates are written in indicator style so identical
+  model code runs per policy or across a whole batch
+  (`scripts/benchmark.py`: 100k policies × 60 years in seconds, ~40× the
+  interpreter).
+- Product templates: level-premium term assurance, single-premium deferred
+  fixed annuity — each with closed-form golden tests.
+- Model points round-trip through Parquet (`pip install -e ".[data]"`).
+
+Next: scenario dimension for stochastic runs, tracer-based compilation,
+and the VA/VPLA template family.

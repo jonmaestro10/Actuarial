@@ -7,5 +7,6 @@ replaces the interpreter in Phase 1 behind the same model definitions.
 
 from engine.core.model import Model, var
 from engine.core.runner import run
+from engine.core.vector import run_vectorized
 
-__all__ = ["Model", "var", "run"]
+__all__ = ["Model", "var", "run", "run_vectorized"]
