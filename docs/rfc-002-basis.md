@@ -118,12 +118,21 @@ worse than a loud one:
   makes results depend on payment frequency and destroys reconciliation.
 - **A survival probability stays a probability.** `period_mortality` is
   reproduced exactly, including the additive fractional-age split that
-  exceeds 1 above roughly `q = 0.8` (review §6.15) — parity is the promise,
-  and correcting the rate would make the parity harness lie about the
-  defect. But `survival_curve` clips the per-period factor into `[0, 1]`
-  before accumulating it, so the curve cannot go negative and stay there.
-  On a well-formed table the clip never engages, which is why every bitwise
-  comparison in the suite still holds; on CPM2014 above age 115 it does.
+  exceeds 1 above roughly `q = 0.8` (review §6.15). `survival_curve` clips
+  the per-period factor into `[0, 1]` before accumulating, so the curve
+  cannot go negative and stay there. On a well-formed table the clip never
+  engages, which is why every bitwise comparison in the suite still holds;
+  on CPM2014 above age 115 it does.
+
+  The clip is hygiene, not a correction. Measured on CPM2014, the survival
+  it guards has already decayed to ~1e-8 by the time the split can
+  overflow, and clipping moves an annuity factor by ~1e-9 relative at worst
+  — below the summation-order differences already accepted. On an
+  on-anniversary valuation `q = 1` drives survival to exactly zero and the
+  overflow never occurs at all. **The split itself is deliberately left
+  alone**: correcting it would move SOA-validated numbers for no material
+  gain, and would make the parity harness stop reporting the original's
+  behaviour.
 
 The constant improvement scale extrapolates backwards for a valuation before
 `year_start` while the generational scale does not — an asymmetry in the

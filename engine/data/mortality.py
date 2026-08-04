@@ -412,11 +412,16 @@ class MortalityBasis:
         accumulated survival goes *negative* and stays there. CPM2014 —
         VPLA's production table — reaches ``q = 1`` at its last age, so any
         valuation that is not on a policy anniversary hits this above age
-        115. See docs/vpla-review.md §6.15.
+        115.
 
-        The rate itself is left alone, so parity on ``period_mortality`` is
-        untouched and the defect stays visible; what is refused is letting a
-        survival probability leave this method outside ``[0, 1]``.
+        This is hygiene rather than a correction. By the time the split can
+        overflow, survival on CPM2014 has already decayed to ~1e-8, and the
+        clip moves an annuity factor by ~1e-9 relative at worst; valued on
+        an anniversary, ``q = 1`` drives survival to exactly zero and the
+        overflow never happens. The rate itself is deliberately left alone,
+        so parity on ``period_mortality`` is untouched — what is refused is
+        only letting a survival probability leave this method outside
+        ``[0, 1]``. See docs/vpla-review.md §6.15.
         """
         q = self.period_mortality(dob, valuation, sex, freq, n_periods)
         survival = np.ones_like(q)

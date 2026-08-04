@@ -267,21 +267,37 @@ exists to prevent, not as criticism of a working system.
    holding an account value with no pension in payment converts their
    contribution twice.
 
-15. **The fractional-age split is not a probability.** When a payment period
-   straddles a birthday, `mortality_period` *adds* the two parts:
+15. **The fractional-age split is not a probability** — but it does not
+   matter in practice. When a payment period straddles a birthday,
+   `mortality_period` *adds* the two parts:
    `pct_first/(1 - q_first·pct_before)·q_first + pct_second·q_second`. Past
-   roughly `q = 0.8` that sum exceeds 1 — at `q = 1` and a half-year offset
-   it is 1.5 — so `1 - q` goes negative and `survival_factors`, being a
-   cumulative product, goes **negative and stays negative**. This is not a
-   synthetic edge case: `data/CPM2014.json` reaches `q = 1.0` at its last
-   tabulated age (115) and the rate is held flat above it, so every
-   valuation that is not on a policy anniversary hits it. The effect on an
-   annuity factor is small — survival at 115 is ~1e-5 for a 65-year-old — but
-   it is a wrong-signed contribution, and any projection carrying the curve
-   forward propagates it. The correct combination is
+   roughly `q = 0.8` that sum exceeds 1, so `1 - q` goes negative and
+   `survival_factors`, being a cumulative product, goes negative with it.
+   `data/CPM2014.json` reaches `q = 1.0` at its last tabulated age (115) and
+   holds it flat above, so the condition is reachable.
+
+   Measured on CPM2014 rather than argued, because the arithmetic looks
+   worse than it is:
+
+   | Valuation | Survival curve |
+   |---|---|
+   | On the member's anniversary | Reaches **exactly zero** at age 116 and never goes negative — `q = 1` kills the cohort before the split can overflow |
+   | Off anniversary | Survival is already ~1e-8 by the time the overflow bites; the negative excursion peaks at ~1e-10, and the curve reaches exactly zero at the limiting age regardless |
+
+   The effect on an annuity factor is **~1e-9 relative at worst** (annual,
+   4%; ~2e-10 monthly), which is below the summation-order differences
+   already accepted between the engine and the original. So this is a
+   latent-correctness note, not a material error: nobody's factor is wrong
+   because of it.
+
+   The correct combination is
    `1 - (1 - q_first)^{pct_first} · (1 - q_second)^{pct_second}`, or the
-   equivalent conditional product; the additive form is only valid while both
-   parts are small.
+   equivalent conditional product; the additive form is only valid while
+   both parts are small, which at every age that carries any weight they
+   are. **Changing it is not worth moving SOA-validated numbers for.** The
+   engine reproduces the rate exactly and clips only the accumulated
+   survival, so a probability cannot leave the basis outside [0, 1] — see
+   docs/rfc-002-basis.md.
 
 **Governance and operability**
 
