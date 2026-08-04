@@ -1,5 +1,11 @@
 """Stochastic executor: model points x scenarios in one evaluation.
 
+Shares the windowed forward loop in engine/core/vector.py, and gains more
+from it than the deterministic executor does: a slab is
+``(model points x scenarios)`` rather than a vector, so the memo of a
+projection that kept every period alive was the largest thing in the process
+by a wide margin.
+
 Model-point fields are reshaped to column vectors ``(n_mp, 1)`` and
 scenario returns keep shape ``(n_scenarios,)``, so ordinary NumPy
 broadcasting turns every formula into a ``(n_mp, n_scenarios)`` slab per
@@ -16,6 +22,7 @@ import numpy as np
 from engine.core.model import Model
 from engine.core.results import StochasticRunResult
 from engine.data.modelpoints import to_batch
+from engine.core.vector import fill
 from engine.data.scenarios import ScenarioSet
 
 
@@ -49,16 +56,13 @@ def run_stochastic(
         assumptions=assumptions,
         proj_len=proj_len,
         scenarios=scenarios,
+        record_graph=True,
     )
-    names = outputs or model.var_names()
+    names = list(outputs or model.var_names())
     shape = (batch.n, scenarios.n_scenarios)
     stacked = {
-        name: np.stack(
-            [
-                np.broadcast_to(np.asarray(value, dtype=np.float64), shape)
-                for value in model.series(name)
-            ]
-        )
+        name: np.empty((proj_len + 1, *shape), dtype=np.float64)
         for name in names
     }
+    fill(model, stacked, names, shape, proj_len)
     return StochasticRunResult(stacked=stacked, mp_ids=batch.ids)

@@ -12,6 +12,10 @@ from typing import Any, Callable
 
 from engine.core.graph import CyclicModelError, DependencyGraph
 
+
+class EvictedValueError(RuntimeError):
+    """A variable reached further back than the window kept for it."""
+
 #: Cache sentinel. `dict.get` with a default beats `try/except KeyError`
 #: here because a projection is dominated by *misses* — every (variable,
 #: t) is computed exactly once — and raising an exception per miss costs
@@ -115,12 +119,19 @@ class Model:
         #: top of the stack is who to attribute a dependency edge to.
         self._stack: list[tuple[str, int]] = []
         self._active: set[tuple[str, int]] = set()
+        #: Periods strictly before this have been dropped from the cache.
+        #: -1 means nothing has been. See `prune`.
+        self._evicted_before = -1
         #: Dependency edges, recorded only when asked for. Recording
         #: costs a dict lookup, a tuple and a set insert on *every*
         #: evaluation including cache hits, which is ~16% of the per-policy
         #: interpreter — measurable, and pure waste on a production run that
         #: will never look at the graph. `Model.trace` turns it on.
-        self.record_graph = record_graph
+        #: A one-element cell rather than a plain attribute: the bound
+        #: evaluators close over it, so an executor can trace the first few
+        #: periods and then switch recording off for the rest of the run
+        #: without rebinding anything.
+        self._record = [bool(record_graph)]
         self._edges: dict[str, set[tuple[str, int]]] = defaultdict(set)
         for name in self.var_names():
             spec = getattr(type(self), name).__var_spec__
@@ -193,7 +204,8 @@ class Model:
         cache = self._cache
         stack = self._stack
         active = self._active
-        record = self.record_graph
+        model = self
+        record = self._record
         edges = self._edges
 
         def evaluate(t: int):
@@ -204,7 +216,7 @@ class Model:
                     f"{name}({t}) outside projection range [0, {self.proj_len}]"
                 )
             key = (name, t)
-            if record:
+            if record[0]:
                 # A node for this variable, so one that reads nothing still
                 # appears; and the edge from whoever asked, carrying the
                 # offset between their period and this one. Recorded on a
@@ -217,6 +229,15 @@ class Model:
             value = cache.get(key, _MISS)
             if value is not _MISS:
                 return value
+            if t < model._evicted_before:
+                raise EvictedValueError(
+                    f"{name}({t}) was dropped from the cache: the executor "
+                    f"kept only periods from {model._evicted_before} on, "
+                    "because the traced dependency graph said nothing "
+                    "reached further back. This model does. Re-trace it over "
+                    "enough periods to see the wider look-back, or run "
+                    "without a window."
+                )
             if key in active:
                 raise CyclicModelError(self._cycle_message(key))
             active.add(key)
@@ -232,6 +253,39 @@ class Model:
         evaluate.__name__ = name
         evaluate.__doc__ = spec.doc
         return evaluate
+
+    @property
+    def record_graph(self) -> bool:
+        """Whether dependency edges are being recorded. Settable mid-run:
+        an executor traces a few periods, reads the look-back window off the
+        graph, and then stops paying for the recording."""
+        return self._record[0]
+
+    @record_graph.setter
+    def record_graph(self, value: bool) -> None:
+        self._record[0] = bool(value)
+
+    def prune(self, keep_from: int) -> None:
+        """Drop every cached value from before period ``keep_from``.
+
+        A projection's memo holds every ``(variable, t)`` it ever computed,
+        which for a large block is hundreds of megabytes of arrays that
+        nothing will read again — the dependency graph says so, since
+        ``horizon()`` is the furthest back anything reaches. Dropping them
+        keeps the working set small enough to stay in cache, and that is
+        worth more than the arithmetic.
+
+        Correctness does not rest on the caller getting the window right.
+        A value asked for after it was dropped raises
+        :class:`EvictedValueError` naming the variable and period, rather
+        than being silently recomputed — which would be correct but could
+        cascade into recomputing the whole projection.
+        """
+        if keep_from <= self._evicted_before:
+            return
+        for key in [k for k in self._cache if k[1] < keep_from]:
+            del self._cache[key]
+        self._evicted_before = keep_from
 
     def _cycle_message(self, key) -> str:
         """The cycle, as the path that closed it."""
@@ -249,7 +303,7 @@ class Model:
         Only what has actually run is in it, so ask after a projection — or
         use :meth:`trace`, which runs one for you.
         """
-        if not self.record_graph:
+        if not self._edges and not self._record[0]:
             raise RuntimeError(
                 "this model was built without graph recording, so there is "
                 "no graph to return. Build it with record_graph=True, or "

@@ -165,10 +165,14 @@ has to remember to set.
   nothing measurable on the vectorized executor.
 - Typed variables (`NUM`/`BOOL`/array) — revisit when the compiler needs
   dtype information.
-- Kernel fusion itself (PLAN §4.2). The graph now supplies what a compiler
-  needs first — a traced dependency graph, a deterministic topological order
-  over the same-period edges, and the look-back window a forward loop would
-  have to keep alive — but nothing is compiled yet, and calling the tracer
-  fusion would be a claim the code cannot support.
+- Kernel fusion itself (PLAN §4.2). Half of what §4.2 describes is now
+  done: the recursion over `t` *is* a forward loop over preallocated arrays,
+  and the graph's look-back window is what lets the memo stay bounded rather
+  than growing with the projection. What is not done is the compilation —
+  the formulas are still Python calling NumPy, one variable at a time, and
+  nothing has been fused into a kernel. The graph supplies what that step
+  needs first (a deterministic topological order over the same-period
+  edges), and calling what exists today kernel fusion would be a claim the
+  code cannot support.
 - Multi-entity models (policy + fund + reinsurance treaty interacting) —
   Phase 2, driven by the VA/VPLA library's needs.

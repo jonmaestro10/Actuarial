@@ -39,6 +39,10 @@ from engine.data.modelpoints import ModelPointBatch, to_batch
 CHUNK_CELLS = 200_000
 MIN_CHUNK_POLICIES = 64
 
+#: Periods to trace a model over before running it. Three is the fewest
+#: that exercises both a variable's ``t == 0`` branch and its recursive one.
+TRACE_PERIODS = 3
+
 
 def default_chunk_size(n_periods: int) -> int:
     """Policies per chunk for a projection of ``n_periods`` steps."""
@@ -52,19 +56,56 @@ def _evaluate(
     proj_len: int,
     outputs: list[str] | None,
 ) -> dict[str, np.ndarray]:
-    model = model_cls(mp=batch, assumptions=assumptions, proj_len=proj_len)
-    names = outputs or model.var_names()
+    """A forward loop over preallocated slabs, keeping a rolling window.
+
+    PLAN §4.2 asks for the recursion over ``t`` to become "a forward loop
+    over preallocated arrays", and this is that loop — without the compiled
+    kernels, which are still ahead.
+
+    Two things it does that the previous list-and-stack did not. Each
+    period is written straight into its row of the output slab rather than
+    accumulated into a list and copied at the end. And once a period is
+    older than the dependency graph's look-back window, its cached values
+    are dropped: a 100,000-policy 60-year projection holds hundreds of
+    megabytes of arrays that nothing will read again, and freeing them is
+    what keeps the working set in cache. Same expressions, same order, same
+    bits — measured, not assumed.
+    """
+    model = model_cls(mp=batch, assumptions=assumptions, proj_len=proj_len,
+                      record_graph=True)
+    names = list(outputs or model.var_names())
     # (proj_len + 1, n) per variable; scalar-valued vars (e.g. discount
     # factors that don't depend on the model point) broadcast across the batch.
-    return {
-        name: np.vstack(
-            [
-                np.broadcast_to(np.asarray(value, dtype=np.float64), (batch.n,))
-                for value in model.series(name)
-            ]
-        )
+    slabs = {
+        name: np.empty((proj_len + 1, batch.n), dtype=np.float64)
         for name in names
     }
+    return fill(model, slabs, names, batch.n, proj_len)
+
+
+def fill(model, slabs, names, width, proj_len):
+    """The forward loop, shared by both array executors.
+
+    The first few periods run with the dependency graph recording, which
+    costs a set insert per evaluation and is not wasted work — those periods
+    are needed anyway. The look-back window comes off the graph, recording
+    stops, and every period after that drops what nothing can read again.
+    """
+    traced = min(TRACE_PERIODS, proj_len + 1)
+    for t in range(traced):
+        for name in names:
+            slabs[name][t] = np.broadcast_to(
+                np.asarray(getattr(model, name)(t), dtype=np.float64), width
+            )
+    window = model.graph().horizon()
+    model.record_graph = False
+    for t in range(traced, proj_len + 1):
+        for name in names:
+            slabs[name][t] = np.broadcast_to(
+                np.asarray(getattr(model, name)(t), dtype=np.float64), width
+            )
+        model.prune(t - window)
+    return slabs
 
 
 def run_vectorized(
