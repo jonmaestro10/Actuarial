@@ -40,6 +40,17 @@ class ModelPointBatch:
         self.ids = ids
         self.n = len(ids)
 
+    @property
+    def fields(self) -> dict[str, np.ndarray]:
+        return {k: v for k, v in self.__dict__.items() if k not in ("ids", "n")}
+
+    def take(self, start: int, stop: int) -> "ModelPointBatch":
+        """A contiguous slice of the batch, for chunked execution."""
+        return ModelPointBatch(
+            {name: values[start:stop] for name, values in self.fields.items()},
+            self.ids[start:stop],
+        )
+
 
 def to_batch(modelpoints: Iterable[ModelPoint]) -> ModelPointBatch:
     mps = list(modelpoints)

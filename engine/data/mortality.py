@@ -43,7 +43,6 @@ Two deliberate departures from the original, both from docs/vpla-review.md:
 
 from __future__ import annotations
 
-from datetime import date
 from typing import Mapping, Sequence
 
 import numpy as np
@@ -302,8 +301,8 @@ class MortalityBasis:
         addition does not compose.
         """
         step = months_per_period(freq)
-        dob = _as_dates(dob)
-        valuation = _as_dates(valuation)
+        dob = DateArray.coerce(dob)
+        valuation = DateArray.coerce(valuation)
         sex_index = self.sex_indices(sex)[:, None]
 
         start = period_starts(valuation, step, n_periods)
@@ -402,9 +401,3 @@ def _key(mapping, year):
     return year if year in mapping else str(year)
 
 
-def _as_dates(value) -> DateArray:
-    if isinstance(value, DateArray):
-        return value if value.shape else value.reshape(1)
-    if isinstance(value, date):
-        return DateArray.from_dates([value])
-    return DateArray.from_dates(list(value))

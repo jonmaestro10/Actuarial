@@ -36,15 +36,59 @@ A `@var` MAY:
 Scalar whole-projection results (present values, reserves at issue) are
 plain methods, not `@var`s — the time axis is what `@var` is for.
 
+## `setup()` — precomputation
+
+Some inputs are cheapest to build for the whole time axis in one call
+rather than a period at a time: survival curves off a fractional-age basis,
+discount vectors off a yield curve. A model may override `setup()`, which
+the engine calls **once per instance, before any `@var` is evaluated**, and
+store the result on `self`.
+
+```python
+class PayoutAnnuity(Model):
+    def setup(self):
+        axis = TimeAxis(self.assumptions.freq, self.proj_len + 1,
+                        self.mp.valuation)
+        self._survival = self.assumptions.survival(axis, self.mp.dob,
+                                                   self.mp.sex)
+
+    @var(assumption="mortality")
+    def survival(self, t):
+        return self.at(self._survival, t)
+```
+
+The same rules apply as to a `@var` body: pure, no I/O, no dependence on
+evaluation order. Nothing set here may depend on a `@var`, because none have
+been evaluated yet — which is what keeps the graph acyclic and `setup()`
+from becoming a back door into imperative modelling.
+
+`Model.at(slab, t)` takes one period out of a `(policies, periods)` array
+and shapes it for whichever executor is running, so a template written once
+runs deterministically or against a scenario slab unchanged.
+
+## Time axes
+
+`t` indexes **payment periods**, not necessarily years. A
+`TimeAxis(freq, n_periods, valuation)` gives each policy its own valuation
+date and places period `k` exactly `k * 12 / freq` months after it. Templates
+built on `engine.data.basis.ValuationBasis` therefore run at any frequency
+that divides 12, with mortality split across the two ages each period
+straddles and discounting at the period rate.
+
+The annual templates predate this and still assume `t` is a year. That is a
+property of those templates, not of the DSL.
+
 ## Time conventions
 
-- `t` runs `0 .. proj_len` **inclusive**.
+- `t` runs `0 .. proj_len` **inclusive**, and counts payment periods. For a
+  model over a `TimeAxis`, `proj_len` is `axis.n_periods - 1`.
 - **Stocks** (in-force counts, fund values) are measured at the *start* of
   period `t`. **Flows** (premiums, claims, expenses) arise *during* period
   `t`; the product template documents whether each flow is paid at start or
   end of period, which fixes its discounting (`v(t)` vs `v(t + 1)`).
-- Period length is a property of the model (annual in Phase 0; monthly and
-  policy/calendar alignment arrive with the time-axis module).
+- Period length is a property of the model's time axis — annual for the
+  Phase 0 templates, any frequency dividing 12 for those on a
+  `ValuationBasis`.
 
 ## Why these restrictions
 
@@ -66,6 +110,14 @@ kernel fusion, flagged in generated model documentation.
 
 ## Open questions (deliberately deferred)
 
+- **Reductions across the model-point axis.** Every `@var` today is a
+  function of *one* model point, which is what lets the vectorized executor
+  chunk a block for cache locality without moving a number. A pooled
+  variable-payment adjustment, a with-profits bonus declaration or an asset
+  share is a reduction over the whole population inside the time loop, and
+  has no spelling. `Model.couples_model_points` marks a model that would
+  need one, so the runner stops chunking it; the variable kind itself is
+  still to be designed. See docs/vpla-review.md §7.1.
 - Cycle detection with a readable error path (needs the tracer).
 - Typed variables (`NUM`/`BOOL`/array) — revisit when the compiler needs
   dtype information.

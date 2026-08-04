@@ -81,12 +81,25 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   equality** against a literal transcription of the original, and
   `scripts/vpla_parity.py` reruns that against a real VPLA checkout on the
   actual CPM2014/CPM2014B tables. Same numbers, ~400x faster per life.
+- **Any payment frequency in the projection loop**: `t` counts payment
+  periods, not years. A `TimeAxis` places each period on a real calendar
+  date from each policy's own valuation date, and a `setup()` hook lets a
+  template build survival curves and discount vectors for the whole axis in
+  one call before the loop starts ([RFC-001](docs/rfc-001-dsl.md)). First
+  template on it: `PayoutAnnuity` — monthly, with certain periods and
+  reversionary benefits projected as cashflows, its terms reconciled
+  **bitwise** to the Layer 0 annuity factor.
+- **Chunked execution**: the vectorized executor splits a block so the
+  working set stays in cache — ~3.6x on a monthly block, and bitwise
+  identical, because model points are independent. 100,000 annuitants x 720
+  monthly periods on the full basis runs in under two minutes
+  (`scripts/benchmark_monthly.py`).
 - **VPLA review and reconciliation**:
   [docs/vpla-review.md](docs/vpla-review.md) is the structural review the
   above came from, with the defects found and the architectural gap the
   pooled variable-payment product opens up in the DSL.
 
-Next: a monthly time axis in the `@var` executor (the basis is already
-frequency-aware; the projection loop is not), a second life on the model
-point, the `@pool` cross-model-point reduction the VPLA product needs,
-kernel fusion, scenario-set file adapters, and the run registry.
+Next: the cross-model-point reduction the pooled variable-payment product
+needs — the last thing between the engine and a full VPLA — then moving the
+remaining templates onto the basis, kernel fusion, scenario-set file
+adapters, and the run registry.

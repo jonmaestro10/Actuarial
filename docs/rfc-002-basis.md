@@ -173,11 +173,19 @@ eighteen — a calculation VPLA itself can no longer perform.
 
 Named here so the next phase has a list rather than a memory:
 
-- The `@var` executor is still annual. `MortalityBasis` and `YieldCurve` are
-  frequency-aware, but nothing wires a monthly time axis into the projection
-  loop; that is the next piece of work, and the templates depend on it.
-- Model points carry no second life, so joint benefits are available as
-  factors but not yet as projected cashflows.
-- The pool adjustment still has no home in the DSL (review §7.1).
+- ~~The `@var` executor is still annual.~~ Done: `engine/core/timeaxis.py`
+  and the `setup()` hook (RFC-001) carry the basis into the projection loop,
+  and `engine/library/payout_annuity.py` is the first template on it —
+  monthly, on calendar dates, with joint benefits, reconciled to the Layer 0
+  factor term by term.
+- ~~Model points carry no second life.~~ Done: `PayoutAnnuity` takes
+  `spouse_dob` / `spouse_sex` / `joint_percent`, and projects the
+  reversionary benefit as a cashflow rather than only as a factor.
+- The pool adjustment still has no home in the DSL (review §7.1). It is now
+  the last thing between the engine and a full VPLA product.
+- Only the payout annuity is on the new basis. The term-life, fixed-annuity
+  and unit-linked templates still run annually on the flat
+  `assumptions.MortalityTable`; moving them is mechanical but changes their
+  golden values, so it wants its own change note.
 - Mortality is unisex-or-blended; no select-and-ultimate period, and no
   multi-decrement tables.

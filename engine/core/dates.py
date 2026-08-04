@@ -101,6 +101,16 @@ class DateArray:
     def from_date(cls, d: date) -> "DateArray":
         return cls(np.int64(d.year), np.int64(d.month), np.int64(d.day))
 
+    @classmethod
+    def coerce(cls, value) -> "DateArray":
+        """Accept a ``DateArray``, a single ``date``, or any sequence of them
+        — including the object arrays a model point batch produces."""
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, date):
+            return cls.from_dates([value])
+        return cls.from_dates(list(value))
+
     @property
     def shape(self):
         return self.year.shape
