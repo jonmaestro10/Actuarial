@@ -13,10 +13,12 @@ from typing import Any, Callable
 class VarSpec:
     """Metadata attached to a model variable by the ``@var`` decorator."""
 
-    def __init__(self, fn: Callable, assumption: str | None = None):
+    def __init__(self, fn: Callable, assumption: str | None = None,
+                 pooled: bool = False):
         self.fn = fn
         self.name = fn.__name__
         self.assumption = assumption
+        self.pooled = pooled
         self.doc = fn.__doc__
 
 
@@ -36,6 +38,43 @@ def var(fn: Callable | None = None, *, assumption: str | None = None):
     return wrap(fn) if fn is not None else wrap
 
 
+def pool(fn: Callable | None = None, *, assumption: str | None = None):
+    """Mark a method as a **pooled** model variable.
+
+    A ``@var`` is one formula per model point. A ``@pool`` is one formula per
+    *block*: its body reduces across the model-point axis, so every policy
+    sees the same value at a given ``t``. That is what a pooled
+    variable-payment adjustment, a with-profits bonus declaration or an asset
+    share needs, and what a per-policy formula cannot express.
+
+    The body reduces with ``self.pool_sum``, which sums the model-point axis
+    and leaves any scenario axis alone::
+
+        @pool
+        def adjustment(self, t):
+            return self.pool_sum(self.assets(t)) / self.pool_sum(
+                self.liability(t)
+            ) - 1.0
+
+    Everything else is unchanged: same purity rules, same caching, and the
+    graph must still be acyclic. A pooled variable may read per-policy
+    variables at the same ``t`` and per-policy variables may read it, but a
+    per-policy variable it consumes must not, in turn, depend on it — in a
+    variable-payment pool the liability being valued is the one carried
+    *into* the period, not the one the adjustment produces.
+
+    Declaring one has a real consequence for execution: the vectorized
+    executor stops chunking the block, because a reduction over a chunk would
+    be a reduction over the wrong population.
+    """
+
+    def wrap(f: Callable) -> Callable:
+        f.__var_spec__ = VarSpec(f, assumption=assumption, pooled=True)
+        return f
+
+    return wrap(fn) if fn is not None else wrap
+
+
 class Model:
     """Base class for projection models.
 
@@ -46,11 +85,10 @@ class Model:
     cashflows, so end-of-period discounting at ``t + 1`` stays in range.
     """
 
-    #: Set on a subclass whose variables reduce across the model-point axis
-    #: — a pooled bonus or crediting rate, say. The vectorized executor
-    #: keeps such a block whole instead of chunking it, because a chunk
-    #: would reduce over the wrong population. Nothing in the library sets
-    #: this yet; see docs/vpla-review.md §7.1.
+    #: Set on a subclass that couples model points *without* declaring a
+    #: ``@pool`` variable — an escape-hatch model doing its own reduction,
+    #: say. Models with pooled variables are detected automatically and do
+    #: not need this.
     couples_model_points = False
 
     def __init__(self, mp: Any, assumptions: Any, proj_len: int,
@@ -91,6 +129,32 @@ class Model:
         """
         value = slab[..., t]
         return value[..., None] if self.scenarios is not None else value
+
+    def pool_sum(self, values):
+        """Total across the model-point axis, leaving any scenario axis alone.
+
+        The reduction the DSL sanctions inside a ``@pool`` body. NumPy's
+        pairwise summation is used rather than a compensated loop: it is
+        deterministic for a fixed block order and length, which is what the
+        reproducibility guarantee needs, and it is fast enough to run once
+        per time step over a whole block.
+
+        A block is never chunked when it has pooled variables, so this
+        always sees the entire population — see engine/core/vector.py.
+        """
+        import numpy as np
+
+        totals = np.asarray(values, dtype=np.float64)
+        return totals if totals.ndim == 0 else totals.sum(axis=0)
+
+    @classmethod
+    def pooled_names(cls) -> list[str]:
+        """Variables that reduce across model points."""
+        return [
+            name
+            for name in cls.var_names()
+            if getattr(cls, name).__var_spec__.pooled
+        ]
 
     @classmethod
     def var_names(cls) -> list[str]:

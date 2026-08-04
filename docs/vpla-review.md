@@ -267,6 +267,22 @@ exists to prevent, not as criticism of a working system.
    holding an account value with no pension in payment converts their
    contribution twice.
 
+15. **The fractional-age split is not a probability.** When a payment period
+   straddles a birthday, `mortality_period` *adds* the two parts:
+   `pct_first/(1 - q_first·pct_before)·q_first + pct_second·q_second`. Past
+   roughly `q = 0.8` that sum exceeds 1 — at `q = 1` and a half-year offset
+   it is 1.5 — so `1 - q` goes negative and `survival_factors`, being a
+   cumulative product, goes **negative and stays negative**. This is not a
+   synthetic edge case: `data/CPM2014.json` reaches `q = 1.0` at its last
+   tabulated age (115) and the rate is held flat above it, so every
+   valuation that is not on a policy anniversary hits it. The effect on an
+   annuity factor is small — survival at 115 is ~1e-5 for a 65-year-old — but
+   it is a wrong-signed contribution, and any projection carrying the curve
+   forward propagates it. The correct combination is
+   `1 - (1 - q_first)^{pct_first} · (1 - q_second)^{pct_second}`, or the
+   equivalent conditional product; the additive form is only valid while both
+   parts are small.
+
 **Governance and operability**
 
 10. `CalcClass.update_annuities` / `update_account_values` wrap the entire
@@ -297,6 +313,13 @@ Two findings are architectural, not incidental.
 
 ### 7.1 The pool adjustment is a cross-model-point reduction
 
+> **Resolved.** The DSL gained a `@pool` variable kind (RFC-001), and
+> `engine/library/variable_payout_annuity.py` is the product built on it —
+> reconciled against `valuation_step` in the reference below, and holding
+> both defining properties of the pool exactly. The paragraph that follows
+> is the original finding, kept because it is what motivated the design.
+
+
 Every `@var` in the current DSL is a pure function of `t`, *this* model
 point, assumptions, and other variables of the same model. The VPLA
 adjustment is `Σ_members retrospective / Σ_members prospective` evaluated
@@ -315,7 +338,8 @@ variables it consumes and before those that consume it — which keeps the
 graph acyclic and stays vectorizable. **No VPLA product template is added
 here**; adding one before the DSL can express the adjustment would mean
 hard-coding the reduction into the executor, which is exactly the kind of
-shortcut the accuracy strategy forbids.
+shortcut the accuracy strategy forbids. *(That template now exists, on the
+`@pool` variable the paragraph above describes.)*
 
 ### 7.2 Layer 0 gaps the VA library will hit
 

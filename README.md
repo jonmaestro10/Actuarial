@@ -99,7 +99,14 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   above came from, with the defects found and the architectural gap the
   pooled variable-payment product opens up in the DSL.
 
-Next: the cross-model-point reduction the pooled variable-payment product
-needs — the last thing between the engine and a full VPLA — then moving the
-remaining templates onto the basis, kernel fusion, scenario-set file
-adapters, and the run registry.
+- **Pooled products**: a `@pool` variable reduces across the model-point
+  axis inside the time loop, which is what a variable-payment adjustment, a
+  with-profits bonus or an asset share needs and a per-policy formula cannot
+  express. `VariablePayoutAnnuity` is the product built on it — the pool
+  balances exactly after every revaluation, and is neutral to machine
+  precision when the fund earns the valuation rate and mortality runs to
+  assumption. The executor stops chunking a pooled model automatically,
+  since a reduction over a chunk reduces over the wrong population.
+
+Next: moving the remaining templates onto the basis, reductions beyond a
+sum, kernel fusion, scenario-set file adapters, and the run registry.

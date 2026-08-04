@@ -21,9 +21,17 @@ from engine.data.rates import YieldCurve
 
 
 class ValuationBasis:
-    def __init__(self, *, mortality: MortalityBasis, curve: YieldCurve):
+    def __init__(self, *, mortality: MortalityBasis, curve: YieldCurve,
+                 revalue_every: int = 1):
+        if revalue_every < 1:
+            raise ValueError(f"revalue_every {revalue_every} must be >= 1")
         self.mortality = mortality
         self.curve = curve
+        #: Payment periods between pool revaluations, for pooled products.
+        #: 1 revalues every period; 12 revalues annually on a monthly axis,
+        #: which is how VPLA runs — pensions are paid monthly and reset
+        #: periodically.
+        self.revalue_every = revalue_every
 
     @property
     def freq(self) -> int:

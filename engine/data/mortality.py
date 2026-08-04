@@ -352,11 +352,31 @@ class MortalityBasis:
 
     def survival_curve(self, dob, valuation, sex, freq: int, n_periods: int):
         """``ₖp_x`` for ``k = 0 .. n_periods - 1``, shape ``(n_policies,
-        n_periods)``. Entry 0 is 1 by construction."""
+        n_periods)``. Entry 0 is 1 by construction.
+
+        The per-period survival factor is clipped into ``[0, 1]`` before it
+        is accumulated. That is the one place this class departs from the
+        original on well-formed input — and it is a no-op on well-formed
+        input, which is why the bitwise tests still hold.
+
+        It is not a no-op on the input the original actually runs.
+        ``period_mortality`` follows VPLA in splitting a period that
+        straddles a birthday **additively**, and that sum is not a
+        probability: with ``q`` around 0.8 or above it exceeds 1, and the
+        accumulated survival goes *negative* and stays there. CPM2014 —
+        VPLA's production table — reaches ``q = 1`` at its last age, so any
+        valuation that is not on a policy anniversary hits this above age
+        115. See docs/vpla-review.md §6.15.
+
+        The rate itself is left alone, so parity on ``period_mortality`` is
+        untouched and the defect stays visible; what is refused is letting a
+        survival probability leave this method outside ``[0, 1]``.
+        """
         q = self.period_mortality(dob, valuation, sex, freq, n_periods)
         survival = np.ones_like(q)
         if n_periods > 1:
-            np.cumprod(1.0 - q[:, :-1], axis=1, out=survival[:, 1:])
+            np.cumprod(np.clip(1.0 - q[:, :-1], 0.0, 1.0), axis=1,
+                       out=survival[:, 1:])
         return survival
 
     # --- VPLA file shapes -------------------------------------------------

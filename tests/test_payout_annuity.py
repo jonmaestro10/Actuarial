@@ -38,7 +38,7 @@ VALUATION = date(2021, 1, 1)
 
 RATES = {
     sex: {
-        age: min(0.0004 * 1.09 ** (age - MIN_AGE) * (1.0 if sex == "M" else 0.85), 1.0)
+        age: min(0.0004 * 1.09 ** (age - MIN_AGE) * (1.0 if sex == "M" else 0.85), 0.6)
         for age in range(MIN_AGE, MAX_AGE + 1)
     }
     for sex in ("M", "F")

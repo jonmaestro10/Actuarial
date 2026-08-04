@@ -16,11 +16,11 @@ run goes from compute-bound to bandwidth-bound. Chunking gave ~3.8x on a
 independent, so a chunked run is **bitwise identical** to an unchunked one,
 which tests/test_vector.py asserts.
 
-That independence is a property of the DSL as it stands today, not a
-permanent one. A model whose variables reduce across the model-point axis —
-the pooled variable-payment adjustment in docs/vpla-review.md §7.1 is the
-motivating case — must set ``couples_model_points = True``, and the runner
-will keep its block whole.
+That independence holds only for models built from ``@var`` alone. A model
+declaring a ``@pool`` variable reduces across the model-point axis, so a
+chunk would reduce over the wrong population; the runner detects those and
+keeps their block whole. ``couples_model_points = True`` forces the same
+treatment for a model that couples policies some other way.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ def run_vectorized(
     batch = to_batch(modelpoints)
     if chunk_size is None:
         chunk_size = default_chunk_size(proj_len + 1)
-    if getattr(model_cls, "couples_model_points", False):
+    if getattr(model_cls, "couples_model_points", False) or model_cls.pooled_names():
         chunk_size = batch.n
     chunk_size = max(1, min(int(chunk_size), batch.n))
 
