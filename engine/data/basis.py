@@ -54,11 +54,15 @@ class ValuationBasis:
                 f"{self.curve.n_periods}"
             )
 
-    def survival(self, axis, dob, sex):
-        """``(n_policies, n_periods)`` survival curves over ``axis``."""
+    def survival(self, axis, dob, sex, entry=None):
+        """``(n_policies, n_periods)`` survival curves over ``axis``.
+
+        ``entry`` is each policy's date of selection, needed only when the
+        mortality basis carries select rates.
+        """
         self.check_axis(axis)
         return self.mortality.survival_curve(
-            dob, axis.valuation, sex, axis.freq, axis.n_periods
+            dob, axis.valuation, sex, axis.freq, axis.n_periods, entry
         )
 
     def discount(self, axis):
