@@ -1,10 +1,11 @@
 """Single-premium deferred fixed annuity — the second product template.
 
-Annual projection steps, indicator-style formulas (see term_life.py).
+Projection steps are payment periods, ``assumptions.freq`` to the year
+(annual by default). Indicator-style formulas — see term_life.py.
 
 Product mechanics:
 
-- **Deferral phase** (``t < defer_years``): the single premium accumulates
+- **Deferral phase** (``t < defer_years * freq``): the single premium accumulates
   at the guaranteed crediting rate. Death during the deferral returns the
   end-of-year fund value.
 - **Payout phase** (``t >= defer_years``): the fund annuitizes into a level
@@ -26,13 +27,13 @@ from engine.core.model import Model, var
 class FixedAnnuity(Model):
     @var
     def age(self, t):
-        """Attained age at the start of year t."""
-        return self.mp.age_at_entry + t
+        """Attained age at the start of period t."""
+        return self.mp.age_at_entry + self.assumptions.years_elapsed(t)
 
     @var
     def in_defer(self, t):
         """1 during the deferral phase, 0 from vesting onward."""
-        return (t < self.mp.defer_years) * 1.0
+        return (t < self.assumptions.periods(self.mp.defer_years)) * 1.0
 
     @var
     def in_payout(self, t):
@@ -41,9 +42,9 @@ class FixedAnnuity(Model):
 
     @var(assumption="mortality")
     def q_x(self, t):
-        """Annual mortality rate applying during year t (both phases)."""
-        return self.assumptions.annual_q(
-            self.age(t), sex=getattr(self.mp, "sex", None), offset=t
+        """Mortality rate applying during period t (both phases)."""
+        return self.assumptions.periodic_q(
+            self.age(t), t, sex=getattr(self.mp, "sex", None)
         )
 
     @var
@@ -55,10 +56,11 @@ class FixedAnnuity(Model):
 
     @var(assumption="crediting_rate")
     def fund_eoy_per_pol(self, t):
-        """Fund per policy at the end of year t of the deferral phase."""
+        """Fund per policy at the end of period t of the deferral phase."""
+        elapsed = (t + 1) / self.assumptions.freq if self.assumptions.freq != 1 else t + 1
         return (
             self.mp.premium
-            * (1.0 + self.assumptions.crediting_rate) ** (t + 1)
+            * (1.0 + self.assumptions.crediting_rate) ** elapsed
             * self.in_defer(t)
         )
 
@@ -69,13 +71,17 @@ class FixedAnnuity(Model):
 
     @var
     def payments(self, t):
-        """Annuity payments at the start of year t, payout phase only."""
-        return self.pols_if(t) * self.mp.annual_payment * self.in_payout(t)
+        """Annuity payments at the start of period t, payout phase only."""
+        return (
+            self.pols_if(t)
+            * self.assumptions.per_period(self.mp.annual_payment)
+            * self.in_payout(t)
+        )
 
     @var(assumption="interest")
     def v(self, t):
-        """Discount factor from time t back to time 0."""
-        return (1.0 + self.assumptions.interest) ** (-t)
+        """Discount factor from the start of period t back to time 0."""
+        return self.assumptions.discount(t)
 
     def pv_payments(self):
         return sum(self.payments(t) * self.v(t) for t in range(self.proj_len))

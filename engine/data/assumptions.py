@@ -67,6 +67,13 @@ class MortalityTable:
         """Vectorized lookup: scalar or integer array of ages, all in range."""
         return self.basis.q_at(ages)
 
+    def periodic_rate(self, ages, sub_period, freq, sex=None, year=None,
+                      method="udd"):
+        """``q`` over one of ``freq`` sub-periods within a year of age."""
+        return self.basis.periodic_rate(
+            ages, sub_period, freq, method=method
+        )
+
     def clip_age(self, ages):
         """Clamp ages into table range, for indicator-masked lookups only."""
         return self.basis.clip_age(ages)
@@ -152,7 +159,10 @@ class Assumptions:
                  crediting_rate: float = 0.0, amc: float = 0.0,
                  dynamic_lapse: "DynamicLapse | None" = None,
                  gmdb_fee: float = 0.0, gmab_fee: float = 0.0,
-                 gmwb_fee: float = 0.0, base_year: int | None = None):
+                 gmwb_fee: float = 0.0, base_year: int | None = None,
+                 freq: int = 1, fractional_ages: str = "udd"):
+        if freq < 1 or 12 % freq:
+            raise ValueError(f"payment frequency {freq} must divide 12")
         if not 0.0 <= lapse < 1.0:
             raise ValueError(f"lapse rate {lapse} outside [0, 1)")
         if not 0.0 <= amc < 1.0:
@@ -184,6 +194,58 @@ class Assumptions:
         self.gmdb_fee = gmdb_fee
         self.gmab_fee = gmab_fee
         self.gmwb_fee = gmwb_fee
+        #: Payment periods per year. ``t`` counts periods, so at ``freq = 1``
+        #: it counts years and every rate below is the annual one unchanged.
+        self.freq = freq
+        self.fractional_ages = fractional_ages
+
+    # --- per-period views of annual assumptions ---------------------------
+    #
+    # Every one of these is an identity at freq = 1, exactly and not merely
+    # to tolerance, which is what lets the annual golden suite stand as the
+    # proof that making the templates frequency-aware moved nothing.
+
+    def years_elapsed(self, t: int) -> int:
+        """Whole years of policy duration completed by period ``t``."""
+        return t // self.freq
+
+    def sub_period(self, t: int) -> int:
+        """Position of period ``t`` within its policy year, ``0 .. freq-1``."""
+        return t % self.freq
+
+    def periods(self, years):
+        """Payment periods spanned by a duration given in years."""
+        return years * self.freq
+
+    def periodic_q(self, ages, t: int, sex=None):
+        """Mortality over period ``t`` for a life aged ``ages`` at its start.
+
+        The year of age is split into ``freq`` sub-periods by
+        ``fractional_ages`` — see
+        :meth:`engine.data.mortality.MortalityBasis.periodic_rate`. At
+        ``freq = 1`` under UDD this is the tabular rate, bit for bit.
+        """
+        table = self.mortality
+        return table.periodic_rate(
+            table.clip_age(ages), self.sub_period(t), self.freq,
+            sex=sex, year=self.base_year + self.years_elapsed(t),
+            method=self.fractional_ages,
+        )
+
+    def periodic_lapse(self):
+        """Lapse over one period, from the annual rate under a constant force
+        — so ``freq`` periods of it compound back to the annual rate."""
+        if self.freq == 1:
+            return self.lapse
+        return 1.0 - (1.0 - self.lapse) ** (1.0 / self.freq)
+
+    def per_period(self, annual_amount):
+        """An annual cashflow spread evenly over the periods of a year."""
+        return annual_amount / self.freq
+
+    def discount(self, t: int):
+        """Discount factor from the start of period ``t`` back to time 0."""
+        return (1.0 + self.interest) ** (-t / self.freq if self.freq != 1 else -t)
 
     def annual_q(self, ages, sex=None, offset: int = 0):
         """``q_x`` at whole ages, ``offset`` years after projection time zero.

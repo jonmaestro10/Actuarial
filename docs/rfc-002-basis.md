@@ -208,10 +208,20 @@ Named here so the next phase has a list rather than a memory:
   mortality through `Assumptions.annual_q`. The annual templates therefore
   accept sex-distinct rates and improvement scales unchanged
   (`tests/test_one_mortality_basis.py`).
-- The annual templates still index by `age_at_entry + t` rather than by a
-  date, so they get the *table* from the basis but not its fractional-age
-  splits. Moving them onto a `TimeAxis` — as `PayoutAnnuity` already is —
-  would change their golden values, so it wants its own change note.
+- ~~The annual templates get the table from the basis but not its
+  fractional-age splits.~~ Done, for the two age-indexed templates and
+  without moving a golden value: `MortalityBasis.periodic_rate` splits a
+  year of age into `freq` sub-periods — the dateless counterpart, needing
+  only an age — and `Assumptions` grew per-period views of every annual
+  assumption, each an exact identity at `freq = 1`.
+
+  These stay *age*-indexed rather than date-indexed on purpose. Pricing work
+  has an entry age, not a date of birth; valuation work has both, and uses
+  the date-driven `period_mortality` through a `TimeAxis`. Two entry points
+  to one basis, not two bases.
+- The unit-linked family is still annual. Its AMC, rider fees and scenario
+  returns are all annual-shaped, and converting them is a modelling decision
+  rather than a mechanical one.
 - No select-and-ultimate period and no multi-decrement tables (PLAN §5.1).
 - Mortality is unisex-or-blended; no select-and-ultimate period, and no
   multi-decrement tables.

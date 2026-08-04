@@ -1,13 +1,25 @@
 """Level-premium term assurance — the first product template.
 
-Annual projection steps. Conventions (see Model docstring in
-engine/core/model.py):
+Projection steps are payment periods, ``assumptions.freq`` to the year —
+annual by default, so ``t`` counts years unless told otherwise. A year of
+age is split into sub-periods by ``MortalityBasis.periodic_rate``, and the
+other annual assumptions have matching per-period views on ``Assumptions``;
+at ``freq = 1`` every one of them is the annual assumption bit for bit.
+See tests/test_frequency.py.
 
-- ``pols_if(t)``: policies in force at the start of year ``t``.
-- Premiums and expenses are paid at the start of year ``t`` by in-force
-  policies; death claims arising during year ``t`` are paid at its end.
+Conventions (see Model docstring in engine/core/model.py):
+
+- ``pols_if(t)``: policies in force at the start of period ``t``.
+- Premiums and expenses are paid at the start of period ``t`` by in-force
+  policies; death claims arising during period ``t`` are paid at its end.
 - Cover runs for ``mp.term_years`` years; ``pols_if`` is zero from the end
   of the term onward.
+
+Running sub-annually does not change the decrement basis — the same
+policies are in force at every anniversary — but it does change how exits
+split between mortality and lapse, because the two decrements interleave
+rather than being applied whole in sequence. That is the finer and more
+correct answer, and it is what tests/test_frequency.py pins.
 
 Model point fields: ``age_at_entry`` (int), ``term_years`` (int),
 ``sum_assured``, ``annual_premium``, ``init_pols``.
@@ -30,25 +42,25 @@ from engine.core.model import Model, var
 class TermLife(Model):
     @var
     def age(self, t):
-        """Attained age at the start of year t."""
-        return self.mp.age_at_entry + t
+        """Attained age at the start of period t."""
+        return self.mp.age_at_entry + self.assumptions.years_elapsed(t)
 
     @var
     def in_term(self, t):
         """1 during the cover term, 0 after."""
-        return (t < self.mp.term_years) * 1.0
+        return (t < self.assumptions.periods(self.mp.term_years)) * 1.0
 
     @var(assumption="mortality")
     def q_x(self, t):
-        """Annual mortality rate applying during year t (0 after the term)."""
-        return self.assumptions.annual_q(
-            self.age(t), sex=getattr(self.mp, "sex", None), offset=t
+        """Mortality rate applying during period t (0 after the term)."""
+        return self.assumptions.periodic_q(
+            self.age(t), t, sex=getattr(self.mp, "sex", None)
         ) * self.in_term(t)
 
     @var(assumption="lapse")
     def lapse_rate(self, t):
-        """Annual lapse rate applying during year t (after mortality)."""
-        return self.assumptions.lapse * self.in_term(t)
+        """Lapse rate applying during period t (after mortality)."""
+        return self.assumptions.periodic_lapse() * self.in_term(t)
 
     @var
     def pols_if(self, t):
@@ -60,7 +72,7 @@ class TermLife(Model):
             * (1.0 - self.q_x(t - 1))
             * (1.0 - self.lapse_rate(t - 1))
         )
-        return survived * (t <= self.mp.term_years - 1)
+        return survived * (t <= self.assumptions.periods(self.mp.term_years) - 1)
 
     @var
     def pols_death(self, t):
@@ -74,18 +86,26 @@ class TermLife(Model):
 
     @var
     def premiums(self, t):
-        """Premium income at the start of year t."""
-        return self.pols_if(t) * self.mp.annual_premium * self.in_term(t)
+        """Premium income at the start of period t."""
+        return (
+            self.pols_if(t)
+            * self.assumptions.per_period(self.mp.annual_premium)
+            * self.in_term(t)
+        )
 
     @var(assumption="expense_per_policy")
     def expenses(self, t):
-        """Maintenance expenses at the start of year t."""
-        return self.pols_if(t) * self.assumptions.expense_per_policy * self.in_term(t)
+        """Maintenance expenses at the start of period t."""
+        return (
+            self.pols_if(t)
+            * self.assumptions.per_period(self.assumptions.expense_per_policy)
+            * self.in_term(t)
+        )
 
     @var(assumption="interest")
     def v(self, t):
-        """Discount factor from time t back to time 0."""
-        return (1.0 + self.assumptions.interest) ** (-t)
+        """Discount factor from the start of period t back to time 0."""
+        return self.assumptions.discount(t)
 
     # Present values are scalars over the whole projection, not @var series.
     # Start-of-year flows discount at v(t), end-of-year flows at v(t + 1);

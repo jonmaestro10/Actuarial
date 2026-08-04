@@ -326,6 +326,45 @@ class MortalityBasis:
         year = self.year_start if year is None else year
         return self.q(ages, sex_index, np.broadcast_to(year, np.shape(ages)))
 
+    def periodic_rate(self, ages, sub_period, freq: int, sex=None, year=None,
+                      method: str = "udd"):
+        """``q`` over one of ``freq`` equal sub-periods *within* a year of age.
+
+        The dateless counterpart to ``period_mortality``. Where that one
+        splits a payment period across the two ages it straddles — which
+        needs a date of birth — this splits a single year of age into
+        ``freq`` parts, which needs only the age. Products priced by entry
+        age rather than valued from a date of birth use this one.
+
+        ``sub_period`` is ``0 .. freq - 1``, counting from the policy
+        anniversary.
+
+        - ``"udd"``: uniform distribution of deaths, so deaths accrue evenly
+          across the year and the conditional rate rises through it:
+          ``(q/m) / (1 - (k/m) q)``. This is the same statement as the first
+          term of VPLA's own UDD split, with ``pct_before = k/m`` and
+          ``pct_within = 1/m``.
+        - ``"constant_force"``: a constant hazard, so every sub-period
+          carries the same rate ``1 - (1 - q)^(1/m)``.
+
+        Both telescope back exactly: the product of ``1 - q`` over a full
+        year of sub-periods returns the annual survival ``1 - q``, so
+        splitting the year cannot change how many policies reach the end of
+        it. Unlike the straddling split, neither can exceed 1 — the UDD
+        denominator is bounded below by ``1/m``, and at ``q = 1`` the last
+        sub-period rate is exactly 1.
+        """
+        if method not in ("udd", "constant_force"):
+            raise ValueError(
+                f"method must be 'udd' or 'constant_force', got {method!r}"
+            )
+        if freq < 1:
+            raise ValueError(f"freq {freq} must be >= 1")
+        q = self.q_at(ages, sex=sex, year=year)
+        if method == "constant_force":
+            return 1.0 - (1.0 - q) ** (1.0 / freq)
+        return (q / freq) / (1.0 - (np.asarray(sub_period) / freq) * q)
+
     def sex_indices(self, sex) -> np.ndarray:
         codes = np.atleast_1d(np.asarray(sex, dtype=object))
         try:
