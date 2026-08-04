@@ -21,8 +21,16 @@ split between mortality and lapse, because the two decrements interleave
 rather than being applied whole in sequence. That is the finer and more
 correct answer, and it is what tests/test_frequency.py pins.
 
+Term assurance is priced on **select** rates, so ``q_x`` looks mortality up
+by duration as well as by age. Supply a ``MortalityBasis`` carrying a select
+table and the first years of cover are read from it; supply an ultimate-only
+table — a plain ``MortalityTable``, say — and the duration argument cannot
+move a number, so the annual golden suite stands unchanged.
+
 Model point fields: ``age_at_entry`` (int), ``term_years`` (int),
-``sum_assured``, ``annual_premium``, ``init_pols``.
+``sum_assured``, ``annual_premium``, ``init_pols``, and optionally
+``duration_in_force`` (int, default 0) for a block already part way through
+its select period at projection time zero.
 Assumption bindings: ``mortality`` (table), ``lapse`` (flat annual rate),
 ``interest`` (flat annual rate), ``expense_per_policy``.
 
@@ -46,15 +54,36 @@ class TermLife(Model):
         return self.mp.age_at_entry + self.assumptions.years_elapsed(t)
 
     @var
+    def duration(self, t):
+        """Whole years since underwriting at the start of period t.
+
+        ``duration_in_force`` is how long the policy had already run at
+        projection time zero — zero for new business, which is why it
+        defaults, and non-zero for an in-force block valued part way
+        through its select period.
+        """
+        return (
+            getattr(self.mp, "duration_in_force", 0)
+            + self.assumptions.years_elapsed(t)
+        )
+
+    @var
     def in_term(self, t):
         """1 during the cover term, 0 after."""
         return (t < self.assumptions.periods(self.mp.term_years)) * 1.0
 
     @var(assumption="mortality")
     def q_x(self, t):
-        """Mortality rate applying during period t (0 after the term)."""
+        """Mortality rate applying during period t (0 after the term).
+
+        Duration is passed on every lookup. On an ultimate-only basis it is
+        inert — the rate is the same bits either way — and on a
+        select-and-ultimate basis it is what makes a recently underwritten
+        life cheaper than an identically aged one selected long ago.
+        """
         return self.assumptions.periodic_q(
-            self.age(t), t, sex=getattr(self.mp, "sex", None)
+            self.age(t), t, sex=getattr(self.mp, "sex", None),
+            duration=self.duration(t),
         ) * self.in_term(t)
 
     @var(assumption="lapse")

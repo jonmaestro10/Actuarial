@@ -139,6 +139,57 @@ The constant improvement scale extrapolates backwards for a valuation before
 original that is reproduced rather than tidied, since either behaviour would
 otherwise be a silent change to a validated number.
 
+## Select and ultimate — an addition, not a promotion
+
+Everything above is VPLA's arithmetic reorganised. Select rates are the one
+piece with no counterpart to promote, because VPLA values payout annuities
+in payment: every life it touches passed any select period decades ago, so
+an ultimate table is the whole story. Term assurance is not priced that way
+— a life underwritten last year is a materially better risk than one of the
+same age underwritten twenty years ago — and PLAN §5.1 lists it as a Layer 0
+gap.
+
+The basis takes `select={sex: {duration: {age: q}}}`, the published layout:
+one row per **age at selection**, one column per year since selection.
+Durations run `0 .. n-1` and set the select period; from `n` onwards the
+ultimate table applies.
+
+Adding a dimension to the one lookup every number in the engine passes
+through is exactly the kind of change that moves a golden value by an ulp
+and is never noticed. It is threaded so that it cannot:
+
+- `duration` is an **optional argument**, not part of the age index. Omit it
+  — the default at every call site that predates select rates — and
+  `_table_q` returns `self._q[sex_index, clipped_age - self.min_age]`, the
+  expression the class has always evaluated, character for character.
+- A basis carrying select rates, asked *without* a duration, still returns
+  the ultimate table. Omitting the duration is not "duration 0".
+- The select branch is element-wise, so a batch mixing new business and
+  seasoned policies falls through per policy rather than per array.
+- Improvement is untouched: the select dimension chooses which base rate
+  applies, and the scale is a function of attained age and calendar year
+  either way. Same for the fractional-age split — selection picks the year
+  of mortality, the split divides that year, and the two commute.
+
+`tests/test_select_mortality.py` asserts the first two with `==` on floats
+rather than `approx`, and the VPLA parity harness is unchanged: bitwise on
+every rate across all five configurations at both frequencies.
+
+Two behaviours are worth stating out loud because they are choices:
+
+- **The date-driven path reads duration at the start of each piece.** A
+  payment period can straddle both a birthday and a policy anniversary, and
+  they need not be the same date. The piece before the birthday takes the
+  duration at the period start; the piece after it takes the duration at the
+  birthday — the same convention the age already follows, so each rate
+  matches the span it actually covers.
+- **A selection age outside the select table is clipped, not raised.** At
+  the bottom of the table the nearest row belongs to an older attained age,
+  so a clipped rate can come out *heavier* than the ultimate one. That is
+  pinned by a test rather than left to be discovered. Clipping is what keeps
+  the lookup total for ages a template masks out and never actually uses;
+  the cure for a real block is a select table covering its selection ages.
+
 ## How it is policed
 
 Three layers, in increasing strength:
@@ -222,6 +273,17 @@ Named here so the next phase has a list rather than a memory:
 - The unit-linked family is still annual. Its AMC, rider fees and scenario
   returns are all annual-shaped, and converting them is a modelling decision
   rather than a mechanical one.
-- No select-and-ultimate period and no multi-decrement tables (PLAN §5.1).
-- Mortality is unisex-or-blended; no select-and-ultimate period, and no
-  multi-decrement tables.
+- ~~No select-and-ultimate period.~~ Done, and without moving a bit: an
+  optional select table keyed by `(sex, duration, age at selection)`, with
+  the duration threaded through both the age-indexed and the date-indexed
+  lookups. `TermLife` reads it, since term assurance is priced on select
+  rates; its model points take a `duration_in_force` for a block already
+  part way through the select period.
+- **No multi-decrement tables** (PLAN §5.1). The natural follow-on from the
+  frequency work, which showed exits shifting between mortality and lapse as
+  the decrements interleave more finely: a dependent-rate table would state
+  that answer directly rather than converging on it.
+- Select rates are **not** yet available to the pooled and payout templates
+  through `ValuationBasis`. The plumbing is there — `survival(axis, dob,
+  sex, entry)` takes a date of selection — but no annuity template passes
+  one, because an annuity in payment has no select period to speak of.

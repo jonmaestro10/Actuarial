@@ -8,7 +8,9 @@ jonmaestro10/VPLA — validated there against Society of Actuaries
 calculators — with three layers:
 
 1. **Table lookup** — ``q_x`` by integer age and sex, the last tabulated age
-   held flat, an optional blend across sexes.
+   held flat, an optional blend across sexes; optionally **select and
+   ultimate**, where the rate for the first ``n`` years since underwriting
+   depends on how long ago the life was selected as well as on its age.
 2. **Improvement** — a 1-D constant scale
    (``q * (1 - imp[age]) ** (year - year_start)``) or a 2-D generational
    scale (``q * Π_y (1 - imp[y][age])`` over calendar years, the last
@@ -40,6 +42,16 @@ Two deliberate departures from the original, both from docs/vpla-review.md:
   are identical.
 - An age below the table raises instead of failing on a dict lookup;
   extrapolating mortality downwards is never the right silent default.
+
+One addition VPLA has no counterpart for: **select rates**. VPLA values
+payout annuities in payment, where every life has long since passed any
+select period, so an ultimate table is the whole story. Term assurance is
+not priced that way — a life underwritten last year is a materially better
+risk than one of the same age underwritten twenty years ago — so the basis
+takes an optional select table keyed by ``(sex, duration, age at
+selection)``. It is off unless supplied, and a lookup that does not name a
+duration reads the ultimate table by exactly the expression it always did,
+which is why every existing golden value is untouched.
 """
 
 from __future__ import annotations
@@ -79,6 +91,11 @@ class MortalityBasis:
     contiguous age range. ``improvement`` is either ``{sex: {age: rate}}``
     (a constant scale) or ``{sex: {year: {age: rate}}}`` (generational);
     the shape is detected from its nesting, as VPLA does.
+
+    ``select`` is ``{sex: {duration: {age: q}}}`` — the published layout of a
+    select-and-ultimate table, one row per **age at selection** and one
+    column per year since selection. Durations run ``0 .. n-1`` and set the
+    select period; from duration ``n`` onwards ``rates`` applies.
     """
 
     def __init__(
@@ -93,6 +110,8 @@ class MortalityBasis:
         blend_male_percent: float | None = None,
         blend: str = "improved",
         omega: int = OMEGA,
+        select: Mapping | None = None,
+        select_period: int | None = None,
     ):
         if not rates:
             raise ValueError("no mortality rates supplied")
@@ -125,6 +144,7 @@ class MortalityBasis:
         self.omega = int(omega)
         self.use_improvement = bool(use_improvement) and bool(improvement)
         self._build_improvement(improvement)
+        self._build_select(select, select_period)
 
     def __fingerprint__(self):
         """What defines this basis: its rates and its conventions.
@@ -145,13 +165,109 @@ class MortalityBasis:
             "blend": self.blend,
             "omega": self.omega,
             "improvement_kind": self.improvement_kind,
+            "select_period": self.select_period,
         }
         if self.improvement_kind == "constant":
             identity["improvement"] = self._imp
         elif self.improvement_kind == "generational":
             identity["improvement"] = self._gen_step
             identity["improvement_max_year"] = self.improvement_max_year
+        if self.select_period:
+            identity["select"] = self._select
+            identity["select_min_age"] = self.select_min_age
+            identity["select_max_age"] = self.select_max_age
         return identity
+
+    # --- select and ultimate ---------------------------------------------
+
+    def _build_select(self, select, select_period):
+        """Stack ``{sex: {duration: {age: q}}}`` into ``(sexes, durations,
+        ages)``, keyed by **age at selection**."""
+        self.select_period = 0
+        self.select_min_age = self.select_max_age = None
+        self._select = None
+        if not select:
+            if select_period:
+                raise ValueError(
+                    f"select_period={select_period} but no select rates given"
+                )
+            return
+        if _depth(select) != 3:
+            raise ValueError(
+                "select rates must be keyed by (sex, duration, age); got "
+                f"nesting depth {_depth(select)}"
+            )
+        if sorted(select) != self.sexes:
+            raise ValueError(
+                f"select rates cover sexes {sorted(select)}, the ultimate "
+                f"table covers {self.sexes}"
+            )
+        durations = sorted(int(d) for d in select[self.sexes[0]])
+        if durations != list(range(len(durations))):
+            raise ValueError(
+                f"select durations must run 0..n-1, got {durations}"
+            )
+        n = len(durations)
+        if select_period is not None and select_period != n:
+            raise ValueError(
+                f"select_period={select_period} but {n} durations were given"
+            )
+
+        first = select[self.sexes[0]][_key(select[self.sexes[0]], 0)]
+        ages = sorted(int(a) for a in first)
+        lo, hi = ages[0], ages[-1]
+        self._select = np.stack(
+            [
+                np.stack(
+                    [
+                        _dense(select[s][_key(select[s], d)], lo, hi,
+                               f"select[{s}][{d}]")
+                        for d in range(n)
+                    ]
+                )
+                for s in self.sexes
+            ]
+        )
+        if np.any((self._select < 0.0) | (self._select > 1.0)):
+            raise ValueError("select mortality rates outside [0, 1]")
+        self.select_period = n
+        self.select_min_age = lo
+        self.select_max_age = hi
+
+    def _table_q(self, sex_index, clipped_age, duration):
+        """Un-improved tabular ``q``, select where the duration says so.
+
+        With no ``duration`` — the default everywhere — this is exactly the
+        expression the class has always evaluated, character for character,
+        so an ultimate-only lookup keeps its last bit. That is the whole
+        reason the select dimension is threaded as an optional argument
+        rather than folded into the age index.
+        """
+        ultimate = self._q[sex_index, clipped_age - self.min_age]
+        if duration is None or not self.select_period:
+            return ultimate
+        duration = np.asarray(duration, dtype=np.int64)
+        if np.any(duration < 0):
+            raise ValueError(
+                "policy duration cannot be negative: a life cannot be valued "
+                "before it was selected"
+            )
+        in_select = duration < self.select_period
+        # Durations past the select period index row 0 and are then thrown
+        # away by the `where`; the clip keeps the gather in bounds without
+        # inventing a rate, since the ultimate branch is what survives.
+        d = np.where(in_select, duration, 0)
+        # A selection age outside the tabulated range reads the nearest
+        # row. That is deliberate but it is not free: at the bottom of the
+        # table the nearest row belongs to an *older* attained age, so the
+        # rate can come out heavier than the ultimate one. It is total —
+        # never raising on an age a template masks out anyway — and the
+        # cure is a select table covering the block's selection ages.
+        entry_age = np.clip(
+            clipped_age - d, self.select_min_age, self.select_max_age
+        )
+        selected = self._select[sex_index, d, entry_age - self.select_min_age]
+        return np.where(in_select, selected, ultimate)
 
     # --- improvement ------------------------------------------------------
 
@@ -282,8 +398,14 @@ class MortalityBasis:
 
     # --- table lookup -----------------------------------------------------
 
-    def q(self, age, sex_index, year):
-        """Improved ``q_x``; ages above the table are held flat."""
+    def q(self, age, sex_index, year, duration=None):
+        """Improved ``q_x``; ages above the table are held flat.
+
+        ``duration`` is whole years since the life was selected. It is read
+        only when the basis carries a select table, and omitting it reads
+        the ultimate table — the behaviour of every caller that predates
+        select rates.
+        """
         age = np.asarray(age, dtype=np.int64)
         if np.any(age < self.min_age):
             raise KeyError(
@@ -291,20 +413,21 @@ class MortalityBasis:
             )
         clipped = np.minimum(age, self.max_age)
         sex_index = np.asarray(sex_index)
-        idx = clipped - self.min_age
         if self.blend_male_percent is None:
-            return self._q[sex_index, idx] * self.improvement_factor(
-                sex_index, clipped, year
-            )
+            return self._table_q(
+                sex_index, clipped, duration
+            ) * self.improvement_factor(sex_index, clipped, year)
         male, female = self._sex_index["M"], self._sex_index["F"]
         w = self.blend_male_percent
+        q_male = self._table_q(male, clipped, duration)
+        q_female = self._table_q(female, clipped, duration)
         if self.blend == "base":
             # VPLA: blend the base rates, improve on the requested sex.
-            base = w * self._q[male, idx] + (1.0 - w) * self._q[female, idx]
+            base = w * q_male + (1.0 - w) * q_female
             return base * self.improvement_factor(sex_index, clipped, year)
-        return w * self._q[male, idx] * self.improvement_factor(
+        return w * q_male * self.improvement_factor(
             male, clipped, year
-        ) + (1.0 - w) * self._q[female, idx] * self.improvement_factor(
+        ) + (1.0 - w) * q_female * self.improvement_factor(
             female, clipped, year
         )
 
@@ -319,7 +442,7 @@ class MortalityBasis:
         """
         return np.clip(np.asarray(ages, dtype=np.int64), self.min_age, self.max_age)
 
-    def q_at(self, ages, sex=None, year=None):
+    def q_at(self, ages, sex=None, year=None, duration=None):
         """``q_x`` by whole age — the annual view of this basis.
 
         The lookup the annual templates use, and the same one
@@ -330,6 +453,9 @@ class MortalityBasis:
         ``sex`` may be omitted when the basis carries only one. ``year``
         defaults to ``year_start``, where improvement is neutral, so a
         caller that does not model calendar time gets the base table.
+
+        ``duration`` is whole years since selection, broadcast against
+        ``ages``. Omitted — the default — the lookup is ultimate.
         """
         ages = np.asarray(ages, dtype=np.int64)
         if np.any(ages < self.min_age) or np.any(ages > self.max_age):
@@ -345,16 +471,26 @@ class MortalityBasis:
             sex_index = np.zeros_like(ages)
         else:
             sex_index = self.sex_indices(sex).reshape(-1)
-            # Ages arrive per policy, or per (policy, scenario) under the
-            # stochastic executor. Align on the leading model-point axis.
-            while sex_index.ndim < np.ndim(ages):
-                sex_index = sex_index[..., None]
-            sex_index = np.broadcast_to(sex_index, np.shape(ages))
+            if np.ndim(ages) == 0 and sex_index.size == 1:
+                # One age, one sex — a spot check rather than a block.
+                sex_index = sex_index[0]
+            else:
+                # Ages arrive per policy, or per (policy, scenario) under the
+                # stochastic executor. Align on the leading model-point axis.
+                while sex_index.ndim < np.ndim(ages):
+                    sex_index = sex_index[..., None]
+                sex_index = np.broadcast_to(sex_index, np.shape(ages))
         year = self.year_start if year is None else year
-        return self.q(ages, sex_index, np.broadcast_to(year, np.shape(ages)))
+        if duration is not None:
+            duration = np.broadcast_to(
+                np.asarray(duration, dtype=np.int64), np.shape(ages)
+            )
+        return self.q(
+            ages, sex_index, np.broadcast_to(year, np.shape(ages)), duration
+        )
 
     def periodic_rate(self, ages, sub_period, freq: int, sex=None, year=None,
-                      method: str = "udd"):
+                      method: str = "udd", duration=None):
         """``q`` over one of ``freq`` equal sub-periods *within* a year of age.
 
         The dateless counterpart to ``period_mortality``. Where that one
@@ -364,7 +500,10 @@ class MortalityBasis:
         age rather than valued from a date of birth use this one.
 
         ``sub_period`` is ``0 .. freq - 1``, counting from the policy
-        anniversary.
+        anniversary. ``duration`` is whole years since selection, and is
+        applied to the *annual* rate before it is split — the select basis
+        chooses which year of mortality applies, and the split then divides
+        that year, so the two are independent.
 
         - ``"udd"``: uniform distribution of deaths, so deaths accrue evenly
           across the year and the conditional rate rises through it:
@@ -387,7 +526,7 @@ class MortalityBasis:
             )
         if freq < 1:
             raise ValueError(f"freq {freq} must be >= 1")
-        q = self.q_at(ages, sex=sex, year=year)
+        q = self.q_at(ages, sex=sex, year=year, duration=duration)
         if method == "constant_force":
             return 1.0 - (1.0 - q) ** (1.0 / freq)
         return (q / freq) / (1.0 - (np.asarray(sub_period) / freq) * q)
@@ -404,13 +543,22 @@ class MortalityBasis:
 
     # --- fractional age ---------------------------------------------------
 
-    def period_mortality(self, dob, valuation, sex, freq: int, n_periods: int):
+    def period_mortality(self, dob, valuation, sex, freq: int, n_periods: int,
+                         entry=None):
         """Death probability over each of ``n_periods`` payment periods.
 
         Returns shape ``(n_policies, n_periods)``. Period ``k`` starts
         ``k * 12 / freq`` months after the valuation date — added in one
         step from the valuation date, never accumulated, because month
         addition does not compose.
+
+        ``entry`` is each policy's date of selection, needed only for a
+        select basis. Duration is read at the start of each piece the period
+        splits into, the same convention the age already follows: the piece
+        before the birthday takes the duration at the period start, the
+        piece after it takes the duration at the birthday. Anniversaries and
+        birthdays need not coincide, and this keeps each rate matched to the
+        span it actually covers.
         """
         step = months_per_period(freq)
         dob = DateArray.coerce(dob)
@@ -445,10 +593,20 @@ class MortalityBasis:
             percent_first = np.round(percent_first * freq) / freq
             percent_second = np.round(percent_second * freq) / freq
 
+        dur_first = dur_second = None
+        if entry is not None and self.select_period:
+            entered = DateArray.coerce(entry)
+            entered = DateArray(entered.year[:, None], entered.month[:, None],
+                                entered.day[:, None])
+            dur_first = start.whole_years_since(entered)
+            dur_second = next_bday.whole_years_since(entered)
+
         # Both ages are read at the period start's calendar year, as VPLA does.
         year = start.year
-        q_first = self.q(np.maximum(first_age, self.min_age), sex_index, year)
-        q_second = self.q(np.maximum(second_age, self.min_age), sex_index, year)
+        q_first = self.q(np.maximum(first_age, self.min_age), sex_index, year,
+                         dur_first)
+        q_second = self.q(np.maximum(second_age, self.min_age), sex_index, year,
+                          dur_second)
 
         if self.calc == "linear":
             result = percent_first * q_first + percent_second * q_second
@@ -462,7 +620,8 @@ class MortalityBasis:
             )
         return np.where(first_age >= self.omega, 1.0, result)
 
-    def survival_curve(self, dob, valuation, sex, freq: int, n_periods: int):
+    def survival_curve(self, dob, valuation, sex, freq: int, n_periods: int,
+                       entry=None):
         """``ₖp_x`` for ``k = 0 .. n_periods - 1``, shape ``(n_policies,
         n_periods)``. Entry 0 is 1 by construction.
 
@@ -489,7 +648,7 @@ class MortalityBasis:
         only letting a survival probability leave this method outside
         ``[0, 1]``. See docs/vpla-review.md §6.15.
         """
-        q = self.period_mortality(dob, valuation, sex, freq, n_periods)
+        q = self.period_mortality(dob, valuation, sex, freq, n_periods, entry)
         survival = np.ones_like(q)
         if n_periods > 1:
             np.cumprod(np.clip(1.0 - q[:, :-1], 0.0, 1.0), axis=1,

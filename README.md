@@ -123,6 +123,15 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   every anniversary but shifts exits from mortality to lapse, converging on
   the continuous multi-decrement answer.
 
+- **Select-and-ultimate mortality**: the basis takes a select table in the
+  published layout — one row per age at selection, one column per year
+  since — and falls through to the ultimate table when the select period
+  runs out. `TermLife` reads it, because term assurance is priced on select
+  rates, and its model points take a `duration_in_force` for a block already
+  part way through. Duration is an optional argument rather than part of the
+  age index, so an ultimate-only lookup evaluates the same expression it
+  always did: the identity is asserted with `==` on floats, and the VPLA
+  parity harness still reports bitwise on every rate.
 - **Reproducibility** ([RFC-003](docs/rfc-003-run-registry.md)): a run
   records two digests — one of the question (model source, assumptions,
   model points, scenarios, projection length, outputs) and one of the
@@ -135,6 +144,6 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   bitwise-equivalence claim stated as an audit trail.
 
 Next: the unit-linked family sub-annually (its charges and scenario returns
-are annual-shaped and need a modelling decision first), select-and-ultimate
-and multi-decrement tables, reductions beyond a sum, kernel fusion, and
-scenario-set file adapters.
+are annual-shaped and need a modelling decision first), multi-decrement
+tables, reductions beyond a sum, kernel fusion, and scenario-set file
+adapters.

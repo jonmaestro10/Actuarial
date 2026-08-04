@@ -63,15 +63,20 @@ class MortalityTable:
         except KeyError:
             raise KeyError(f"age {age} not in mortality table") from None
 
-    def q_at(self, ages, sex=None, year=None):
-        """Vectorized lookup: scalar or integer array of ages, all in range."""
-        return self.basis.q_at(ages)
+    def q_at(self, ages, sex=None, year=None, duration=None):
+        """Vectorized lookup: scalar or integer array of ages, all in range.
+
+        ``duration`` is accepted and passed on so that a template written
+        for a select basis runs unchanged against a flat table; with no
+        select rates behind it the argument cannot move a number.
+        """
+        return self.basis.q_at(ages, duration=duration)
 
     def periodic_rate(self, ages, sub_period, freq, sex=None, year=None,
-                      method="udd"):
+                      method="udd", duration=None):
         """``q`` over one of ``freq`` sub-periods within a year of age."""
         return self.basis.periodic_rate(
-            ages, sub_period, freq, method=method
+            ages, sub_period, freq, method=method, duration=duration
         )
 
     def clip_age(self, ages):
@@ -241,19 +246,23 @@ class Assumptions:
         """Payment periods spanned by a duration given in years."""
         return years * self.freq
 
-    def periodic_q(self, ages, t: int, sex=None):
+    def periodic_q(self, ages, t: int, sex=None, duration=None):
         """Mortality over period ``t`` for a life aged ``ages`` at its start.
 
         The year of age is split into ``freq`` sub-periods by
         ``fractional_ages`` — see
         :meth:`engine.data.mortality.MortalityBasis.periodic_rate`. At
         ``freq = 1`` under UDD this is the tabular rate, bit for bit.
+
+        ``duration`` is whole years since the life was selected, for a
+        select-and-ultimate basis. Against an ultimate-only basis it is
+        inert, so a template can pass it unconditionally.
         """
         table = self.mortality
         return table.periodic_rate(
             table.clip_age(ages), self.sub_period(t), self.freq,
             sex=sex, year=self.base_year + self.years_elapsed(t),
-            method=self.fractional_ages,
+            method=self.fractional_ages, duration=duration,
         )
 
     def periodic_lapse(self):
@@ -271,7 +280,7 @@ class Assumptions:
         """Discount factor from the start of period ``t`` back to time 0."""
         return (1.0 + self.interest) ** (-t / self.freq if self.freq != 1 else -t)
 
-    def annual_q(self, ages, sex=None, offset: int = 0):
+    def annual_q(self, ages, sex=None, offset: int = 0, duration=None):
         """``q_x`` at whole ages, ``offset`` years after projection time zero.
 
         The single mortality lookup the annual templates use. Ages are
@@ -284,5 +293,6 @@ class Assumptions:
         """
         table = self.mortality
         return table.q_at(
-            table.clip_age(ages), sex=sex, year=self.base_year + offset
+            table.clip_age(ages), sex=sex, year=self.base_year + offset,
+            duration=duration,
         )
