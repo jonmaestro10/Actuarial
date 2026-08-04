@@ -254,6 +254,31 @@ class Model:
         evaluate.__doc__ = spec.doc
         return evaluate
 
+    def restart_fields(self, t: int) -> dict:
+        """Model-point fields describing this policy's state at period ``t``.
+
+        A projection normally starts at inception. A valuation — and every
+        inner projection of a nested run — starts from wherever the block
+        has got to, which means a template has to be able to say what its
+        state *is*: the fund, the benefit base, the in-force count, the
+        attained age, the term left to run.
+
+        A template implements this by returning the model-point fields that
+        would make a fresh projection begin exactly where this one stands at
+        ``t``. That it can is not an accident: the ``t == 0`` branch of
+        every stock variable reads one model-point field, so the state and
+        the model point are the same list.
+
+        Restarts land on policy anniversaries only. Attained age and
+        remaining term are whole years, and a template that pretended
+        otherwise would be inventing a part-year age.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} cannot be restarted mid-projection: it "
+            "does not implement restart_fields(t). Implement it to return "
+            "the model-point fields for the state at t."
+        )
+
     @property
     def record_graph(self) -> bool:
         """Whether dependency edges are being recorded. Settable mid-run:

@@ -176,6 +176,35 @@ class UnitLinkedGMDB(Model):
         """Total charges collected in year t from in-force policies."""
         return self.charges_per_pol(t) * self.pols_if(t)
 
+    def restart_fields(self, t: int) -> dict:
+        """This contract's state at period ``t``, as model-point fields.
+
+        Every one of them is read by a ``t == 0`` branch above, which is
+        what makes the hand-off exact rather than approximate: a fresh
+        projection built from these fields begins on precisely the values
+        this one holds at ``t``.
+        """
+        a = self.assumptions
+        if a.sub_period(t):
+            raise ValueError(
+                f"restart at period {t} is not a policy anniversary "
+                f"(freq={a.freq}); attained age and remaining term are whole "
+                "years, and a part-year restart would invent both"
+            )
+        elapsed = a.years_elapsed(t)
+        # A batch exposes `fields`; a single ModelPoint is its `__dict__`.
+        # The distinction matters: a batch's `__dict__` also holds `ids` and
+        # `n`, which are not model-point fields.
+        fields = dict(getattr(self.mp, "fields", None) or self.mp.__dict__)
+        fields.update(
+            age_at_entry=self.mp.age_at_entry + elapsed,
+            term_years=self.mp.term_years - elapsed,
+            premium=self.fund_boy(t),
+            init_pols=self.pols_if(t),
+        )
+        return fields
+
+
     @var
     def gmdb_claims(self, t):
         """GMDB death claims in year t: greater of guarantee and fund,
@@ -532,6 +561,43 @@ class UnitLinkedGMxB(Model):
     def guarantee_strain(self, t):
         """Total cost of all three guarantees in year t."""
         return self.gmdb_strain(t) + self.gmwb_strain(t) + self.gmab_strain(t)
+
+    def restart_fields(self, t: int) -> dict:
+        """State at period ``t``, as model-point fields.
+
+        The seed's four state variables plus the GMWB benefit base, which
+        is the one piece of state a ratcheting rider carries that the fund
+        does not: two contracts with the same account value can owe very
+        different guaranteed withdrawals depending on where their funds
+        have *been*. A restart that dropped it would quietly reset every
+        ratchet ever earned.
+
+        ``UnitLinkedGMxB`` does not inherit from ``UnitLinkedGMDB`` — they
+        are siblings, held identical by a bitwise test rather than by
+        inheritance — so this is written out rather than extending the
+        seed's.
+        """
+        a = self.assumptions
+        if a.sub_period(t):
+            raise ValueError(
+                f"restart at period {t} is not a policy anniversary "
+                f"(freq={a.freq}); attained age and remaining term are whole "
+                "years, and a part-year restart would invent both"
+            )
+        elapsed = a.years_elapsed(t)
+        # A batch exposes `fields`; a single ModelPoint is its `__dict__`.
+        # The distinction matters: a batch's `__dict__` also holds `ids` and
+        # `n`, which are not model-point fields.
+        fields = dict(getattr(self.mp, "fields", None) or self.mp.__dict__)
+        fields.update(
+            age_at_entry=self.mp.age_at_entry + elapsed,
+            term_years=self.mp.term_years - elapsed,
+            premium=self.fund_boy(t),
+            init_pols=self.pols_if(t),
+            gmwb_base=self.benefit_base(t),
+        )
+        return fields
+
 
     @var(assumption="interest")
     def v(self, t):

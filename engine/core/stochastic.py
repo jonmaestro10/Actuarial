@@ -31,10 +31,40 @@ class _ColumnBatch:
     broadcast against per-scenario vectors."""
 
     def __init__(self, batch):
+        self._field_names = tuple(batch.fields)
         for name, value in batch.__dict__.items():
             if isinstance(value, np.ndarray) and value.dtype != object:
                 value = value[:, None]
             setattr(self, name, value)
+
+    @property
+    def fields(self) -> dict:
+        """The model-point fields, without the batch's own ``ids`` and
+        ``n`` — which live in the same ``__dict__`` and are not fields."""
+        return {name: getattr(self, name) for name in self._field_names}
+
+
+def build_stochastic_model(model_cls, batch, assumptions, scenarios,
+                           proj_len):
+    """A model bound to a batch and a scenario set, ready to evaluate.
+
+    Separate from :func:`run_stochastic` because a nested run needs the
+    *model* rather than its outputs — it asks the outer projection for the
+    state each path has reached, which is a question about the model and not
+    about a slab of results.
+    """
+    if scenarios.horizon < proj_len:
+        raise ValueError(
+            f"scenario horizon {scenarios.horizon} shorter than "
+            f"projection length {proj_len}"
+        )
+    return model_cls(
+        mp=_ColumnBatch(batch),
+        assumptions=assumptions,
+        proj_len=proj_len,
+        scenarios=scenarios,
+        record_graph=True,
+    )
 
 
 def run_stochastic(
@@ -51,13 +81,8 @@ def run_stochastic(
             f"projection length {proj_len}"
         )
     batch = to_batch(modelpoints)
-    model = model_cls(
-        mp=_ColumnBatch(batch),
-        assumptions=assumptions,
-        proj_len=proj_len,
-        scenarios=scenarios,
-        record_graph=True,
-    )
+    model = build_stochastic_model(model_cls, batch, assumptions, scenarios,
+                                   proj_len)
     names = list(outputs or model.var_names())
     shape = (batch.n, scenarios.n_scenarios)
     stacked = {

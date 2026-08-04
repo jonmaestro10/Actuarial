@@ -14,6 +14,7 @@ through ``q_at``/``clip_age``, which both classes provide.
 
 from __future__ import annotations
 
+import copy
 from types import MappingProxyType
 from typing import Mapping
 
@@ -341,6 +342,20 @@ class Assumptions:
     def per_period(self, annual_amount):
         """An annual cashflow spread evenly over the periods of a year."""
         return annual_amount / self.freq
+
+    def at_year(self, offset: int) -> "Assumptions":
+        """The same basis, ``offset`` years later on the calendar.
+
+        Everything that reads calendar time — a mortality improvement
+        scale, expense inflation — is indexed from ``base_year``, so a
+        projection restarted part way through a block's life has to be
+        handed a basis that has moved on with it. Without this, an inner
+        projection starting at year 10 would price mortality as if it were
+        year 0, and the error would be silent and one-directional.
+        """
+        clone = copy.copy(self)
+        clone.base_year = self.base_year + offset
+        return clone
 
     def period_accumulation(self):
         """One period of interest — the factor carrying a start-of-period
