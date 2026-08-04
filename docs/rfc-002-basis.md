@@ -270,9 +270,21 @@ Named here so the next phase has a list rather than a memory:
   has an entry age, not a date of birth; valuation work has both, and uses
   the date-driven `period_mortality` through a `TimeAxis`. Two entry points
   to one basis, not two bases.
-- The unit-linked family is still annual. Its AMC, rider fees and scenario
-  returns are all annual-shaped, and converting them is a modelling decision
-  rather than a mechanical one.
+- ~~The unit-linked family is still annual.~~ Done, and the modelling
+  decision it was waiting on is recorded rather than buried: the AMC removes
+  a proportion of the fund, so it converts geometrically as a **deduction**,
+  `1 - (1 - amc) ** (1/freq)` — not `(1 + amc) ** (1/freq) - 1`, which is
+  the conversion for a rate that accumulates and leaks 1.31 bp a year on a
+  1.2% charge. Rider fees and the guaranteed withdrawal spread instead,
+  being annual monetary entitlements on amounts they do not erode, and the
+  GMWB ratchet keeps stepping annually because it is an anniversary event.
+  `freq = 1` is the identity across all 48 output series of both templates.
+
+  Scenario returns are **per period**, which is the engine's existing
+  convention rather than a new decision: `ScenarioSet.horizon` counts
+  projection periods and `run_stochastic` checks it against `proj_len`.
+  Nothing converts an annual scenario file to a monthly one, because that
+  would have to invent the intra-year path.
 - ~~No select-and-ultimate period.~~ Done, and without moving a bit: an
   optional select table keyed by `(sex, duration, age at selection)`, with
   the duration threaded through both the age-indexed and the date-indexed

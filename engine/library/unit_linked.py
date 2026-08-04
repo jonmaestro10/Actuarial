@@ -16,14 +16,16 @@ evaluates a whole ``(model point x scenario)`` slab.
 Single-premium unit-linked contract with a GMDB rider — the seed of the
 VA/VPLA family.
 
-Annual steps, indicator style. Fund mechanics per policy, per scenario:
+Projection steps are payment periods, ``assumptions.freq`` to the year —
+annual by default, so ``t`` counts years unless told otherwise. Indicator
+style throughout. Fund mechanics per policy, per scenario:
 
-- ``fund_boy(t)``: unit fund at the start of year ``t``; the single premium
-  buys units at ``t = 0``.
-- During year ``t`` the fund earns the scenario return, then the annual
+- ``fund_boy(t)``: unit fund at the start of period ``t``; the single
+  premium buys units at ``t = 0``.
+- During period ``t`` the fund earns the scenario return, then the
   management charge (AMC) is deducted from the grown fund.
-- Death during year ``t`` pays ``max(guarantee, fund after growth and
-  charges)`` at the end of the year — a return-of-premium GMDB when
+- Death during period ``t`` pays ``max(guarantee, fund after growth and
+  charges)`` at the end of the period — a return-of-premium GMDB when
   ``mp.gmdb_guarantee == mp.premium``.
 - Contract runs ``mp.term_years`` years; survivors take the fund at
   maturity. Lapses surrender the fund (no penalty, no P&L impact beyond
@@ -33,6 +35,31 @@ Model point fields: ``age_at_entry`` (int), ``term_years`` (int),
 ``premium``, ``gmdb_guarantee``, ``init_pols``.
 Assumption bindings: ``mortality``, ``lapse``, ``interest`` (discounting),
 ``amc``. Scenario binding: fund returns via ``self.scenarios.ret(t)``.
+
+Running sub-annually
+--------------------
+``freq = 1`` is the **identity, bit for bit** — every per-period view
+returns the annual assumption unchanged — so the whole annual golden suite
+is the regression test for this. A finer step changes three things, and
+each is a stated convention rather than a consequence of the plumbing:
+
+- **The AMC converts geometrically**, ``1 - (1 - amc) ** (1/freq)``, so
+  ``freq`` deductions leave the fund exactly where one annual deduction
+  would. Not ``(1 + amc) ** (1/freq) - 1``: that is the conversion for a
+  rate that accumulates, and on a 1.2% charge it collects 1.1869% a year —
+  a 1.31 basis point leak.
+- **Rider fees and the guaranteed withdrawal spread**, because both are
+  annual monetary entitlements on an amount the charge does not itself
+  erode — ``freq`` payments of a twelfth, not twelve payments of the whole.
+- **The GMWB ratchet still steps annually.** It is an anniversary event;
+  a monthly projection must not lock in twelve high-water marks a year.
+
+**Scenario returns are per period, not per year.** ``ScenarioSet.horizon``
+counts projection periods, which is what ``run_stochastic`` checks against
+``proj_len``, so a monthly projection needs monthly returns. Nothing here
+converts an annual scenario file to a monthly one, because doing so would
+have to invent the intra-year path — and inventing volatility is not a
+conversion.
 """
 
 from __future__ import annotations
@@ -45,25 +72,25 @@ from engine.core.model import Model, var
 class UnitLinkedGMDB(Model):
     @var
     def age(self, t):
-        """Attained age at the start of year t."""
-        return self.mp.age_at_entry + t
+        """Attained age at the start of period t."""
+        return self.mp.age_at_entry + self.assumptions.years_elapsed(t)
 
     @var
     def in_term(self, t):
         """1 during the contract term, 0 after."""
-        return (t < self.mp.term_years) * 1.0
+        return (t < self.assumptions.periods(self.mp.term_years)) * 1.0
 
     @var(assumption="mortality")
     def q_x(self, t):
-        """Annual mortality rate applying during year t (0 after the term)."""
-        return self.assumptions.annual_q(
-            self.age(t), sex=getattr(self.mp, "sex", None), offset=t
+        """Mortality rate applying during period t (0 after the term)."""
+        return self.assumptions.periodic_q(
+            self.age(t), t, sex=getattr(self.mp, "sex", None)
         ) * self.in_term(t)
 
     @var(assumption="lapse")
     def lapse_rate(self, t):
-        """Annual lapse rate applying during year t (after mortality)."""
-        return self.assumptions.lapse * self.in_term(t)
+        """Lapse rate applying during period t."""
+        return self.assumptions.periodic_lapse() * self.in_term(t)
 
     def _decrements(self, t):
         """Independent rates competing during year t, in the order the
@@ -85,7 +112,9 @@ class UnitLinkedGMDB(Model):
         """Policies in force at the start of year t."""
         if t == 0:
             return self.mp.init_pols * 1.0
-        return self._survivors(t - 1) * (t <= self.mp.term_years - 1)
+        return self._survivors(t - 1) * (
+            t <= self.assumptions.periods(self.mp.term_years) - 1
+        )
 
     @var
     def pols_death(self, t):
@@ -109,7 +138,9 @@ class UnitLinkedGMDB(Model):
         """Unit fund per policy at the start of year t."""
         if t == 0:
             return self.mp.premium * 1.0
-        return self.fund_eoy(t - 1) * (t <= self.mp.term_years - 1)
+        return self.fund_eoy(t - 1) * (
+            t <= self.assumptions.periods(self.mp.term_years) - 1
+        )
 
     @var
     def fund_grown(self, t):
@@ -118,8 +149,13 @@ class UnitLinkedGMDB(Model):
 
     @var(assumption="amc")
     def charges_per_pol(self, t):
-        """Annual management charge deducted at the end of year t."""
-        return self.fund_grown(t) * self.assumptions.amc
+        """Management charge deducted at the end of period t.
+
+        ``periodic_amc`` converts the annual charge so that ``freq``
+        deductions leave the fund exactly where one annual deduction would
+        — see ``Assumptions.to_periodic``.
+        """
+        return self.fund_grown(t) * self.assumptions.periodic_amc()
 
     @var
     def fund_eoy(self, t):
@@ -153,13 +189,13 @@ class UnitLinkedGMDB(Model):
         return (
             self._survivors(t - 1)
             * self.fund_eoy(t - 1)
-            * (t == self.mp.term_years)
+            * (t == self.assumptions.periods(self.mp.term_years))
         )
 
     @var(assumption="interest")
     def v(self, t):
-        """Discount factor from time t back to time 0."""
-        return (1.0 + self.assumptions.interest) ** (-t)
+        """Discount factor from the start of period t back to time 0."""
+        return self.assumptions.discount(t)
 
     def pv_fee_income(self):
         return sum(self.fee_income(t) * self.v(t + 1) for t in range(self.proj_len))
@@ -172,11 +208,11 @@ class UnitLinkedGMxB(Model):
     """Single-premium unit-linked contract carrying GMDB, GMAB and GMWB
     riders together, with dynamic lapse.
 
-    **Order of operations within year ``t``** — every variable below is one
-    step of this, and the discounting convention follows from it:
+    **Order of operations within period ``t``** — every variable below is
+    one step of this, and the discounting convention follows from it:
 
-    1. ``fund_boy(t)`` — the unit fund at the start of the year, which is
-       last year's fund after that year's withdrawal.
+    1. ``fund_boy(t)`` — the unit fund at the start of the period, which is
+       last period's fund after that period's withdrawal.
     2. The fund earns the scenario return.
     3. Charges are deducted: the AMC on the grown fund, plus rider fees on
        the amounts guaranteed. Charges are capped at the fund, so a contract
@@ -184,11 +220,12 @@ class UnitLinkedGMxB(Model):
        going negative.
     4. The guaranteed withdrawal is taken, from the fund as far as it goes;
        the shortfall is the GMWB claim on the insurer.
-    5. Deaths during the year are paid ``max(gmdb_guarantee, fund)`` at the
-       end of the year, on the fund after (2)–(4).
+    5. Deaths during the period are paid ``max(gmdb_guarantee, fund)`` at
+       the end of it, on the fund after (2)–(4).
     6. Lapses surrender that same fund; they forfeit every guarantee, which
        is what dynamic lapse prices.
-    7. At ``t == term_years`` survivors take ``max(fund, gmab_guarantee)``.
+    7. At ``t == periods(term_years)`` survivors take
+       ``max(fund, gmab_guarantee)``.
 
     Per-policy vs total: ``fund_*``, ``charges_*`` and ``*_per_pol``
     variables are per policy; every cashflow (``fee_income``,
@@ -212,31 +249,37 @@ class UnitLinkedGMxB(Model):
 
     @var
     def age(self, t):
-        """Attained age at the start of year t."""
-        return self.mp.age_at_entry + t
+        """Attained age at the start of period t."""
+        return self.mp.age_at_entry + self.assumptions.years_elapsed(t)
 
     @var
     def in_term(self, t):
         """1 during the contract term, 0 after."""
-        return (t < self.mp.term_years) * 1.0
+        return (t < self.assumptions.periods(self.mp.term_years)) * 1.0
 
     @var(assumption="mortality")
     def q_x(self, t):
-        """Annual mortality rate applying during year t (0 after the term)."""
-        return self.assumptions.annual_q(
-            self.age(t), sex=getattr(self.mp, "sex", None), offset=t
+        """Mortality rate applying during period t (0 after the term)."""
+        return self.assumptions.periodic_q(
+            self.age(t), t, sex=getattr(self.mp, "sex", None)
         ) * self.in_term(t)
 
     # --- GMWB benefit base ------------------------------------------------
 
     @var
     def benefit_base(self, t):
-        """GMWB benefit base at the start of year t.
+        """GMWB benefit base at the start of period t.
 
         With ``gmwb_ratchet`` on, the base steps up to the account value at
-        each anniversary and never steps back down — locking in investment
-        gains as a higher guaranteed withdrawal for the rest of the
-        contract.
+        each **anniversary** and never steps back down — locking in
+        investment gains as a higher guaranteed withdrawal for the rest of
+        the contract.
+
+        The step is an anniversary event, not a period one: a monthly
+        projection of a contract with an annual ratchet must not lock in
+        twelve high-water marks a year. ``sub_period(t) == 0`` is that
+        condition written as an indicator, and at ``freq = 1`` it is true at
+        every step, which is why the annual behaviour is unchanged.
         """
         if t == 0:
             return self.mp.gmwb_base * 1.0
@@ -246,12 +289,21 @@ class UnitLinkedGMxB(Model):
             self.mp.gmwb_ratchet * ratcheted
             + (1.0 - self.mp.gmwb_ratchet) * previous
         )
-        return stepped * self.in_term(t)
+        anniversary = (self.assumptions.sub_period(t) == 0) * 1.0
+        held = anniversary * stepped + (1.0 - anniversary) * previous
+        return held * self.in_term(t)
 
     @var
     def gaw(self, t):
-        """Guaranteed annual withdrawal available in year t, per policy."""
-        return self.benefit_base(t) * self.mp.gmwb_rate * self.in_term(t)
+        """Guaranteed withdrawal available in period t, per policy.
+
+        The guarantee is an annual entitlement, so a finer step pays the
+        same total across the year rather than the annual amount every
+        period.
+        """
+        return self.assumptions.per_period(
+            self.benefit_base(t) * self.mp.gmwb_rate
+        ) * self.in_term(t)
 
     # --- fund roll-forward ------------------------------------------------
 
@@ -267,7 +319,9 @@ class UnitLinkedGMxB(Model):
         """Unit fund per policy at the start of year t."""
         if t == 0:
             return self.mp.premium * 1.0
-        return self.fund_eoy(t - 1) * (t <= self.mp.term_years - 1)
+        return self.fund_eoy(t - 1) * (
+            t <= self.assumptions.periods(self.mp.term_years) - 1
+        )
 
     @var
     def fund_grown(self, t):
@@ -276,17 +330,24 @@ class UnitLinkedGMxB(Model):
 
     @var(assumption="amc")
     def charges_due(self, t):
-        """AMC plus rider fees falling due at the end of year t, per policy.
+        """AMC plus rider fees falling due at the end of period t, per policy.
 
         Rider fees are charged on the amounts guaranteed — the exposure the
         insurer is actually running — not on the account value.
+
+        The two conversions differ because the charges do. The AMC removes a
+        *proportion of the fund*, so it converts geometrically and ``freq``
+        deductions leave the fund where one annual deduction would. A rider
+        fee is a proportion of a guaranteed amount the fee does not touch,
+        so it is an annual monetary sum, and charging it more often just
+        spreads the same sum across the year.
         """
         a = self.assumptions
         return (
-            self.fund_grown(t) * a.amc
-            + self.mp.gmdb_guarantee * a.gmdb_fee
-            + self.mp.gmab_guarantee * a.gmab_fee
-            + self.benefit_base(t) * a.gmwb_fee
+            self.fund_grown(t) * a.periodic_amc()
+            + a.per_period(self.mp.gmdb_guarantee * a.gmdb_fee)
+            + a.per_period(self.mp.gmab_guarantee * a.gmab_fee)
+            + a.per_period(self.benefit_base(t) * a.gmwb_fee)
         ) * self.in_term(t)
 
     @var
@@ -328,14 +389,22 @@ class UnitLinkedGMxB(Model):
 
     @var(assumption="lapse")
     def lapse_rate(self, t):
-        """Annual lapse rate during year t, dynamic in the funded ratio of
-        the guarantees measured after that year's charges and withdrawal.
+        """Lapse rate during period t, dynamic in the funded ratio of the
+        guarantees measured after that period's charges and withdrawal.
 
         A flat lapse assumption is the zero-sensitivity case of the same
         formula, so there is no branch here — see ``DynamicLapse``.
+
+        The dynamic *annual* rate is computed first and converted second.
+        Doing it the other way round would apply the moneyness multiplier to
+        a per-period rate, which is not the same number: the multiplier is
+        defined against an annual assumption, and a geometric conversion
+        does not commute with scaling.
         """
-        return self.assumptions.dynamic_lapse.rate(
-            self.guarantee_value(t), self.fund_eoy(t)
+        return self.assumptions.to_periodic(
+            self.assumptions.dynamic_lapse.rate(
+                self.guarantee_value(t), self.fund_eoy(t)
+            )
         ) * self.in_term(t)
 
     def _decrements(self, t):
@@ -358,7 +427,9 @@ class UnitLinkedGMxB(Model):
         """Policies in force at the start of year t."""
         if t == 0:
             return self.mp.init_pols * 1.0
-        return self._survivors(t - 1) * (t <= self.mp.term_years - 1)
+        return self._survivors(t - 1) * (
+            t <= self.assumptions.periods(self.mp.term_years) - 1
+        )
 
     @var
     def pols_death(self, t):
@@ -376,7 +447,9 @@ class UnitLinkedGMxB(Model):
         ``t == term_years``."""
         if t == 0:
             return self.mp.init_pols * 0.0
-        return self._survivors(t - 1) * (t == self.mp.term_years)
+        return self._survivors(t - 1) * (
+            t == self.assumptions.periods(self.mp.term_years)
+        )
 
     # --- cashflows --------------------------------------------------------
 
@@ -451,8 +524,8 @@ class UnitLinkedGMxB(Model):
 
     @var(assumption="interest")
     def v(self, t):
-        """Discount factor from time t back to time 0."""
-        return (1.0 + self.assumptions.interest) ** (-t)
+        """Discount factor from the start of period t back to time 0."""
+        return self.assumptions.discount(t)
 
     # End-of-year flows discount at v(t + 1) over t = 0 .. proj_len - 1.
 
