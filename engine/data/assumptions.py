@@ -20,6 +20,7 @@ from typing import Mapping
 import numpy as np
 
 from engine.data.decrements import Decrements
+from engine.data.expenses import Commission, ExpenseScale, Expenses
 from engine.data.mortality import MortalityBasis
 
 #: Sex code for a table that does not distinguish.
@@ -174,7 +175,9 @@ class Assumptions:
                  gmdb_fee: float = 0.0, gmab_fee: float = 0.0,
                  gmwb_fee: float = 0.0, base_year: int | None = None,
                  freq: int = 1, fractional_ages: str = "udd",
-                 decrements: "Decrements | str | None" = None):
+                 decrements: "Decrements | str | None" = None,
+                 expenses: "Expenses | None" = None,
+                 commission: "Commission | None" = None):
         if freq < 1 or 12 % freq:
             raise ValueError(f"payment frequency {freq} must divide 12")
         if not 0.0 <= lapse < 1.0:
@@ -190,6 +193,12 @@ class Assumptions:
                 f"lapse={lapse} conflicts with dynamic_lapse.base="
                 f"{dynamic_lapse.base}; set one or the other"
             )
+        if expenses is not None and expense_per_policy:
+            raise ValueError(
+                f"expense_per_policy={expense_per_policy} conflicts with the "
+                "`expenses` basis; put the per-policy amount in "
+                "Expenses(renewal=ExpenseScale(per_policy=...)) instead"
+            )
         self.mortality = mortality
         #: Calendar year of projection time zero, for improvement scales.
         #: Defaults to the basis's own base year, where improvement is
@@ -203,6 +212,14 @@ class Assumptions:
         self.lapse = self.dynamic_lapse.base
         self.interest = interest
         self.expense_per_policy = expense_per_policy
+        #: The full expense basis. A bare ``expense_per_policy`` is the
+        #: renewal per-policy loading of one with nothing else in it, so the
+        #: scalar form keeps working and keeps its exact numbers.
+        self.expenses = expenses if expenses is not None else Expenses(
+            renewal=ExpenseScale(per_policy=expense_per_policy)
+        )
+        #: Commission is off unless asked for, so no existing result moves.
+        self.commission = commission if commission is not None else Commission()
         self.crediting_rate = crediting_rate
         self.amc = amc
         self.gmdb_fee = gmdb_fee
@@ -225,7 +242,8 @@ class Assumptions:
             "mortality": self.mortality,
             "dynamic_lapse": self.dynamic_lapse,
             "interest": self.interest,
-            "expense_per_policy": self.expense_per_policy,
+            "expenses": self.expenses,
+            "commission": self.commission,
             "crediting_rate": self.crediting_rate,
             "amc": self.amc,
             "gmdb_fee": self.gmdb_fee,
@@ -315,6 +333,25 @@ class Assumptions:
     def discount(self, t: int):
         """Discount factor from the start of period ``t`` back to time 0."""
         return (1.0 + self.interest) ** (-t / self.freq if self.freq != 1 else -t)
+
+    def elapsed(self, t: int):
+        """Years since projection time zero at the start of period ``t``.
+
+        Fractional, unlike ``years_elapsed``: expense inflation and
+        discounting run on the calendar rather than on policy anniversaries.
+        Exactly ``t`` at ``freq = 1``, and an ``int`` there rather than a
+        float, so nothing downstream changes shape either.
+        """
+        return t if self.freq == 1 else t / self.freq
+
+    def inflation_index(self, t: int):
+        """Expense inflation factor at the start of period ``t``.
+
+        With no inflation this is ``1.0 ** elapsed``, which is exactly 1.0
+        for every finite exponent — so an un-indexed basis cannot move a
+        number, and the templates need no branch.
+        """
+        return self.expenses.index(self.elapsed(t))
 
     def annual_q(self, ages, sex=None, offset: int = 0, duration=None):
         """``q_x`` at whole ages, ``offset`` years after projection time zero.

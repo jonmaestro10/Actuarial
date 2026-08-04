@@ -132,6 +132,21 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Expenses, inflation and commission** (PLAN §5.1 Layer 0): an expense
+  loading is quoted on three bases at once — per policy, percent of premium,
+  per mille sum assured — and falls in three lines that a pricing basis
+  argues about separately: acquisition once at inception, renewal every
+  period and indexed for inflation, claim costs per death settled.
+  Commission runs at an initial rate for the first policy years and a
+  renewal rate after, with optional straight-line clawback from early
+  lapses. Everything is quoted annually and divided once, so `freq = 1`
+  stays an exact identity and inflation indexes on the calendar rather than
+  on anniversaries. A bare `expense_per_policy` is the renewal per-policy
+  loading of a basis with nothing else in it — every projection that used
+  the scalar form keeps its numbers **bit for bit**, across three
+  frequencies. What it buys: a £250,000 twenty-year term policy breaks even
+  on claims alone at about £2,182 a year and on the full basis at £2,981 —
+  a **37% loading** the engine previously had no way to express.
 - **The unit-linked family sub-annually**: `UnitLinkedGMDB` and
   `UnitLinkedGMxB` run at any frequency dividing 12, which needed a
   modelling decision per charge rather than only plumbing. The **AMC
@@ -186,5 +201,6 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   different run ids and the same results digest, which is the
   bitwise-equivalence claim stated as an audit trail.
 
-Next: reductions beyond a sum for `@pool`, kernel fusion, and multi-node
+Next: tax hooks and reinsurance (the remaining Layer 0 primitives),
+reductions beyond a sum for `@pool`, kernel fusion, and multi-node
 scale-out.
