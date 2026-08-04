@@ -113,7 +113,17 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   mortality through `Assumptions.annual_q`. No golden value moved, and the
   annual templates gained sex-distinct rates and generational improvement
   without being rewritten.
+- **Sub-annual projection for the age-indexed templates**: term life and the
+  deferred annuity now run at any frequency dividing 12. A year of age is
+  split by `MortalityBasis.periodic_rate` — the dateless counterpart to the
+  date-driven split, for products priced by entry age rather than valued from
+  a date of birth — and every annual assumption has a per-period view.
+  `freq = 1` is the **identity, bit for bit**, so the annual golden suite is
+  the regression test. A finer step leaves the same policies in force at
+  every anniversary but shifts exits from mortality to lapse, converging on
+  the continuous multi-decrement answer.
 
-Next: putting the annual templates on a `TimeAxis` so they get fractional
-ages too, select-and-ultimate and multi-decrement tables, reductions beyond a
-sum, kernel fusion, scenario-set file adapters, and the run registry.
+Next: the unit-linked family sub-annually (its charges and scenario returns
+are annual-shaped and need a modelling decision first), select-and-ultimate
+and multi-decrement tables, reductions beyond a sum, kernel fusion,
+scenario-set file adapters, and the run registry.
