@@ -33,6 +33,10 @@ class ValuationBasis:
         #: periodically.
         self.revalue_every = revalue_every
 
+    def __fingerprint__(self):
+        return {"mortality": self.mortality, "curve": self.curve,
+                "revalue_every": self.revalue_every}
+
     @property
     def freq(self) -> int:
         return self.curve.freq

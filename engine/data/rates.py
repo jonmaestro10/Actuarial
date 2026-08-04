@@ -52,6 +52,10 @@ class YieldCurve:
              horizon_years: int = DEFAULT_HORIZON_YEARS) -> "YieldCurve":
         return cls([rate], freq=freq, horizon_years=horizon_years)
 
+    def __fingerprint__(self):
+        return {"freq": self.freq, "horizon_years": self.horizon_years,
+                "rates": self.rates}
+
     def discount_factors(self, n_periods: int | None = None) -> np.ndarray:
         """``v_k`` from time 0 to the start of period ``k``.
 
