@@ -136,6 +136,26 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **US statutory principle-based reserves — VM-20 / VM-21**
+  ([RFC-016](docs/rfc-016-pbr.md)): a third kind of overlay. IFRS 17 *reads*
+  a projection, Solvency II *re-runs* one, and a principle-based reserve
+  **reduces a distribution** of them — the answer is a statistic over a
+  thousand projections, and which statistic is the whole design.
+  **A percentile can report no reserve at all**: a guarantee biting in under
+  30% of scenarios puts the 70th percentile at exactly zero while CTE70 over
+  the same distribution says hold 21,298; where the percentile does bite, the
+  CTE is **6.3×** it. And **value at risk is not coherent**: two independent
+  bonds each defaulting at 4% show VaR95 of 0, 0 and **100** — the
+  requirement appears out of diversification — where CTE95 is subadditive at
+  every level tested. That is the reason the standard prescribes a CTE, and
+  it is demonstrated rather than cited. A smoke-test print caught a real bug
+  in the tail count: `1 - 0.70` is `0.30000000000000004`, so a naive ceiling
+  takes **301 scenarios out of 1,000** and 3,001 out of 10,000 — on every
+  run, invisibly, because one extra scenario barely moves a CTE. The
+  per-scenario number is a *greatest* present value of accumulated
+  deficiency, and on this block **over 60% of the paths needing a reserve
+  need it before the end** — which is the argument for a maximum over a
+  terminal measure.
 - **US GAAP for long-duration contracts — LDTI**
   ([RFC-015](docs/rfc-015-usgaap-ldti.md)): ASU 2018-12, and the same
   economics as IFRS 17 measured a second way. Both insist that writing
