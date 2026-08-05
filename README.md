@@ -138,6 +138,33 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Actual against expected** ([RFC-024](docs/rfc-024-experience.md)): the
+  edge RFC-012, RFC-015, RFC-017 and RFC-023 each named as their own — what
+  turns a projection into a reporting run. It has two halves. The
+  arithmetic half **has no single right answer**, because the drivers
+  interact: on a term book that was expected to make 3.11m and made 0.26m,
+  peeling mortality, lapse, interest and expenses off one at a time adds up
+  exactly in every order and gives a different answer in each. **The
+  ordering decides the sign of the interest result** — same book, same
+  year, same experience, and an analysis of surplus reports an interest
+  profit of 162k or an interest loss of 102k depending only on where
+  interest was peeled off. Its range is **fourteen times its own value**;
+  the lapse line moves by a factor of ten. Measuring each driver alone
+  instead leaves **22.7%** of the variance unattributed — that residual
+  *is* the interaction, and a sequential analysis does not avoid it, it
+  silently distributes it by order. `shapley` is the one method that both
+  adds up and is order-independent, and its efficiency, symmetry and
+  null-player properties are asserted rather than cited. The
+  classification half is where the profit is decided: under IFRS 17 a
+  variance on current service goes straight to profit and one relating to
+  future service adjusts the CSM instead, so the same adverse 260 is
+  either 260 off this year's result or 260 off a margin that unwinds over
+  decades — and the standard gives no algorithm for telling an experience
+  variance from a change in estimate on the same number. A real bug found
+  on the way: `Assumptions` stores the lapse rate **twice** and different
+  templates read different copies, so a driver swap that moved one and not
+  the other would run some products on the actual basis and some on the
+  expected one, silently.
 - **The liability for incurred claims**
   ([RFC-023](docs/rfc-023-incurred-claims.md)): the balance RFC-012, RFC-013
   and RFC-017 each named as out of scope — what is owed for events that have
