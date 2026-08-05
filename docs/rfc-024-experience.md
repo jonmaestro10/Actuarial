@@ -1,6 +1,7 @@
 # RFC-024: Actual against expected
 
-Status: **implemented** — `engine/report/experience.py`
+Status: **implemented** — `engine/report/experience.py`, with an
+`experience` argument added to `engine/report/ifrs17.py`
 
 ## Summary
 
@@ -125,14 +126,45 @@ than argued about, and `allocate` refuses to place a variance whose service
 period is not stated: a default there is a decision about profit dressed up
 as a convenience.
 
+## The classification, measured
+
+`measurement_inputs` splits a set of per-period variance series into the two
+arguments `engine.report.ifrs17.measure` takes, and `measure` grew an
+`experience` argument to receive the current-service half. It is an
+insurance service expense of the period it arose in and **nothing else** —
+it earns no revenue, because no extra service was provided for it, and it
+never reaches the CSM, because the CSM is unearned profit on service still
+to come. That the CSM is untouched is asserted with `array_equal` rather
+than a tolerance.
+
+With that wired up, the judgement can be priced. One adverse 400 in year 2
+of a ten-period group:
+
+| | total profit | year 2 | years 3-9 |
+|---|---|---|---|
+| expected basis | 3,500 | — | — |
+| called **experience** | 3,100 | **−400** | unchanged |
+| called a **change in estimate** | 3,100 | **−50** | −350 spread across all of them |
+
+Identical total, and **eight times the hit** in the year it happened. The
+same news either takes 400 out of one year's result or 50 out of it and the
+other 350 out of every year that follows, through a thinner CSM release —
+and the standard offers no rule for choosing.
+
+Both arguments move total profit by exactly themselves, because each *is* a
+difference in cash. What they cannot do is move it by different amounts.
+The classification is a question about **years**, never about money.
+
+The change to `measure` is additive under a branch rather than
+`+ np.zeros(n)`, so a call without it evaluates the identical expression it
+always did. Verified bitwise across **1,952** arrays spanning the general
+model, the variable fee approach and the premium allocation approach —
+every one identical.
+
 ## Not in scope
 
 - **Deciding the split.** This module makes the classification explicit and
   will not make it for you, for the reason above.
-- **Wiring the variances into RFC-012's CSM roll-forward.** `Attribution`
-  produces the two totals; feeding the CSM adjustment back into
-  `measure` and re-running the roll is the next step and is a change to
-  that module rather than to this one.
 - **Attributing at a finer grain than a driver.** Splitting a mortality
   variance into volume, mix and rate is the same machinery on a longer
   driver list, and `MAX_DRIVERS` is where the exhaustive methods stop being

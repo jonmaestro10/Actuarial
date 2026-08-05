@@ -404,3 +404,155 @@ def test_an_unknown_service_period_is_refused():
 
 def test_an_attribution_is_readable():
     assert "P&L" in repr(Attribution(VARIANCES, SERVICE))
+
+
+# --- feeding a classification into the CSM roll-forward ---------------------
+
+def group_and_terms():
+    from engine.data.rates import YieldCurve
+    from engine.report.ifrs17 import CoverageUnits, Group, RiskAdjustment
+    n = 10
+    group = Group(np.full(n, 1000.0), np.linspace(500.0, 800.0, n))
+    terms = dict(coverage=CoverageUnits(np.ones(n)),
+                 risk_adjustment=RiskAdjustment.percent_of(group.outflows, 0.05),
+                 current=YieldCurve.flat(0.04, freq=1))
+    return group, terms, n
+
+
+def one_bad_year(n, amount=400.0, period=2):
+    variance = np.zeros(n)
+    variance[period] = amount
+    return variance
+
+
+def test_measurement_inputs_split_the_lines_by_service_period():
+    from engine.report.experience import measurement_inputs
+    claims = np.array([10.0, 20.0, 30.0])
+    lapses = np.array([1.0, 2.0, 3.0])
+    inputs = measurement_inputs({"claims": claims, "lapses": lapses},
+                                {"claims": "current", "lapses": "future"})
+    assert np.array_equal(inputs["experience"], claims)
+    assert np.array_equal(inputs["changes_in_estimate"], lapses)
+
+
+def test_lines_in_the_same_period_are_added():
+    from engine.report.experience import measurement_inputs
+    inputs = measurement_inputs(
+        {"claims": np.array([10.0, 0.0]), "expenses": np.array([5.0, 7.0])},
+        {"claims": "current", "expenses": "current"},
+    )
+    assert np.array_equal(inputs["experience"], [15.0, 7.0])
+    assert np.array_equal(inputs["changes_in_estimate"], [0.0, 0.0])
+
+
+def test_series_of_different_lengths_are_refused():
+    from engine.report.experience import measurement_inputs
+    with pytest.raises(ValueError, match="different numbers of periods"):
+        measurement_inputs({"a": [1.0, 2.0], "b": [1.0]},
+                           {"a": "current", "b": "current"})
+
+
+def test_nothing_to_split_is_refused():
+    from engine.report.experience import measurement_inputs
+    with pytest.raises(ValueError, match="no variances"):
+        measurement_inputs({}, {})
+
+
+def test_an_unclassified_series_is_refused_here_too():
+    from engine.report.experience import measurement_inputs
+    with pytest.raises(ValueError, match="no service period"):
+        measurement_inputs({"a": [1.0]}, {})
+
+
+def test_a_group_on_the_expected_basis_still_earns_its_net_cash():
+    """The pre-existing invariant, restated as the control for the two below."""
+    from engine.report.ifrs17 import measure
+    group, terms, _ = group_and_terms()
+    measured = measure(group, **terms)
+    assert measured.total_profit() == pytest.approx(
+        float((group.inflows - group.outflows).sum()), rel=1e-9
+    )
+
+
+def test_experience_never_touches_the_csm():
+    """It is unearned profit on service still to come, and current service
+    is not that."""
+    from engine.report.ifrs17 import measure
+    group, terms, n = group_and_terms()
+    base = measure(group, **terms)
+    with_variance = measure(group, **terms, experience=one_bad_year(n))
+    assert np.array_equal(with_variance.csm, base.csm)
+    assert np.array_equal(with_variance.loss_component, base.loss_component)
+
+
+def test_the_same_variance_costs_the_same_total_either_way():
+    from engine.report.ifrs17 import measure
+    group, terms, n = group_and_terms()
+    variance = one_bad_year(n)
+    as_experience = measure(group, **terms, experience=variance)
+    as_estimate = measure(group, **terms, changes_in_estimate=variance)
+    assert as_experience.total_profit() == pytest.approx(
+        as_estimate.total_profit(), rel=1e-9
+    )
+    assert as_experience.total_profit() == pytest.approx(3_100.0, rel=1e-9)
+
+
+def test_but_it_costs_eight_times_as_much_in_the_year_it_happened():
+    """The finding. The classification is a question about *years*: an
+    adverse 400 takes 400 out of the period it landed in if it is called
+    experience, and 50 if it is called a change in estimate — the other 350
+    coming out of every year that follows, through a thinner CSM."""
+    from engine.report.ifrs17 import measure
+    group, terms, n = group_and_terms()
+    variance = one_bad_year(n)
+    base = measure(group, **terms)
+    as_experience = measure(group, **terms, experience=variance)
+    as_estimate = measure(group, **terms, changes_in_estimate=variance)
+    assert as_experience.profit[2] - base.profit[2] == pytest.approx(-400.0,
+                                                                     rel=1e-9)
+    assert as_estimate.profit[2] - base.profit[2] == pytest.approx(-50.0,
+                                                                   rel=1e-9)
+
+
+def test_the_rest_of_it_comes_out_of_the_later_years():
+    from engine.report.ifrs17 import measure
+    group, terms, n = group_and_terms()
+    variance = one_bad_year(n)
+    base = measure(group, **terms)
+    as_experience = measure(group, **terms, experience=variance)
+    as_estimate = measure(group, **terms, changes_in_estimate=variance)
+    later = slice(3, None)
+    assert np.allclose(as_experience.profit[later], base.profit[later])
+    assert np.all(as_estimate.profit[later] < base.profit[later])
+    assert (as_estimate.profit[later] - base.profit[later]).sum() == \
+        pytest.approx(-350.0, rel=1e-6)
+
+
+def test_a_classification_feeds_measure_directly():
+    from engine.report.experience import measurement_inputs
+    from engine.report.ifrs17 import measure
+    group, terms, n = group_and_terms()
+    inputs = measurement_inputs(
+        {"claims": one_bad_year(n), "lapse_assumption": one_bad_year(n, 200.0)},
+        {"claims": "current", "lapse_assumption": "future"},
+    )
+    measured = measure(group, **terms, **inputs)
+    assert measured.total_experience() == pytest.approx(400.0)
+    assert measured.total_profit() == pytest.approx(
+        float((group.inflows - group.outflows).sum()) - 600.0, rel=1e-9
+    )
+
+
+def test_experience_of_the_wrong_length_is_refused():
+    from engine.report.ifrs17 import measure
+    group, terms, _ = group_and_terms()
+    with pytest.raises(ValueError, match="experience covers"):
+        measure(group, **terms, experience=np.zeros(3))
+
+
+def test_a_measurement_without_experience_reports_a_zero_series():
+    from engine.report.ifrs17 import measure
+    group, terms, n = group_and_terms()
+    measured = measure(group, **terms)
+    assert np.array_equal(measured.experience_variance, np.zeros(n))
+    assert measured.total_experience() == 0.0

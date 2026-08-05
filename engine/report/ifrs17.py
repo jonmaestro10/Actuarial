@@ -335,19 +335,30 @@ class Measurement:
     def total_profit(self) -> float:
         """Service result less finance expense, over the group's life.
 
-        The number the whole statement has to reconcile to: over a run-off
-        with no experience variance it equals the group's undiscounted net
-        cash, because accounting cannot invent or destroy money — only move
-        which period it appears in.
+        The number the whole statement has to reconcile to: on the expected
+        basis, over a run-off, it equals the group's undiscounted net cash,
+        because accounting cannot invent or destroy money — only move which
+        period it appears in.
+
+        An ``experience`` variance and a ``changes_in_estimate`` are the two
+        things that move the total, and each moves it by **exactly itself**,
+        because each *is* a difference in cash. What they do not do is move
+        it by different amounts: the same adverse 400 costs 400 of total
+        profit whichever of the two arguments it arrives in. All that
+        differs is which years pay for it.
         """
         return float(self.profit.sum())
+
+    def total_experience(self) -> float:
+        """Total experience variance charged to current and past service."""
+        return float(self.experience_variance.sum())
 
 
 def measure(group: Group, *, coverage: CoverageUnits,
             risk_adjustment: RiskAdjustment | None = None,
             current: YieldCurve, locked_in: YieldCurve | None = None,
             changes_in_estimate=None, financial_changes=None,
-            csm_growth=None) -> Measurement:
+            csm_growth=None, experience=None) -> Measurement:
     """Measure a group of contracts under the general measurement model.
 
     ``current`` discounts the fulfilment cashflows. ``locked_in`` accretes
@@ -360,6 +371,21 @@ def measure(group: Group, *, coverage: CoverageUnits,
     fulfilment cashflows are: a positive entry is a worsening, and reduces
     the CSM. Changes relating to *past* service go to profit and loss
     directly and are not this argument.
+
+    ``experience`` is that other argument: the excess of what actually
+    happened over what was expected, in the period it happened, signed the
+    same way. It relates to **current or past** service, so it does not
+    touch the CSM at all — it is an insurance service expense in the period
+    it arises and nothing else. Which of the two arguments a given number
+    belongs in is a judgement the standard does not make for you; see
+    :mod:`engine.report.experience`, which makes the split explicit and
+    refuses to guess at it.
+
+    The two arguments answer the same news in different currencies. An
+    adverse 100 in ``experience`` costs 100 of this period's profit; the
+    same 100 in ``changes_in_estimate`` costs nothing now and reduces every
+    future period's CSM release. Total profit is the same either way,
+    because the cash is the same — only the years differ.
 
     ``financial_changes`` is the series of changes in fulfilment cashflows
     caused by **financial** variables. Under this model they do **not**
@@ -413,6 +439,13 @@ def measure(group: Group, *, coverage: CoverageUnits,
         if csm_growth.shape != (n,):
             raise ValueError(
                 f"csm_growth covers {csm_growth.shape} periods, the group "
+                f"covers {n}"
+            )
+    if experience is not None:
+        experience = np.asarray(experience, dtype=np.float64)
+        if experience.shape != (n,):
+            raise ValueError(
+                f"experience covers {experience.shape} periods, the group "
                 f"covers {n}"
             )
     if financial_changes is None:
@@ -515,6 +548,17 @@ def measure(group: Group, *, coverage: CoverageUnits,
     service_expenses = (
         group.outflows - loss_amortised + loss_recognised - loss_reversed
     )
+    # An experience variance on current service is an expense of the period
+    # it arose in and nothing else — it earns no revenue, because no extra
+    # service was provided for it, and it does not reach the CSM, because
+    # the CSM is unearned profit on service still to come.
+    #
+    # Added under a branch rather than as ``+ np.zeros(n)`` so that a call
+    # without it evaluates the identical expression it always did, bit for
+    # bit, and the whole existing golden suite stands as the regression
+    # test for this change.
+    if experience is not None:
+        service_expenses = service_expenses + experience
     service_result = revenue - service_expenses
 
     # Insurance finance expense: the unwind of discount on the fulfilment
@@ -563,6 +607,8 @@ def measure(group: Group, *, coverage: CoverageUnits,
         loss_amortised=loss_amortised,
         insurance_revenue=revenue,
         insurance_service_expenses=service_expenses,
+        experience_variance=(experience if experience is not None
+                             else np.zeros(n)),
         insurance_service_result=service_result,
         fcf_unwind=fcf_unwind,
         financial_changes=financial,

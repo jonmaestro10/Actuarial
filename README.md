@@ -164,7 +164,13 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   on the way: `Assumptions` stores the lapse rate **twice** and different
   templates read different copies, so a driver swap that moved one and not
   the other would run some products on the actual basis and some on the
-  expected one, silently.
+  expected one, silently. Wired through to the CSM roll-forward, the
+  judgement can be priced: one adverse 400 in year 2 of a ten-period group
+  costs the **same total profit** either way and **eight times as much in
+  the year it happened** — −400 as experience against −50 as a change in
+  estimate, the other 350 coming out of every later year through a thinner
+  CSM. `measure` grew the argument under a branch, so 1,952 arrays across
+  the general model, VFA and PAA are bitwise unchanged.
 - **The liability for incurred claims**
   ([RFC-023](docs/rfc-023-incurred-claims.md)): the balance RFC-012, RFC-013
   and RFC-017 each named as out of scope — what is owed for events that have
