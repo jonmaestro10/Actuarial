@@ -38,7 +38,7 @@ result.aggregate("claims")   # deterministic per-time-step totals
 | Path | Contents |
 |---|---|
 | `engine/core/` | `@var` DSL, model base, executors, calendar, deterministic aggregation |
-| `engine/data/` | Assumptions, mortality basis, yield curves, model points, scenarios |
+| `engine/data/` | Assumptions, mortality basis, yield curves, assets, model points, scenarios |
 | `engine/library/` | Product templates — each ships with golden tests |
 | `engine/report/` | Reporting overlays (products × frameworks) |
 | `tests/` | DSL mechanics, closed-form golden tests, reference reconciliation |
@@ -138,6 +138,29 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **The asset side** ([RFC-021](docs/rfc-021-assets.md)): the piece RFC-020
+  scoped out and five earlier RFCs each stopped at — a portfolio projected
+  alongside the liability, accruing income, taking defaults, buying with
+  spare cash and selling to cover a shortfall. The earned rate is no longer
+  an input anybody hands you: universal life's `"portfolio"` crediting rate,
+  the principle-based reserve's earned rates and the with-profits fund's
+  return all come out of it. **The portfolio rate lags the market for
+  years** — a 3% ladder against a curve that jumps to 7% closes half the gap
+  in 5 years on a 10-year ladder and 7 on a 20-year one — and the lag is
+  worse than it sounds falling: new money is under a 3% crediting guarantee
+  from day one, the portfolio does not fall through it until period 5, so an
+  office pricing the floor off new-money rates mis-times its own liability
+  by half a decade. **A credit spread set to the expected default loss loses
+  money**, because a holding that fails pays neither its principal nor the
+  coupon that principal would have paid: the break-even is
+  `freq·d·(i+1−recovery)/(1−d)` — 161.5 bp against an expected loss of 150 —
+  and the shortfall is exactly the default rate times the book yield.
+  **Liquidation order is timing and nothing else**: the same forced 260 of
+  sales books a loss of 34, 92 or 151 depending on which holdings go first,
+  a factor of 4.4 in the accounts, and the cumulative income is *identical
+  to floating point* (4.5e-12) once the pre-existing ladder has run off.
+  Book income is not the coupon either — a 6% bond bought to yield 4% earns
+  46.49 against a 60 coupon, and the rest is return of capital.
 - **Embedded value and ALM** ([RFC-020](docs/rfc-020-embedded-value.md)):
   PLAN §5.3's last line, and where four earlier RFCs converge — Solvency
   II's missing market modules, the principle-based reserve's earned rates,
