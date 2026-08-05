@@ -40,6 +40,7 @@ result.aggregate("claims")   # deterministic per-time-step totals
 | `engine/core/` | `@var` DSL, model base, executors, calendar, deterministic aggregation |
 | `engine/data/` | Assumptions, mortality basis, yield curves, model points, scenarios |
 | `engine/library/` | Product templates — each ships with golden tests |
+| `engine/report/` | Reporting overlays (products × frameworks) |
 | `tests/` | DSL mechanics, closed-form golden tests, reference reconciliation |
 | `scripts/` | Benchmarks and the VPLA parity harness |
 | `docs/` | RFCs, design notes, and prior-art reviews |
@@ -135,6 +136,28 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **IFRS 17, the general measurement model**
+  ([RFC-012](docs/rfc-012-ifrs17.md)): PLAN §5.3's first reporting overlay,
+  and the first thing here that is not a projection — `engine/library`
+  answers *what will happen*, this answers *what the accounting says
+  happened*. An **overlay, not a calculator**: `Group.from_run` builds a
+  group from a projection's own output series, so nothing in `TermLife`
+  knows IFRS 17 exists and nothing here re-derives a cashflow. One invariant
+  pins the rest — **total profit equals the group's undiscounted net cash**,
+  to floating point, under every combination of the standard's choices — and
+  it found the module's one real bug, a reconciliation gap of exactly
+  `acquisition × i` from financing a day-zero outflow for a period it was
+  never outstanding. What the choices *do* move is timing, and by a lot.
+  **Grouping**: the same business with identical lifetime cash reports a
+  year-1 service result of **−1,393** split by profitability as the standard
+  requires, against **+311** measured as one group — a 1,704 swing from where
+  a line is drawn. **Coverage units**: releasing on policy count puts 25% of
+  the margin in the first five years, on sum assured 43%, and discounting
+  the future units (permitted either way) is worth another 8 points.
+  **The locked-in rate**: with rates down from 5% to 1% the CSM picks up six
+  times the interest it would at today's, and total profit does not move a
+  penny — it is all a transfer between the service result and the finance
+  line.
 - **Index crediting and the lifetime guarantee**
   ([RFC-011](docs/rfc-011-fixed-indexed.md)): PLAN §5.2's fixed-indexed
   annuities, on RFC-010's account. An FIA credits at anniversaries and
