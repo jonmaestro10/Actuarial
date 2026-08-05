@@ -138,6 +138,63 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Solvency II market risk** ([RFC-026](docs/rfc-026-market-risk.md)):
+  PLAN §5.3's last unbuilt line, blocked twice on nothing but reaching
+  `eur-lex.europa.eu` — which serves a JavaScript challenge to anything
+  without a browser. The way in was the EUR-Lex consolidated PDFs mirrored
+  on legislation.gov.uk, whose own XML of the same regulation is useless
+  because **every `<Tabular>` element is empty** and the maturity tables
+  are the entire point, plus the Publications Office Cellar for the
+  amending act, whose formulas are base64 JPEGs that had to be decoded and
+  read as pictures. What the reading changed: **2026/269 applies from 30
+  January 2027**, so both texts are live for different reporting dates and
+  the module ships them as dated sets rather than baking one in — **and
+  every divergence between them is also an individual setting**, thrown by
+  name through `variant()`, because an amendment is rarely one thing. That
+  turned out to matter more than as an ergonomic: 2026/269's five clauses
+  applied **one at a time** sum to +1.35 of interest capital and applied
+  **together** come to +6.49, because deleting Article 166(2)'s minimum on
+  its own takes the requirement to **zero** (on a 3% curve that minimum
+  *is* the 2015 shock, at 76 of the first 90 maturities) while deleting it
+  alongside the new tables is a **no-op**. So the relief a reader would
+  attribute to that deletion is entirely the tables — RFC-024's
+  non-additivity finding, in a place nobody was looking for it. Two more
+  the switches exposed: a **strictly larger shock can halve the capital**
+  (re-impose the deleted minimum on a 0.5% curve and 8.86 becomes 4.03,
+  because the minimum bites at the long end and the liability is longer
+  than the assets), and 2026/269's new spread correlation is worth 9.46 of
+  SCR on a down-binding book — relief the bundle comparison reports as an
+  increase, because the same amendment's tables add 72.3. It
+  replaces the multiplicative shock with a multiplicative shock *plus* a
+  parallel shift, deletes Article 166(2)'s one percentage point minimum,
+  and turns "no shock where the rate is negative" into a floor of −1.25%
+  to seven years and −0.893% from twenty — and it **inverts the shape**,
+  the downward factor rising from 37% at seven years to 65% at fifty where
+  the old table falls to 27% and stays. **Matching duration leaves the
+  interest SCR undetermined**: seven barbells worth exactly the liability
+  with exactly its duration — dollar-duration gap zero to 4e-12, the
+  quantity RFC-025 identified as the one that matters — carry capital from
+  **15.36 to nothing**, and one of them binds *up* under 2015/35 and
+  *down* under 2026/269. The sharpest row gains surplus on a parallel move
+  of any size in either direction and still pays **5.15**, because the
+  shock moves the five-year point 165bp and the twenty-year point 100bp; a
+  cashflow-matched fund pays exactly `0.0`, asserted with `==`. Shocking
+  the stored forwards instead of the spot curve gets the **sign** wrong,
+  not the magnitude: a loss of 5.15 becomes a gain of 0.67. **The market
+  SCR is not a function of the module capitals** — Article 164(3) prints a
+  matrix containing a *symbol*, 0 when the up shock binds and 0.5 when
+  down does, so six identical sub-module capitals aggregate to 242.18 or
+  285.74 and a reviewer given the breakdown cannot reproduce the total;
+  all four substitutions are positive semi-definite, which nothing in the
+  text promises. **Spread risk is unhedged by construction**: on the same
+  matched fund the interest module takes 5.15 and the spread module
+  **185.80**, thirty-six times as much, because no liability moves when
+  spreads widen. Two more the reading turned up and the tests pin: Article
+  176(3)'s factor is discontinuous at a band edge, and the 2016/467
+  amendment **moved** that discontinuity from credit quality step 1 at ten
+  years to step 4 at twenty rather than removing it; and Article 166(2)'s
+  "at least one percentage point" is not a backstop but *the shock* below
+  1.43%, binding at 76 of the first 90 maturities even on a 3% curve.
 - **Trading to a target** ([RFC-025](docs/rfc-025-rebalancing.md)): the
   strategy RFC-021 scoped out, so the engine can now close RFC-020's
   duration gap and not just measure it — and closing it turns out to be the
