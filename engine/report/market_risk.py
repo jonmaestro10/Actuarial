@@ -28,6 +28,32 @@ this module ships both as named, dated sets rather than baking one in:
 :func:`calibration_for` picks by reporting date, and the returned object
 says which regime it is.
 
+Every divergence between them is also an individual setting
+------------------------------------------------------------
+An amendment is rarely one thing. 2026/269 moves the interest tables,
+deletes Article 166(2)'s minimum, replaces Article 167(2)'s negative-rate
+rule, widens Article 172(4)'s corridor and splits Article 164(3)'s spread
+correlation out — five changes arriving on one date. Comparing the two
+bundles reports that the interest capital went from 5.15 to 11.64; only
+throwing one switch at a time reports *why*.
+
+So each divergence is a named setting on :data:`LEGISLATIVE_OPTIONS`, and
+:meth:`MarketRiskCalibration.variant` throws any combination of them::
+
+    DELEGATED_2015.variant(interest_tables="2026/269")
+    DELEGATED_2026.variant("house view", minimum_increase=0.01)
+
+An unknown setting raises rather than being ignored, because the failure
+this exists to prevent is a run that quietly used the regime it was not
+asked for. :meth:`MarketRiskCalibration.options` is the inverse — a regime
+expressed as the switches it has thrown — and a variant is a new frozen
+object, so :data:`DELEGATED_2015` and :data:`DELEGATED_2026` stay exactly
+what the Official Journal says they are.
+
+The settings are not independent, and RFC-026 measures how far from it:
+sum the one-at-a-time effects of 2026/269's five clauses and you get
++1.35; apply them together and you get +6.49.
+
 What actually changed
 ---------------------
 The interest rate sub-module is rewritten. Under 2015/35 the shock is
@@ -106,7 +132,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -314,7 +340,21 @@ _SPREAD_A = (
     (0.095, 0.110, 0.130, 0.250, 0.440, 0.610, 0.610),
     (0.120, 0.135, 0.155, 0.300, 0.466, 0.635, 0.635),
 )
-#: Article 176(3), the ``b_i`` table, same layout.
+#: Article 176(3)'s ``a_i`` table **as first published** in OJ L 12,
+#: 17.1.2015, before Commission Delegated Regulation (EU) 2016/467 replaced
+#: it. Four cells differ from :data:`_SPREAD_A`: the whole credit quality
+#: step 1 column from ten years out (8.4/10.9/13.4 against 8.5/11.0/13.5)
+#: and step 4's twenty-year entry (46.5 against 46.6). Kept as data rather
+#: than as history, because RFC-026's finding is a comparison of the two
+#: and a comparison needs both sides in the module.
+_SPREAD_A_AS_PUBLISHED = (
+    (0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000),
+    (0.045, 0.055, 0.070, 0.125, 0.225, 0.375, 0.375),
+    (0.070, 0.084, 0.105, 0.200, 0.350, 0.585, 0.585),
+    (0.095, 0.109, 0.130, 0.250, 0.440, 0.610, 0.610),
+    (0.120, 0.134, 0.155, 0.300, 0.465, 0.635, 0.635),
+)
+#: Article 176(3), the ``b_i`` table, same layout. 2016/467 left it alone.
 _SPREAD_B = (
     (0.009, 0.011, 0.014, 0.025, 0.045, 0.075, 0.075),
     (0.005, 0.006, 0.007, 0.015, 0.025, 0.042, 0.042),
@@ -398,6 +438,40 @@ class ConcentrationCalibration:
 MARKET_RISKS = ("interest", "equity", "property", "spread", "concentration",
                 "currency")
 
+#: The interest rate maturity tables, by the act that set them. Named so a
+#: run can take the 2026 tables without taking the rest of 2026/269 — see
+#: :meth:`MarketRiskCalibration.variant`.
+INTEREST_TABLES = {
+    "2015/35": (InterestShockTable(relative=_2015_UP),
+                InterestShockTable(relative=_2015_DOWN)),
+    "2026/269": (
+        InterestShockTable(
+            relative=tuple((m, s) for m, s, _ in _2026_UP_TABLE) + ((90, 0.20),),
+            parallel=(tuple((m, b) for m, _, b in _2026_UP_TABLE)
+                      + ((60, 0.0), (90, 0.0))),
+        ),
+        InterestShockTable(
+            relative=(tuple((m, s) for m, s, _ in _2026_DOWN_TABLE)
+                      + ((90, 0.20),)),
+            parallel=(tuple((m, b) for m, _, b in _2026_DOWN_TABLE)
+                      + ((60, 0.0), (90, 0.0))),
+        ),
+    ),
+}
+
+#: Article 176(3)'s table, by the act that set it.
+SPREAD_TABLES = {
+    "2015-oj": SpreadCalibration(a=_SPREAD_A_AS_PUBLISHED),
+    "2016/467": SpreadCalibration(),
+}
+
+#: What Article 167 does where the shocked rate would be very negative.
+#: ``"nil"`` is paragraph 2 as enacted — no decrease at all on a negative
+#: rate. ``"floored"`` is paragraph 1 as replaced by 2026/269 — a
+#: term-dependent floor on the level. ``"unrestricted"`` is neither, and is
+#: here because it is the only way to see what the other two are worth.
+NEGATIVE_RATE_RULES = ("nil", "floored", "unrestricted")
+
 
 @dataclass(frozen=True)
 class MarketRiskCalibration:
@@ -427,20 +501,150 @@ class MarketRiskCalibration:
 
     def __fingerprint__(self):
         return {"name": self.name,
-                "applies_from": self.applies_from.isoformat()}
+                "applies_from": self.applies_from.isoformat(),
+                "options": self.options()}
+
+    def options(self) -> dict:
+        """This calibration as the settings of :data:`LEGISLATIVE_OPTIONS`.
+
+        The inverse of :meth:`variant`: what a regime *is*, expressed as
+        the switches it has thrown. Round-trips —
+        ``base.variant(**c.options())`` reproduces ``c``'s behaviour from
+        either starting point, which is asserted in the tests.
+        """
+        tables = next((name for name, (up, down) in INTEREST_TABLES.items()
+                       if (up, down) == (self.interest.up, self.interest.down)),
+                      "custom")
+        spread = next((name for name, table in SPREAD_TABLES.items()
+                       if table == self.spread), "custom")
+        if self.interest.down_floor is not None:
+            negative = "floored"
+        elif self.interest.nil_decrease_when_negative:
+            negative = "nil"
+        else:
+            negative = "unrestricted"
+        return {
+            "interest_tables": tables,
+            "minimum_increase": self.interest.minimum_increase,
+            "negative_rates": negative,
+            "symmetric_cap": self.equity.symmetric_cap,
+            "interest_correlation": self.interest_correlation,
+            "interest_spread_correlation": self.interest_spread_correlation,
+            "spread_table": spread,
+            "property_factor": self.property_factor,
+            "currency_factor": self.currency_factor,
+        }
+
+    def variant(self, name: str | None = None,
+                **options) -> "MarketRiskCalibration":
+        """This regime with individual legislative settings changed.
+
+        An amendment is rarely one thing. 2026/269 moves the interest
+        tables, deletes Article 166(2)'s minimum, replaces Article 167(2)'s
+        negative-rate rule, widens Article 172(4)'s corridor and splits
+        Article 164(3)'s spread correlation out — five changes arriving on
+        one date. Comparing the bundles says the interest capital went from
+        5.15 to 11.64; only comparing one switch at a time says *why*.
+
+        So each divergence is a named setting that can be thrown on its
+        own. :data:`LEGISLATIVE_OPTIONS` lists them with their articles and
+        their permitted values, and an unknown setting raises rather than
+        being silently ignored — the failure mode this exists to prevent is
+        a run that quietly used the regime it was not asked for.
+
+        The result is a new frozen calibration; nothing is mutated, and
+        :data:`DELEGATED_2015` and :data:`DELEGATED_2026` stay exactly what
+        the Official Journal says they are.
+        """
+        unknown = set(options) - set(LEGISLATIVE_OPTIONS)
+        if unknown:
+            raise ValueError(
+                f"{sorted(unknown)} are not legislative settings; this "
+                f"module carries {sorted(LEGISLATIVE_OPTIONS)}"
+            )
+        settled = {**self.options(), **options}
+        for key, permitted in _PERMITTED_VALUES.items():
+            if settled[key] not in permitted:
+                raise ValueError(
+                    f"{key}={settled[key]!r} is not one of {permitted}"
+                )
+        up, down = INTEREST_TABLES[settled["interest_tables"]]
+        negative = settled["negative_rates"]
+        changed = sorted(k for k, v in options.items()
+                         if self.options()[k] != v)
+        return type(self)(
+            name=name or (f"{self.name}({', '.join(changed)})" if changed
+                          else self.name),
+            applies_from=self.applies_from,
+            interest=InterestRateCalibration(
+                up=up, down=down,
+                minimum_increase=settled["minimum_increase"],
+                nil_decrease_when_negative=negative == "nil",
+                down_floor=_2026_DOWN_FLOOR if negative == "floored" else None,
+            ),
+            equity=replace(self.equity,
+                           symmetric_cap=settled["symmetric_cap"]),
+            spread=SPREAD_TABLES[settled["spread_table"]],
+            concentration=self.concentration,
+            property_factor=settled["property_factor"],
+            currency_factor=settled["currency_factor"],
+            interest_correlation=settled["interest_correlation"],
+            interest_spread_correlation=settled[
+                "interest_spread_correlation"],
+            source=self.source,
+        )
+
+
+#: Every legislative divergence this module can be run with, each traceable
+#: to the act that moved it. Keys are the keyword arguments
+#: :meth:`MarketRiskCalibration.variant` takes.
+LEGISLATIVE_OPTIONS = {
+    "interest_tables": (
+        "Articles 166(1) and 167(1): the maturity tables. "
+        f"One of {tuple(INTEREST_TABLES)}."),
+    "minimum_increase": (
+        "Article 166(2): the minimum increase in the upward scenario. "
+        "0.01 as enacted, None once 2026/269 point (43) deletes it."),
+    "negative_rates": (
+        "Article 167: what happens where the decreased rate would be very "
+        f"negative. One of {NEGATIVE_RATE_RULES}."),
+    "symmetric_cap": (
+        "Article 172(4): the symmetric adjustment corridor. 0.10 as "
+        "enacted, 0.13 under 2026/269 point (51)."),
+    "interest_correlation": (
+        "Article 164(3)'s parameter A, against equity and property, when "
+        "the downward scenario binds."),
+    "interest_spread_correlation": (
+        "Article 164(3)'s parameter A against spread, which 2026/269 point "
+        "(41) splits out as B at 0.25."),
+    "spread_table": (
+        "Article 176(3): the factor table. "
+        f"One of {tuple(SPREAD_TABLES)}."),
+    "property_factor": "Article 174: the property decrease, 0.25.",
+    "currency_factor": (
+        "Article 188(3) and (4): the currency move, 0.25 — which Article "
+        "188(5) lets a supervisor adjust for a currency pegged to the "
+        "euro, and which is why this is a setting at all."),
+}
+
+_PERMITTED_VALUES = {
+    "interest_tables": tuple(INTEREST_TABLES),
+    "negative_rates": NEGATIVE_RATE_RULES,
+    "spread_table": tuple(SPREAD_TABLES),
+}
 
 
 DELEGATED_2015 = MarketRiskCalibration(
     name="2015/35",
     applies_from=_dt.date(2016, 1, 1),
     interest=InterestRateCalibration(
-        up=InterestShockTable(relative=_2015_UP),
-        down=InterestShockTable(relative=_2015_DOWN),
+        up=INTEREST_TABLES["2015/35"][0],
+        down=INTEREST_TABLES["2015/35"][1],
         minimum_increase=0.01,
         nil_decrease_when_negative=True,
     ),
     equity=EquityCalibration(symmetric_cap=0.10),
-    spread=SpreadCalibration(),
+    spread=SPREAD_TABLES["2016/467"],
     concentration=ConcentrationCalibration(),
     source=("Commission Delegated Regulation (EU) 2015/35, consolidated "
             "text 02015R0035 — EN — 30.07.2020 — 007.001"),
@@ -450,23 +654,14 @@ DELEGATED_2026 = MarketRiskCalibration(
     name="2026/269",
     applies_from=_dt.date(2027, 1, 30),
     interest=InterestRateCalibration(
-        up=InterestShockTable(
-            relative=tuple((m, s) for m, s, _ in _2026_UP_TABLE) + ((90, 0.20),),
-            parallel=(tuple((m, b) for m, _, b in _2026_UP_TABLE)
-                      + ((60, 0.0), (90, 0.0))),
-        ),
-        down=InterestShockTable(
-            relative=(tuple((m, s) for m, s, _ in _2026_DOWN_TABLE)
-                      + ((90, 0.20),)),
-            parallel=(tuple((m, b) for m, _, b in _2026_DOWN_TABLE)
-                      + ((60, 0.0), (90, 0.0))),
-        ),
+        up=INTEREST_TABLES["2026/269"][0],
+        down=INTEREST_TABLES["2026/269"][1],
         minimum_increase=None,
         nil_decrease_when_negative=False,
         down_floor=_2026_DOWN_FLOOR,
     ),
     equity=EquityCalibration(symmetric_cap=0.13),
-    spread=SpreadCalibration(),
+    spread=SPREAD_TABLES["2016/467"],
     concentration=ConcentrationCalibration(),
     interest_correlation=0.50,
     interest_spread_correlation=0.25,

@@ -81,6 +81,87 @@ So the new calibration bites hardest exactly where a long annuity book
 lives, and on the balance sheet below it more than doubles the interest
 capital requirement — 5.15 becomes 11.64.
 
+## Every divergence is also a setting
+
+Two dated bundles are the right default and the wrong only option. An
+amendment is rarely one thing: 2026/269 moves the interest tables, deletes
+Article 166(2)'s minimum, replaces Article 167(2)'s negative-rate rule,
+widens Article 172(4)'s corridor and splits Article 164(3)'s spread
+correlation out — five changes arriving on one date. So each divergence is
+a named setting and `MarketRiskCalibration.variant` throws any combination
+of them:
+
+```python
+DELEGATED_2015.variant(interest_tables="2026/269")
+DELEGATED_2026.variant("house view", minimum_increase=0.01)
+```
+
+`options()` is the inverse — a regime expressed as the switches it has
+thrown — so `DELEGATED_2015.variant(**DELEGATED_2026.options())` computes
+2026/269's numbers exactly, from either starting point. An unknown setting
+raises rather than being ignored, because the failure this exists to
+prevent is a run that quietly used the regime it was not asked for, and a
+variant is a new frozen object, so the two published regimes stay exactly
+what the Official Journal says they are.
+
+There is a third value on one of them that is in no regime at all:
+`negative_rates="unrestricted"` applies Article 167's formula with neither
+the enacted nil rule nor 2026/269's floor. It is there because it is the
+only way to see what the other two are worth — on a flat −1% curve the
+one-year shocked rate is −1.00% under the enacted rule (no shock at all),
+−1.25% under the floor, and −1.58% with neither.
+
+## The finding: an amendment is not the sum of its clauses
+
+This is what the settings bought, and it was not the intended reason for
+building them.
+
+Throw 2026/269's five clauses **one at a time** on the (5, 20) fund at 3%:
+
+| clause | interest SCR | change |
+|---|---|---|
+| 2015/35 as it stands | 5.1464 | — |
+| + the 2026 maturity tables | 11.6412 | **+6.4949** |
+| + deleting Article 166(2)'s minimum | 0.0000 | **−5.1464** |
+| + Article 167's term-dependent floor | 5.1464 | 0 |
+| + the ±13% symmetric corridor | 5.1464 | 0 |
+| + parameter B on the spread cell | 5.1464 | 0 |
+| **all five together** | **11.6412** | **+6.4949** |
+
+The one-at-a-time effects sum to **+1.35**. Applied together they are
+**+6.49**. The decomposition is not additive, and the reason is specific:
+under 2015/35 on a 3% curve the upward shock is Article 166(2)'s one
+percentage point at 76 of the first 90 maturities, so deleting the minimum
+does not trim the shock — it *is* the shock, and the requirement goes to
+zero. Under the 2026 tables the upward shock already exceeds a percentage
+point everywhere, so deleting the same minimum is a **no-op**. Adding it
+back to the 2026 regime changes nothing at all.
+
+So "2026/269 deleted the one percentage point floor" is a true statement
+about the text whose effect, given the rest of the same amendment, is
+exactly zero. Every unit of the relief a reader would attribute to that
+deletion is really the tables. This is RFC-024's finding in a new place:
+peeling drivers off one at a time does not decompose an interaction, it
+hides it in the order.
+
+**A larger shock is not always a larger capital requirement.** Put Article
+166(2)'s minimum *back* into the 2026 regime on a 0.5% curve, where the new
+upward shock reaches only 10bp at the ninety-year point. Every maturity now
+moves at least a percentage point — a strictly larger shock at every point
+of the curve — and the capital **halves**, 8.86 to 4.03. The minimum bites
+at the long end, and this fund's liability is longer than its assets, so
+raising the long end alone moves the liability down further than the
+assets. The module is a shape, not a level.
+
+**And the settings can rescue a change the bundle hides.** On a
+down-binding book — assets at duration 5 against the twenty-five year
+annuity — 2026/269's parameter B is worth **9.46** of market SCR, 175.80
+falling to 166.34, a 5.4% reduction with every sub-module capital
+unchanged. In the full bundle the same amendment's interest tables add 72.3
+and the SCR goes *up*, to 248.11. Anyone comparing the regimes as bundles
+would report point (41) as a capital increase. Only the switch separates
+them.
+
 ## The finding: matching duration leaves the interest SCR undetermined
 
 Stated as the hypothesis was: a Solvency II interest shock is a

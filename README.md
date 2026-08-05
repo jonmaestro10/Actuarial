@@ -148,7 +148,23 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   amending act, whose formulas are base64 JPEGs that had to be decoded and
   read as pictures. What the reading changed: **2026/269 applies from 30
   January 2027**, so both texts are live for different reporting dates and
-  the module ships them as dated sets rather than baking one in. It
+  the module ships them as dated sets rather than baking one in — **and
+  every divergence between them is also an individual setting**, thrown by
+  name through `variant()`, because an amendment is rarely one thing. That
+  turned out to matter more than as an ergonomic: 2026/269's five clauses
+  applied **one at a time** sum to +1.35 of interest capital and applied
+  **together** come to +6.49, because deleting Article 166(2)'s minimum on
+  its own takes the requirement to **zero** (on a 3% curve that minimum
+  *is* the 2015 shock, at 76 of the first 90 maturities) while deleting it
+  alongside the new tables is a **no-op**. So the relief a reader would
+  attribute to that deletion is entirely the tables — RFC-024's
+  non-additivity finding, in a place nobody was looking for it. Two more
+  the switches exposed: a **strictly larger shock can halve the capital**
+  (re-impose the deleted minimum on a 0.5% curve and 8.86 becomes 4.03,
+  because the minimum bites at the long end and the liability is longer
+  than the assets), and 2026/269's new spread correlation is worth 9.46 of
+  SCR on a down-binding book — relief the bundle comparison reports as an
+  increase, because the same amendment's tables add 72.3. It
   replaces the multiplicative shock with a multiplicative shock *plus* a
   parallel shift, deletes Article 166(2)'s one percentage point minimum,
   and turns "no shock where the rate is negative" into a floor of −1.25%

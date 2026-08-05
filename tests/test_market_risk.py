@@ -21,7 +21,8 @@ from engine.report.embedded_value import (
 from engine.report.market_risk import (
     CALIBRATIONS, DELEGATED_2015, DELEGATED_2026, MARKET_RISKS,
     EquityExposure, InterestShockTable, ShockResult,
-    SpreadCalibration, calibration_for, concentration_capital,
+    LEGISLATIVE_OPTIONS, NEGATIVE_RATE_RULES,
+    calibration_for, concentration_capital,
     currency_capital, curve_from_spot_rates, equity_capital,
     insurer_concentration_factor, interest_rate_capital,
     market_correlation, market_risk, property_capital, spot_rates,
@@ -175,6 +176,212 @@ def test_every_calibration_names_its_source():
 def test_a_table_with_unordered_knots_is_refused():
     with pytest.raises(ValueError, match="strictly increasing"):
         InterestShockTable(relative=((2, 0.5), (1, 0.6)))
+
+
+# --------------------------------------------------------------------------
+# Legislative settings
+# --------------------------------------------------------------------------
+
+def test_every_setting_is_documented_and_round_trips():
+    """``options()`` is the inverse of ``variant()``: a regime expressed as
+    the switches it has thrown, and rebuildable from either end."""
+    for calibration in CALIBRATIONS:
+        settings = calibration.options()
+        assert set(settings) == set(LEGISLATIVE_OPTIONS)
+        assert all(LEGISLATIVE_OPTIONS[key] for key in settings)
+        for other in CALIBRATIONS:
+            rebuilt = other.variant(**settings)
+            assert rebuilt.options() == settings
+
+
+def test_a_rebuilt_regime_computes_the_same_numbers():
+    assets = duration_matched_assets(ANNUITY, FLAT, short=5, long=20)
+    rebuilt = DELEGATED_2015.variant(**DELEGATED_2026.options())
+    assert (interest_rate_capital(assets, ANNUITY, FLAT, rebuilt)
+            == interest_rate_capital(assets, ANNUITY, FLAT, DELEGATED_2026))
+    back = DELEGATED_2026.variant(**DELEGATED_2015.options())
+    assert (interest_rate_capital(assets, ANNUITY, FLAT, back)
+            == interest_rate_capital(assets, ANNUITY, FLAT, DELEGATED_2015))
+
+
+def test_an_unknown_setting_raises_rather_than_being_ignored():
+    """The failure this exists to prevent is a run that quietly used the
+    regime it was not asked for."""
+    with pytest.raises(ValueError, match="not legislative settings"):
+        DELEGATED_2015.variant(equity_type_1_factor=0.5)
+    with pytest.raises(ValueError, match="not one of"):
+        DELEGATED_2015.variant(negative_rates="ignore")
+    with pytest.raises(ValueError, match="not one of"):
+        DELEGATED_2015.variant(interest_tables="2019/981")
+
+
+def test_a_variant_leaves_the_published_regimes_alone():
+    """Frozen, and rebuilt rather than mutated, so the two dated sets stay
+    exactly what the Official Journal says they are."""
+    before = DELEGATED_2015.options()
+    changed = DELEGATED_2015.variant(minimum_increase=None, symmetric_cap=0.13)
+    assert DELEGATED_2015.options() == before
+    assert DELEGATED_2015.interest.minimum_increase == 0.01
+    assert changed.interest.minimum_increase is None
+    assert changed.equity.symmetric_cap == 0.13
+    # The name says what was thrown, so a result carries its own provenance.
+    assert "minimum_increase" in changed.name
+    assert "symmetric_cap" in changed.name
+    assert DELEGATED_2015.variant().name == "2015/35"
+    assert DELEGATED_2015.variant("house view").name == "house view"
+
+
+def test_the_negative_rate_rules_are_three_different_answers():
+    """On a flat −1% curve, Article 167(2) as enacted shocks by nothing at
+    all, 2026/269's floor takes the one-year point to −1.25%, and the raw
+    formula would have gone to −1.58%."""
+    curve = YieldCurve.flat(-0.01, freq=1)
+    got = {}
+    for rule in NEGATIVE_RATE_RULES:
+        variant = DELEGATED_2026.variant(negative_rates=rule)
+        got[rule] = spot_rates(stressed_curve(curve, variant, "down"))
+    assert got["nil"][0] == pytest.approx(-0.01)
+    assert got["floored"][0] == pytest.approx(-0.0125)
+    assert got["unrestricted"][0] == pytest.approx(-0.0158)
+    assert got["floored"][19] == pytest.approx(-0.00893)
+    assert got["unrestricted"][19] == pytest.approx(-0.01)
+
+
+def test_the_spread_table_switch_reproduces_the_original_discontinuity():
+    """The 2016/467 comparison is data in the module, not history in a
+    test: both tables ship and either can be run."""
+    original = DELEGATED_2015.variant(spread_table="2015-oj")
+    assert float(spread_factor(np.array(1), np.array(12.0),
+                               original)) == pytest.approx(0.084 + 0.005 * 2)
+    assert float(spread_factor(np.array(1), np.array(12.0),
+                               DELEGATED_2015)) == pytest.approx(0.085 + 0.01)
+    assert _band_jumps(original)[10.0][1] == pytest.approx(-0.001)
+    assert _band_jumps(original)[20.0][4] == pytest.approx(0.0, abs=1e-12)
+
+
+# --------------------------------------------------------------------------
+# The finding: an amendment is not the sum of its clauses
+# --------------------------------------------------------------------------
+
+def test_deleting_the_minimum_increase_alone_removes_all_the_capital():
+    """2026/269 does five things at once. Thrown one at a time on the
+    (5, 20) fund, only one of them moves anything — and the one everybody
+    would name as *relief* removes the entire requirement when it is thrown
+    on its own.
+
+    Under 2015/35 the upward shock on a 3% curve is Article 166(2)'s one
+    percentage point at 76 of the first 90 maturities, so deleting the
+    minimum does not trim the shock, it **is** the shock: 5.15 becomes 0.
+    Switch the tables instead and the answer is the whole of 2026/269's
+    11.64 without touching anything else.
+    """
+    assets = duration_matched_assets(ANNUITY, FLAT, short=5, long=20)
+
+    def capital(calibration):
+        return interest_rate_capital(assets, ANNUITY, FLAT, calibration)[0]
+
+    baseline = capital(DELEGATED_2015)
+    assert baseline == pytest.approx(5.1464, abs=5e-4)
+    assert capital(DELEGATED_2015.variant(minimum_increase=None)) == 0.0
+    assert capital(DELEGATED_2015.variant(interest_tables="2026/269")) \
+        == pytest.approx(capital(DELEGATED_2026))
+    # The other three clauses do nothing at all on this book.
+    for setting, value in (("negative_rates", "floored"),
+                           ("symmetric_cap", 0.13),
+                           ("interest_spread_correlation", 0.25)):
+        assert capital(DELEGATED_2015.variant(**{setting: value})) \
+            == pytest.approx(baseline)
+
+
+def test_the_clauses_are_not_additive():
+    """Sum the one-at-a-time effects and you get +1.35; apply them together
+    and you get +6.49. The minimum and the tables are not independent —
+    2026/269's upward shock already exceeds a percentage point everywhere on
+    a 3% curve, so deleting the minimum is a **no-op** once the new tables
+    are in, and the whole of the relief a reader would attribute to that
+    deletion is really the tables.
+
+    RFC-024 found the same shape in the analysis of surplus: peeling
+    drivers off one at a time does not decompose an interaction, it hides
+    it in the order.
+    """
+    assets = duration_matched_assets(ANNUITY, FLAT, short=5, long=20)
+
+    def capital(calibration):
+        return interest_rate_capital(assets, ANNUITY, FLAT, calibration)[0]
+
+    baseline = capital(DELEGATED_2015)
+    joint = capital(DELEGATED_2026) - baseline
+    one_at_a_time = sum(
+        capital(DELEGATED_2015.variant(**{key: value})) - baseline
+        for key, value in DELEGATED_2026.options().items()
+        if DELEGATED_2015.options()[key] != value)
+    assert joint == pytest.approx(6.4949, abs=5e-4)
+    assert one_at_a_time == pytest.approx(1.3485, abs=5e-4)
+    assert joint != pytest.approx(one_at_a_time)
+    # Removing the minimum from the 2026 regime changes nothing whatever.
+    assert capital(DELEGATED_2026.variant(minimum_increase=0.01)) \
+        == pytest.approx(capital(DELEGATED_2026))
+
+
+def test_a_larger_shock_is_not_always_a_larger_capital_requirement():
+    """Put Article 166(2)'s minimum back into the 2026 regime on a 0.5%
+    curve, where the new upward shock reaches only 10bp at the long end.
+    Every maturity now moves at least a percentage point — a strictly
+    larger shock — and the capital **halves**, 8.86 to 4.03.
+
+    The long end is where the minimum bites, and this fund's liability is
+    longer than its assets, so raising the long end alone moves the
+    liability down further than the assets. The module is a shape, not a
+    level, and "bigger shock, bigger number" is not a property it has.
+    """
+    curve = YieldCurve.flat(0.005, freq=1)
+    assets = duration_matched_assets(ANNUITY, curve, short=5, long=20)
+    with_minimum = DELEGATED_2026.variant(minimum_increase=0.01)
+    plain = spot_rates(stressed_curve(curve, DELEGATED_2026, "up"))
+    floored = spot_rates(stressed_curve(curve, with_minimum, "up"))
+    base = spot_rates(curve)
+    assert (plain[:90] - base[:90]).min() == pytest.approx(0.001, abs=1e-9)
+    assert np.all(floored[:90] >= plain[:90] - 1e-15)
+    assert interest_rate_capital(assets, ANNUITY, curve,
+                                 DELEGATED_2026)[0] == pytest.approx(
+        8.8632, abs=5e-4)
+    assert interest_rate_capital(assets, ANNUITY, curve,
+                                 with_minimum)[0] == pytest.approx(
+        4.0304, abs=5e-4)
+
+
+def test_the_spread_correlation_change_is_invisible_in_the_bundle():
+    """2026/269 point (41) is worth 9.46 of market SCR on a down-binding
+    book — a 5.4% reduction — and the same amendment's interest tables add
+    72.3, so anyone comparing the two regimes as bundles would report the
+    correlation change as a capital *increase*. Only the switch separates
+    them."""
+    curve = YieldCurve.flat(0.03, freq=1)
+    factors = curve.discount_factors(41)
+    value = present_value(ANNUITY, curve)
+    weight = 4.0 / 39.0
+    assets = np.zeros(40)
+    assets[0] = value * (1.0 - weight) / factors[1]
+    assets[39] = value * weight / factors[40]
+    values = np.array([assets[0] * factors[1], assets[39] * factors[40]])
+    holdings = (values, np.array([1.0, 40.0]), np.array([2, 2]))
+
+    def position(calibration):
+        return market_risk(assets=assets, liabilities=ANNUITY, curve=curve,
+                           calibration=calibration, spread=holdings,
+                           property_value=200.0)
+
+    base = position(DELEGATED_2015)
+    isolated = position(DELEGATED_2015.variant(interest_spread_correlation=0.25))
+    bundle = position(DELEGATED_2026)
+    assert base.interest_direction == "down"
+    assert base.scr == pytest.approx(175.796, abs=5e-3)
+    assert isolated.scr == pytest.approx(166.337, abs=5e-3)
+    assert bundle.scr == pytest.approx(248.112, abs=5e-3)
+    assert isolated.modules == base.modules
+    assert base.scr - isolated.scr == pytest.approx(9.459, abs=5e-3)
+    assert bundle.scr > base.scr
 
 
 # --------------------------------------------------------------------------
@@ -598,25 +805,6 @@ def test_currency_positions_that_offset_do_not_offset():
 # Spread
 # --------------------------------------------------------------------------
 
-#: The Article 176(3) table as first published in OJ L 12, 17.1.2015, before
-#: Commission Delegated Regulation (EU) 2016/467 replaced it. Only the
-#: credit quality step 1 column and one step 4 cell differ.
-_ORIGINAL_2015_A = (
-    (0.000, 0.000, 0.000, 0.000, 0.000, 0.000, 0.000),
-    (0.045, 0.055, 0.070, 0.125, 0.225, 0.375, 0.375),
-    (0.070, 0.084, 0.105, 0.200, 0.350, 0.585, 0.585),
-    (0.095, 0.109, 0.130, 0.250, 0.440, 0.610, 0.610),
-    (0.120, 0.134, 0.155, 0.300, 0.465, 0.635, 0.635),
-)
-
-
-class _SpreadOnly:
-    """Just enough of a calibration for :func:`spread_factor`."""
-
-    def __init__(self, spread):
-        self.spread = spread
-
-
 def _band_jumps(calibration):
     jumps = {}
     for edge in (5.0, 10.0, 15.0, 20.0):
@@ -644,7 +832,7 @@ def test_the_2016_amendment_removed_one_discontinuity_and_created_another():
     from step 1 to step 4, and it is still there in the text that applies
     today and in the text that applies from 2027.
     """
-    original = _band_jumps(_SpreadOnly(SpreadCalibration(a=_ORIGINAL_2015_A)))
+    original = _band_jumps(DELEGATED_2015.variant(spread_table="2015-oj"))
     assert original[10.0][1] == pytest.approx(-0.001)
     assert np.count_nonzero(np.abs(np.concatenate(list(original.values())))
                             > 1e-9) == 1
