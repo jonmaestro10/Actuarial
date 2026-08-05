@@ -136,6 +136,27 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **IFRS 17, the variable fee approach** ([RFC-013](docs/rfc-013-vfa.md)):
+  the measurement model for direct participating contracts, which is most of
+  what this engine models — unit-linked with an AMC, universal life, the
+  fixed-indexed annuity. The GMM gets them visibly wrong: its CSM is a
+  historic-cost balance, so a market move goes straight to the year's profit
+  for a contract whose profit *is* a share of the market. One change fixes
+  it — the CSM absorbs the entity's share of the underlying items and the
+  financial changes. A 3,000 financial worsening with ten years of cover left
+  hits year-5 profit by **−3,000 under the GMM and −300 under the VFA**,
+  exactly the change times that period's coverage-unit fraction; the §B115
+  risk-mitigation election puts it back to −3,000 to the last digit, which is
+  why it is one flag and not a third model. The consequence running the other
+  way is the one that surprises: **the VFA's CSM is not safe**. A 65% fall
+  wipes a margin of 4,122 and puts 1,362 through profit immediately, where the
+  GMM's CSM never hears about the market at all. The recovery case found a
+  real bug — a rising pool rebuilt the CSM straight past a loss component
+  still sitting there — so the growth and the change in estimate are now one
+  signed adjustment under one rule. Total profit is still the group's net
+  cash, whatever the pool does, and that invariant caught the module's
+  conceptual error: the first version counted the variable fee as new money
+  when the group's cashflows already contained it.
 - **IFRS 17, the general measurement model**
   ([RFC-012](docs/rfc-012-ifrs17.md)): PLAN §5.3's first reporting overlay,
   and the first thing here that is not a projection — `engine/library`

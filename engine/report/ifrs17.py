@@ -346,7 +346,8 @@ class Measurement:
 def measure(group: Group, *, coverage: CoverageUnits,
             risk_adjustment: RiskAdjustment | None = None,
             current: YieldCurve, locked_in: YieldCurve | None = None,
-            changes_in_estimate=None) -> Measurement:
+            changes_in_estimate=None, financial_changes=None,
+            csm_growth=None) -> Measurement:
     """Measure a group of contracts under the general measurement model.
 
     ``current`` discounts the fulfilment cashflows. ``locked_in`` accretes
@@ -359,6 +360,22 @@ def measure(group: Group, *, coverage: CoverageUnits,
     fulfilment cashflows are: a positive entry is a worsening, and reduces
     the CSM. Changes relating to *past* service go to profit and loss
     directly and are not this argument.
+
+    ``financial_changes`` is the series of changes in fulfilment cashflows
+    caused by **financial** variables. Under this model they do **not**
+    touch the CSM: they go to insurance finance income and expense in the
+    period they arise, so a market move is a market move and shows up as
+    one. That is the single difference the variable fee approach exists to
+    make, and keeping it a separate argument here is what lets the two
+    models be compared on one line of code.
+
+    ``csm_growth`` replaces the locked-in accretion with an explicit
+    per-period amount. It exists for the variable fee approach
+    (``engine/report/vfa.py``), where the CSM grows with the entity's share
+    of the underlying items rather than at a fixed rate — see RFC-013.
+    Whatever it contains, it cannot change the group's total profit: it
+    moves the same money between periods, which the reconciliation to net
+    cash keeps honest.
 
     The roll-forward, in the order IFRS 17 B96-B99 sets out:
 
@@ -391,6 +408,22 @@ def measure(group: Group, *, coverage: CoverageUnits,
     accretion_factor = (
         1.0 + locked_in.rates[:n]
     ) ** (1.0 / locked_in.freq) - 1.0
+    if csm_growth is not None:
+        csm_growth = np.asarray(csm_growth, dtype=np.float64)
+        if csm_growth.shape != (n,):
+            raise ValueError(
+                f"csm_growth covers {csm_growth.shape} periods, the group "
+                f"covers {n}"
+            )
+    if financial_changes is None:
+        financial = np.zeros(n)
+    else:
+        financial = np.asarray(financial_changes, dtype=np.float64)
+        if financial.shape != (n,):
+            raise ValueError(
+                f"financial_changes covers {financial.shape} periods, the "
+                f"group covers {n}"
+            )
 
     csm = np.zeros(n + 1)
     loss = np.zeros(n + 1)
@@ -413,26 +446,36 @@ def measure(group: Group, *, coverage: CoverageUnits,
     loss_amortised = np.zeros(n)
 
     for t in range(n):
-        accreted[t] = csm[t] * accretion_factor[t]
-        balance = csm[t] + accreted[t]
+        accreted[t] = (csm[t] * accretion_factor[t] if csm_growth is None
+                       else csm_growth[t])
+        # Everything that moves the CSM this period, signed so that
+        # positive is favourable: the growth (accretion under the GMM, the
+        # entity's share of the underlying items under the VFA) less the
+        # change in fulfilment cashflows, which is signed the other way.
+        #
+        # One rule for both, because the loss component does not care what
+        # made a group better or worse off — a recovery in the underlying
+        # items has to extinguish it before rebuilding a margin exactly as
+        # a favourable estimate does. Splitting them let a rising pool
+        # rebuild the CSM straight past a loss component that was still
+        # sitting there.
+        balance = csm[t]
         carried_loss = loss[t]
-        change = changes[t]
-        if change < 0.0:
-            # A favourable change extinguishes the loss component first and
-            # only then rebuilds the CSM. This is the asymmetry: the loss
-            # went to profit the day it appeared, and its reversal does not
-            # come back the same way.
-            reversal = min(-change, carried_loss)
+        favourable = accreted[t] - changes[t]
+        if favourable >= 0.0:
+            # The asymmetry: the loss went to profit the day it appeared,
+            # and its reversal does not come back the same way.
+            reversal = min(favourable, carried_loss)
             loss_reversed[t] = reversal
             carried_loss -= reversal
-            balance += (-change) - reversal
+            balance += favourable - reversal
         else:
-            absorbed = min(change, balance)
+            absorbed = min(-favourable, balance)
             balance -= absorbed
             # ``+=`` and not ``=``: period 0 may already carry the day-one
-            # loss, and an adverse change in the same period adds to it.
-            loss_recognised[t] += change - absorbed
-            carried_loss += change - absorbed
+            # loss, and an adverse movement in the same period adds to it.
+            loss_recognised[t] += -favourable - absorbed
+            carried_loss += -favourable - absorbed
 
         csm_release[t] = balance * fractions[t]
         csm[t + 1] = balance - csm_release[t]
@@ -484,7 +527,10 @@ def measure(group: Group, *, coverage: CoverageUnits,
     paid_at_zero = np.zeros(n)
     paid_at_zero[0] = group.acquisition
     fcf_unwind = (fcf[:n] + inflow_held - paid_at_zero) * current_rate
-    finance_expense = fcf_unwind + accreted
+    # A change in fulfilment cashflows from a financial variable belongs in
+    # the finance line, signed as the cashflows are: a worsening is a
+    # positive change and an expense.
+    finance_expense = fcf_unwind + accreted + financial
     profit = service_result - finance_expense
 
     return Measurement(
@@ -503,6 +549,7 @@ def measure(group: Group, *, coverage: CoverageUnits,
         insurance_service_expenses=service_expenses,
         insurance_service_result=service_result,
         fcf_unwind=fcf_unwind,
+        financial_changes=financial,
         insurance_finance_expense=finance_expense,
         profit=profit,
         #: Liability for remaining coverage. The loss component is a
