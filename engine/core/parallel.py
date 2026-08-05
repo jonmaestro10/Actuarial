@@ -29,13 +29,6 @@ reduction over a shard would be a reduction over the wrong population.
 Those are **refused** rather than silently run, because a pooled model
 sharded four ways produces plausible numbers that are wrong.
 
-Determinism
------------
-Shards are contiguous and reassembled by index, never by completion order.
-The result of a run does not depend on how many workers ran it or which
-finished first, and ``tests/test_parallel.py`` asserts that **bitwise**
-across worker counts.
-
 What the measurements decided
 -----------------------------
 Sharding a block and shipping **per-policy series** back is a *loss* on one
