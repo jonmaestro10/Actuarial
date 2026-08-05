@@ -20,6 +20,7 @@ from typing import Mapping
 
 import numpy as np
 
+from engine.data.account import AccountBasis
 from engine.data.decrements import Decrements
 from engine.data.expenses import Commission, ExpenseScale, Expenses
 from engine.data.mortality import MortalityBasis
@@ -198,7 +199,8 @@ class Assumptions:
                  commission: "Commission | None" = None,
                  reinsurance: "Treaty | None" = None,
                  tax: "TaxBasis | None" = None,
-                 transitions: "TransitionMatrix | None" = None):
+                 transitions: "TransitionMatrix | None" = None,
+                 account: "AccountBasis | None" = None):
         if freq < 1 or 12 % freq:
             raise ValueError(f"payment frequency {freq} must divide 12")
         if not 0.0 <= lapse < 1.0:
@@ -252,6 +254,10 @@ class Assumptions:
         #: takes the matrix root when the projection runs finer.
         self.transitions = transitions
         self._periodic_transitions = None
+        #: Account-value mechanics for the interest-sensitive family. An
+        #: unconfigured basis deducts nothing and credits nothing, so it is
+        #: the identity and nothing that predates it moves.
+        self.account = account if account is not None else AccountBasis()
         self.crediting_rate = crediting_rate
         self.amc = amc
         self.gmdb_fee = gmdb_fee
@@ -279,6 +285,7 @@ class Assumptions:
             "reinsurance": self.reinsurance,
             "tax": self.tax,
             "transitions": self.transitions,
+            "account": self.account,
             "crediting_rate": self.crediting_rate,
             "amc": self.amc,
             "gmdb_fee": self.gmdb_fee,
@@ -387,6 +394,24 @@ class Assumptions:
         if self._periodic_transitions is None:
             self._periodic_transitions = self.transitions.root(self.freq)
         return self._periodic_transitions
+
+    def periodic_credited(self, earned):
+        """Rate credited to an account value over one period.
+
+        ``earned`` is the period return on the backing assets — a scenario
+        return stochastically, the valuation rate deterministically. Ignored
+        under a declared-rate basis. See
+        :meth:`engine.data.account.CreditingBasis.credited`.
+        """
+        return self.account.crediting.credited(earned, freq=self.freq)
+
+    def periodic_credited_unfloored(self, earned):
+        """The same rate with the minimum guarantee switched off.
+
+        Valued over a distribution of ``earned``, the gap between this and
+        :meth:`periodic_credited` is what the guarantee costs.
+        """
+        return self.account.crediting.unfloored(earned, freq=self.freq)
 
     def at_year(self, offset: int) -> "Assumptions":
         """The same basis, ``offset`` years later on the calendar.
