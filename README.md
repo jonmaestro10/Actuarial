@@ -138,6 +138,36 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **The REST API, and what happens to a float on the way out**
+  ([RFC-031](docs/rfc-031-rest-api.md)): PLAN §6's last unbuilt line — run
+  submission, status, results retrieval and a webhook/event stream — on
+  FastAPI, as an optional extra (`pip install -e ".[api]"`, then
+  `uvicorn engine.api:create_app --factory`), so the engine core takes no
+  dependency on it. **A projection is not a request**: `POST /runs` returns
+  **202** and an identifier, and results come back **409** while the run is
+  still going, because the run exists and the answer does not yet.
+  **The identifier is a fingerprint, not a ticket** — RFC-003 already made
+  "same question" computable, so resubmitting does no second computation,
+  and it survives key order and `1` against `1.0` (but not `True` against
+  `1`, which would make two different requests collide). **The finding is
+  what happens to a float on the way out.** Ordinary ones survive: Python
+  writes a float as `repr`, the shortest string that round-trips, so a
+  result sent and parsed back fingerprints identically to what the engine
+  computed — checked against the registry's own digest. Rounding does not:
+  **fifteen decimal places is not enough** (worst error 4.4e-16) and only 17
+  significant digits round-trips. And a non-finite float is **silently
+  changed**: Starlette refuses `NaN`, but a handler returning a `dict` never
+  reaches Starlette with the float intact, because **FastAPI's own encoder
+  writes it as `null`** — valid JSON, a 200, and nothing downstream able to
+  tell `null` from "this projection produced a NaN". So results are rendered
+  in the handler and returned as a `Response` that FastAPI passes through
+  untouched, with a pre-flight check that turns an opaque encoder 500 into
+  one that names the problem. Also: `GET /models/{name}/documentation`
+  serves RFC-030's formula browser from the same place the run is submitted,
+  the event stream publishes `queued → running → terminal` in order (which
+  took a fix — publishing after handing the run to the pool let the worker
+  overtake the submission and lose `queued`), and the webhook is an injected
+  callable rather than an HTTP client this package would have to depend on.
 - **The formula browser, and the trace that is too short**
   ([RFC-030](docs/rfc-030-model-docs.md)): PLAN §7's "auto-generated model
   documentation from `@var` docstrings + dependency graph visualizer — this
