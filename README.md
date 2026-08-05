@@ -136,6 +136,27 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **IFRS 17, the premium allocation approach** ([RFC-017](docs/rfc-017-paa.md)):
+  the last of the three models §5.3 names, so **GMM, VFA and PAA are now all
+  in place**. It is the only one that is a *simplification* rather than a
+  measurement, and the absence of a CSM is the whole of it — profit emerges
+  purely as premium is earned, so RFC-012's coverage-unit finding has no
+  counterpart because there is no driver to choose. The finding: **the
+  divergence from the general model is the time value of money and nothing
+  else**. At a zero discount rate the PAA *is* the general model, exactly, at
+  every term tested (1e-12 at 1, 5, 20 and 30 periods); at 4% the gap runs
+  0.00% / 3.4% / 9.2% / 30.3% at 1 / 5 / 12 / 30 periods. That is precisely
+  why §53(a) exempts one-year contracts and §56 requires accretion where
+  there is a financing component — and the accretion **roughly doubles the
+  eligible term**, from seven periods to fifteen at a 5% materiality
+  threshold. §53(b)'s second limb is implemented honestly: proving you may
+  use the simplification costs a full run of the thing it simplifies, so
+  `eligibility` runs both models and records *which* limb was relied on.
+  Four errors were caught by measurement — the comparison scale (dividing by
+  a liability that is near-zero by construction called a 0.8% agreement a
+  100% difference), the onerous test's sign (which manufactured a loss on a
+  30%-margin group), the level revenue solve (the liability closed at minus
+  the acquisition cost), and the day-one loss telescoping out of income.
 - **US statutory principle-based reserves — VM-20 / VM-21**
   ([RFC-016](docs/rfc-016-pbr.md)): a third kind of overlay. IFRS 17 *reads*
   a projection, Solvency II *re-runs* one, and a principle-based reserve
