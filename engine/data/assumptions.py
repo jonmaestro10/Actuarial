@@ -92,6 +92,20 @@ class MortalityTable:
     def ages(self) -> range:
         return range(self.min_age, self.max_age + 1)
 
+    def __getstate__(self):
+        """``MappingProxyType`` is not picklable, and an assumption set that
+        cannot be pickled cannot be sent to a worker process — or cached, or
+        shipped. The proxy exists to stop the table being mutated in place;
+        it is a view over a dict either way, so it costs nothing to hand the
+        dict across and rebuild the view on the other side."""
+        state = dict(self.__dict__)
+        state["_qx"] = dict(self._qx)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._qx = MappingProxyType(state["_qx"])
+
     def __fingerprint__(self):
         return {"basis": self.basis}
 
