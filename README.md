@@ -55,7 +55,9 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   (`scripts/benchmark.py`: 100k policies × 60 years in seconds, ~40× the
   interpreter).
 - Product templates: level-premium term assurance, single-premium deferred
-  fixed annuity — each with closed-form golden tests.
+  fixed annuity, payout and variable-payout annuities, unit-linked with GMxB
+  riders, income protection on the multi-state engine, and universal life
+  with a §7702 corridor and a no-lapse guarantee — each with golden tests.
 - Model points round-trip through Parquet (`pip install -e ".[data]"`).
 - **Stochastic executor**: `run_stochastic()` broadcasts model points
   against a `ScenarioSet` into `(time, model point, scenario)` slabs with
@@ -132,6 +134,31 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Universal life and the account-value family**
+  ([RFC-010](docs/rfc-010-universal-life.md)): PLAN §5.2's interest-sensitive
+  products, and the first template whose *benefit* is a projected number
+  rather than a policy-data field. Two things follow that nothing before it
+  needed. **A contract can lapse from arithmetic** — when the account cannot
+  meet its own deductions the policy leaves the book on a date the
+  projection produces, so the in-force indicator is a running product and
+  therefore absorbing, and lapse-for-non-payment is kept strictly apart from
+  voluntary surrender (one is paid a cash value, the other walks away from an
+  empty account). And **the crediting floor is a written option** — worth
+  *exactly* zero deterministically above it, and worth **+323 bp a year at
+  10% volatility**, because a minimum crediting rate is not one option over
+  the contract but one per period, resetting whatever the account already
+  earned. The §7702 **corridor** turns out not to be optional either: without
+  it a well-funded account carries no net amount at risk from year 10 and the
+  model shows three decades of free cover, while with it the present value of
+  death claims is **4.2×** larger. Striking the death benefit after the COI
+  instead of before is not an alternative convention but a cycle, and
+  RFC-001's detector names the loop rather than iterating to a fixed point —
+  the first time it has caught something an actuary might plausibly write.
+  The **no-lapse guarantee** runs as a shadow account and is worth more than
+  "the contract lasts longer": the lapse it prevents lands precisely at the
+  ages the cover is most likely to be claimed, so it lifts the present value
+  of death claims **44%**, and it can fail on its own terms — an underfunded
+  shadow account drains in year 4 while the real one lasts to year 25.
 - **Multi-state Markov models** ([RFC-009](docs/rfc-009-multistate.md)):
   PLAN §5.2's health and protection engine, and the step past multiple
   decrements. The difference is one word — **recovery**: a decrement model
