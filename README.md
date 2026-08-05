@@ -136,6 +136,27 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Solvency II** ([RFC-014](docs/rfc-014-solvency2.md)): PLAN §5.3's second
+  framework, and a different kind of overlay — **IFRS 17 reads a projection;
+  Solvency II re-runs one**. The SCR is the fall in own funds under a shock,
+  and a shock is a change of *assumption*, so there is no formula for what it
+  does to a liability: the only way to find out is to project again on the
+  stressed basis. This module therefore drives the engine rather than
+  consuming its output, which is exactly why PLAN §4 puts speed ahead of
+  product breadth. **Which lapse stress bites is the product's business, not
+  the standard's**: lapse *up* releases capital on a term book and costs it
+  on a unit-linked one, and lapse *down* does the opposite — the same shock,
+  opposite signs, on two books at the same insurer. The module is the worst of
+  the three and never their sum; adding them would overstate it by more than
+  half here. And a **plausible correlation matrix can produce no capital at
+  all**: symmetric, unit diagonal, every entry inside [−1, 1], smallest
+  eigenvalue −0.8, and three modules of 100 give `v' C v = −24,000` — so any
+  floor at zero reports an SCR of nothing for a book with three material
+  risks. Checked on construction. The mortality shock scales the *annual*
+  rate and the sub-annual split then divides the stressed year; the two orders
+  coincide exactly at the first sub-period (which is why the first version of
+  that test proved nothing) and differ by 66 bp of themselves by the twelfth
+  month at age 85.
 - **IFRS 17, the variable fee approach** ([RFC-013](docs/rfc-013-vfa.md)):
   the measurement model for direct participating contracts, which is most of
   what this engine models — unit-linked with an AMC, universal life, the
