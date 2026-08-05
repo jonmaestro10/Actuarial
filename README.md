@@ -138,6 +138,31 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **The liability for incurred claims**
+  ([RFC-023](docs/rfc-023-incurred-claims.md)): the balance RFC-012, RFC-013
+  and RFC-017 each named as out of scope — what is owed for events that have
+  already happened, as against cover not yet given. **The LIC has no CSM**:
+  a claim that has been incurred has consumed the service it was paid for,
+  so adverse development on it goes *straight to profit* where the identical
+  news about future claims would be absorbed by the CSM and never appear.
+  Its invariant carries a term that is easy to drop — the opening balance is
+  not an expense of the run-off, it was recognised when the claims were
+  incurred — and a version without it is wrong by the whole liability, which
+  is asserted with `==` rather than a threshold. **The chain ladder is
+  additive exactly when the business mix holds still**: set out to show it
+  is not additive, measured a gap of exactly zero, and that located the real
+  condition — two patterns blended in a constant proportion *are* a third
+  pattern. Move the mix and it breaks, with the sign following the
+  direction: a growing long-tail book leaves the volume-weighted factors too
+  small and the combined reserve **understates by 40%**; a growing short-tail
+  book **overstates by 60%**. So "the reserve for the book" is not
+  well-defined independent of how the book was cut. On a triangle generated
+  by one pattern the estimator recovers its own ultimates to **1e-12**, and
+  the two averaging methods agree exactly — they can only disagree about a
+  mixture, where they part by **37.4%** of the reserve. And §59(b)'s
+  undiscounted expedient costs **exactly one year's interest at the boundary
+  it is drawn at** (4.00% on a 4% curve), rising to 9.2% on a book with a
+  2.3-year mean settlement term.
 - **Group and credit life** ([RFC-022](docs/rfc-022-group-and-credit-life.md)):
   PLAN §5.2's last unbuilt line, and two products that look like term
   assurance for opposite reasons. **The Rule of 78 is exactly right on a
