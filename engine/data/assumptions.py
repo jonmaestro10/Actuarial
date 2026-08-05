@@ -23,6 +23,7 @@ import numpy as np
 from engine.data.account import AccountBasis
 from engine.data.decrements import Decrements
 from engine.data.expenses import Commission, ExpenseScale, Expenses
+from engine.data.index_credit import IndexCredit
 from engine.data.mortality import MortalityBasis
 from engine.data.multistate import TransitionMatrix
 from engine.data.reinsurance import NoReinsurance, Treaty
@@ -200,7 +201,9 @@ class Assumptions:
                  reinsurance: "Treaty | None" = None,
                  tax: "TaxBasis | None" = None,
                  transitions: "TransitionMatrix | None" = None,
-                 account: "AccountBasis | None" = None):
+                 account: "AccountBasis | None" = None,
+                 index_credit: "IndexCredit | None" = None,
+                 glwb_fee: float = 0.0):
         if freq < 1 or 12 % freq:
             raise ValueError(f"payment frequency {freq} must divide 12")
         if not 0.0 <= lapse < 1.0:
@@ -208,7 +211,7 @@ class Assumptions:
         if not 0.0 <= amc < 1.0:
             raise ValueError(f"AMC {amc} outside [0, 1)")
         for name, fee in (("gmdb_fee", gmdb_fee), ("gmab_fee", gmab_fee),
-                          ("gmwb_fee", gmwb_fee)):
+                          ("gmwb_fee", gmwb_fee), ("glwb_fee", glwb_fee)):
             if not 0.0 <= fee < 1.0:
                 raise ValueError(f"{name} {fee} outside [0, 1)")
         if dynamic_lapse is not None and lapse not in (0.0, dynamic_lapse.base):
@@ -258,11 +261,20 @@ class Assumptions:
         #: unconfigured basis deducts nothing and credits nothing, so it is
         #: the identity and nothing that predates it moves.
         self.account = account if account is not None else AccountBasis()
+        #: Anniversary crediting rule for the fixed-indexed family.
+        #: Checked against the projection step here rather than at the
+        #: first anniversary, because a monthly design on an annual step
+        #: is a basis that cannot be run at all and should say so before
+        #: anything has been projected.
+        if index_credit is not None:
+            index_credit.check_freq(freq)
+        self.index_credit = index_credit
         self.crediting_rate = crediting_rate
         self.amc = amc
         self.gmdb_fee = gmdb_fee
         self.gmab_fee = gmab_fee
         self.gmwb_fee = gmwb_fee
+        self.glwb_fee = glwb_fee
         #: Payment periods per year. ``t`` counts periods, so at ``freq = 1``
         #: it counts years and every rate below is the annual one unchanged.
         self.freq = freq
@@ -286,6 +298,8 @@ class Assumptions:
             "tax": self.tax,
             "transitions": self.transitions,
             "account": self.account,
+            "index_credit": self.index_credit,
+            "glwb_fee": self.glwb_fee,
             "crediting_rate": self.crediting_rate,
             "amc": self.amc,
             "gmdb_fee": self.gmdb_fee,

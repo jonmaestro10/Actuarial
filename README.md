@@ -56,8 +56,9 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   interpreter).
 - Product templates: level-premium term assurance, single-premium deferred
   fixed annuity, payout and variable-payout annuities, unit-linked with GMxB
-  riders, income protection on the multi-state engine, and universal life
-  with a §7702 corridor and a no-lapse guarantee — each with golden tests.
+  riders, income protection on the multi-state engine, universal life with a
+  §7702 corridor and a no-lapse guarantee, and fixed-indexed annuities with a
+  lifetime withdrawal rider — each with golden tests.
 - Model points round-trip through Parquet (`pip install -e ".[data]"`).
 - **Stochastic executor**: `run_stochastic()` broadcasts model points
   against a `ScenarioSet` into `(time, model point, scenario)` slabs with
@@ -134,6 +135,26 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Index crediting and the lifetime guarantee**
+  ([RFC-011](docs/rfc-011-fixed-indexed.md)): PLAN §5.2's fixed-indexed
+  annuities, on RFC-010's account. An FIA credits at anniversaries and
+  nowhere else, floored at zero, so the account is a ratchet and the *path*
+  matters — a bad year costs the policyholder nothing, so the distribution of
+  what gets credited is not the distribution of what the index did.
+  Measured on **one shared index path**, so what separates the designs is the
+  design: an annual point-to-point cap of 6% delivers a **3.2%** mean credit;
+  a monthly-sum design with a 2% monthly cap advertises **24%** and delivers
+  **0.9%**, crediting nothing in four years out of five. The cap truncates the
+  good months and the bad months come through in full. Monthly averaging is
+  the quiet version — **10% less** at an identical cap, with no change to any
+  quoted number. A monthly design **cannot** run on annual scenarios and the
+  basis refuses one at construction. On the rider side, a GLWB differs from
+  the unit-linked GMWB by one word — *lifetime* — and it is worth more than
+  the rest: the account survives a median 22 years, so a projection cut off
+  at 20 captures **0.3%** of the guarantee and one cut off at 30 captures
+  63%. Every penny of it is in the tail. Letting a flat lapse run through the
+  withdrawal phase cuts the guarantee's cost **60%**, which is not prudence
+  but a different answer.
 - **Universal life and the account-value family**
   ([RFC-010](docs/rfc-010-universal-life.md)): PLAN §5.2's interest-sensitive
   products, and the first template whose *benefit* is a projected number
