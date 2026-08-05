@@ -138,6 +138,29 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Trading to a target** ([RFC-025](docs/rfc-025-rebalancing.md)): the
+  strategy RFC-021 scoped out, so the engine can now close RFC-020's
+  duration gap and not just measure it — and closing it turns out to be the
+  wrong thing to do. **A target fixed at inception is not a hedge**: a
+  liability's duration falls as it runs off (12.76 → 7.81 → 2.97 over
+  twenty years), so a fund holding the inception figure drifts to a gap of
+  **+9.8 years** while trading hard to stay put. Fix that and the fund hits
+  the liability's duration exactly — and is still barely hedged, because
+  **duration is a time and matching it only matches exposure when both
+  sides are worth the same amount**: assets of 1,777 at duration 7.81
+  against liabilities of 635 at the same 7.81 leave a dollar-duration gap
+  of **8,912**, nearly three times the liability's own. `SurplusTarget`
+  solves `D* = D_liab · L/A` — 2.79 years, not 7.81 — and collapses to plain
+  duration matching exactly when the fund holds no surplus. Measured over
+  every year from 3 to 20, mean surplus swing under ±200bp: **314.8 never
+  trading, 317.7 duration-matched** (worse on average, for 9,839 of
+  turnover), **19.0 surplus-matched** — 94% removed, and what is left is
+  RFC-020's convexity, positive in both directions. **A calendar does not
+  know when the market moved**: rebalancing every fifth period saves 59% of
+  the turnover and is *worse than never rebalancing at all*, while a
+  no-trade band holds the mean at 23.1 for 2.4% less turnover. And a wider
+  band can trade **more**, not less, because each trade is larger — measured,
+  because the obvious guess is wrong. Verified bitwise across 2,534 arrays.
 - **Actual against expected** ([RFC-024](docs/rfc-024-experience.md)): the
   edge RFC-012, RFC-015, RFC-017 and RFC-023 each named as their own — what
   turns a projection into a reporting run. It has two halves. The
