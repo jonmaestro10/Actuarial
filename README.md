@@ -138,6 +138,30 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Group and credit life** ([RFC-022](docs/rfc-022-group-and-credit-life.md)):
+  PLAN §5.2's last unbuilt line, and two products that look like term
+  assurance for opposite reasons. **The Rule of 78 is exactly right on a
+  product nobody sells**: at a zero interest rate the loan balance amortises
+  in a straight line and the sum-of-digits rule *is* the sum-at-risk refund
+  — the same expression, agreeing to one ulp. Every real loan runs off more
+  slowly than a straight line, so more risk is left than the rule admits and
+  the borrower is short-changed by up to **2.82%** of the whole premium at
+  12% nominal and **5.31%** at 24%, worst at period 21 and not at the
+  midpoint (asserted, then measured). The comparison usually made — against
+  pro rata, whose gap peaks at exactly `n/(4(n+1))`, **24.59%** — is the
+  wrong one: the order is `rule of 78 ≤ sum at risk ≤ pro rata`, so pro rata
+  over-refunds. On a thousand-policy book the three bases refund 123,141,
+  130,333 and 177,477 of a 700,000 premium; correcting to sum-at-risk costs
+  12% of net cash, switching to pro rata costs **91%**. And **an experience
+  refund is an option priced at zero**: a profit-sharing group scheme returns
+  a share of surplus and claws nothing back, so it costs
+  `share·E[max(surplus,0)]` where a best-estimate projection reports
+  `share·max(E[surplus],0)`. Priced at exactly expected claims the
+  deterministic answer is **0** and the real cost is **26,791** — computed
+  exactly from the binomial death count, no simulation. The option is worth
+  **352 per life on a 25-life scheme and 7 on a 5,000-life one**, so the
+  schemes with the weakest case for experience rating are the ones where
+  granting it costs the most.
 - **The asset side** ([RFC-021](docs/rfc-021-assets.md)): the piece RFC-020
   scoped out and five earlier RFCs each stopped at — a portfolio projected
   alongside the liability, accruing income, taking defaults, buying with
