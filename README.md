@@ -138,6 +138,25 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Embedded value and ALM** ([RFC-020](docs/rfc-020-embedded-value.md)):
+  PLAN §5.3's last line, and where four earlier RFCs converge — Solvency
+  II's missing market modules, the principle-based reserve's earned rates,
+  the with-profits estate, the FIA's unpriced hedge all stopped at the asset
+  side. Embedded value is where the option this engine keeps measuring gets
+  a **line in a report**: `TVOG = deterministic PVFP − mean stochastic
+  PVFP`. On a universal-life account with a 1% minimum crediting rate at 6%
+  volatility, the deterministic PVFP is **+7.78m** and the stochastic mean is
+  **−0.82m** — a time value of **8.60m, 110% of the whole deterministic
+  value**. A traditional EV reports a positive value of in-force where a
+  market-consistent one reports a negative one. Not a mis-calibration: it is
+  RFC-010's "strip of annual options" seen at portfolio scale. The ALM half
+  demonstrates that **matching duration does not immunise** — two portfolios
+  matching value and duration to machine precision (gaps of 1.8e-15 and
+  0.0) move in **opposite directions** under the same shift, because one
+  holds more convexity than the liability and one less. The second-order
+  claim took two attempts: a fixed ratio is wrong by 18% at 200bp because
+  the third derivative is in it too, so it is asserted as a convergence —
+  halving the shift divides the error by 3.12 at 400bp and 3.97 at 12.5bp.
 - **With-profits: asset shares, bonuses and the estate**
   ([RFC-019](docs/rfc-019-with-profits.md)): PLAN §5.2's "later" line, and
   the first template to use `@pool` for what RFC-001 introduced it for — that
