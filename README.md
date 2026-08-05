@@ -136,6 +136,28 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **US GAAP for long-duration contracts — LDTI**
+  ([RFC-015](docs/rfc-015-usgaap-ldti.md)): ASU 2018-12, and the same
+  economics as IFRS 17 measured a second way. Both insist that writing
+  profitable business produces no day-one profit; the three caps here — net
+  premium ratio at 100%, attributed fee ratio at 100%, reserve at zero — all
+  say what RFC-012's loss component says. Then they disagree about **time**,
+  and by a lot: a 25% deterioration discovered in year 8 of a fifteen-year
+  cohort puts **1,154.92** through LDTI's income (re-derive the net premium
+  ratio *from issue*, restate the whole history) against **272.46** through
+  IFRS 17's (adjust the CSM, release it over the coverage that remains) —
+  **4.24× apart on the identical event**. A 200 bp rate fall puts 11.4% of
+  the peak reserve into AOCI with net income unchanged to 1e-9, because the
+  liability accretes at the locked-in rate and is carried at the current one.
+  **DAC is insensitive to profitability** — a wildly profitable cohort and a
+  deeply onerous one amortize identically, asserted with `==` on the whole
+  array. And a market risk benefit's fair-value change goes **straight to
+  income**, where RFC-013's variable fee approach defers the identical move
+  and reaches profit at a tenth of the speed. Total income equals the
+  cohort's net cash to floating point, and that check caught three real
+  errors: acquisition costs charged twice, interest deducted after it was
+  already inside the change in reserve, and a capped cohort's day-one loss
+  never reaching income at all.
 - **Solvency II** ([RFC-014](docs/rfc-014-solvency2.md)): PLAN §5.3's second
   framework, and a different kind of overlay — **IFRS 17 reads a projection;
   Solvency II re-runs one**. The SCR is the fall in own funds under a shock,
