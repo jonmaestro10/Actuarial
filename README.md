@@ -138,6 +138,34 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **The formula browser, and the trace that is too short**
+  ([RFC-030](docs/rfc-030-model-docs.md)): PLAN §7's "auto-generated model
+  documentation from `@var` docstrings + dependency graph visualizer — this
+  replaces Prophet's formula browser". The graph half has existed since
+  RFC-001; this is the other half. **Markdown, not a viewer**: a browser you
+  have to launch is a thing you consult once you already suspect a problem,
+  where a generated file is diffable, reviewable in a pull request and
+  greppable — and §7's *first* bullet asks for git-native model versioning,
+  which a document only participates in if git can read it. Each variable's
+  entry carries its docstring, its declared assumption, its formula, and
+  what reads it, with the **time offset kept** rather than flattened,
+  because the recursion a projection is built on is invisible in the source
+  of any single variable. **The finding is about the generator itself**:
+  `Model.trace` runs three periods and its docstring says "a longer trace
+  cannot find new edges in a well-formed model". True of every template
+  shipped and **false in general** — a `@var` may branch on `t`, and `t` is
+  not model-point data, so a variable that first reaches back six periods at
+  `t = 6` is reported at the default trace length with **no dependencies at
+  all**. A document generated from it describes a recursion as a constant,
+  and nothing raises. The edge does not appear gradually either: invisible
+  at five periods, complete at six. So `document()` records the trace length
+  in the output and `graph_is_settled()` re-traces and compares, because a
+  document that does not say how far it looked is not evidence of anything —
+  the repo's own habit turned on the repo. And generating the documentation
+  put a number on a gap nobody had measured: **233 of 290 variables carry a
+  docstring, 80.3%**, six templates complete and the tail concentrated in
+  the older annual-frequency family at 50–57%. Asserted as a floor, so it
+  can only move up.
 - **Ring-fenced funds, and where the diversification goes**
   ([RFC-029](docs/rfc-029-ring-fenced.md)): the restriction RFC-027 named
   and scoped out. **It costs exactly what RFC-027 measured**: ring-fence
