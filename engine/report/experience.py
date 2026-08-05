@@ -316,18 +316,7 @@ class Attribution:
     """Where each variance lands under IFRS 17, and why."""
 
     def __init__(self, variances: dict, service: dict):
-        unknown = set(variances) - set(service)
-        if unknown:
-            raise ValueError(
-                f"{sorted(unknown)} have no service period; a variance "
-                "without one cannot be placed, and defaulting it would put "
-                "it in profit or in the CSM by accident"
-            )
-        bad = {k: v for k, v in service.items() if v not in SERVICE_PERIODS}
-        if bad:
-            raise ValueError(
-                f"service period must be one of {SERVICE_PERIODS}, got {bad}"
-            )
+        _check_service(variances, service)
         self.variances = dict(variances)
         self.service = dict(service)
 
@@ -362,6 +351,57 @@ class Attribution:
     def __repr__(self) -> str:
         return (f"Attribution(P&L={self.profit_or_loss:,.2f}, "
                 f"CSM={self.csm_adjustment:,.2f})")
+
+
+def _check_service(variances, service) -> None:
+    unknown = set(variances) - set(service)
+    if unknown:
+        raise ValueError(
+            f"{sorted(unknown)} have no service period; a variance without "
+            "one cannot be placed, and defaulting it would put it in profit "
+            "or in the CSM by accident"
+        )
+    bad = {k: v for k, v in service.items() if v not in SERVICE_PERIODS}
+    if bad:
+        raise ValueError(
+            f"service period must be one of {SERVICE_PERIODS}, got {bad}"
+        )
+
+
+def measurement_inputs(variances: dict, service: dict) -> dict:
+    """Split per-period variance series into what :func:`measure` takes.
+
+    ``variances`` maps a line to a per-period series, signed as the
+    fulfilment cashflows are: positive is a worsening. The result is
+    ``{"experience": ..., "changes_in_estimate": ...}``, ready to pass
+    straight to :func:`engine.report.ifrs17.measure` — current and past
+    service into the first, future service into the second.
+
+    The two do completely different things to a set of accounts. An adverse
+    400 in ``experience`` costs 400 of the profit of the period it lands
+    in; the same 400 in ``changes_in_estimate`` costs 50 there and thins
+    every future period's CSM release for the rest. **Total profit is
+    identical between the two** — the cash is the cash — which is what
+    makes the classification a question about *years* rather than about
+    money, and what makes it worth measuring rather than arguing about.
+    """
+    _check_service(variances, service)
+    if not variances:
+        raise ValueError("no variances to split")
+    lengths = {np.asarray(v, dtype=np.float64).ravel().size
+               for v in variances.values()}
+    if len(lengths) != 1:
+        raise ValueError(
+            f"variance series cover different numbers of periods: "
+            f"{sorted(lengths)}"
+        )
+    n = lengths.pop()
+    totals = {period: np.zeros(n, dtype=np.float64)
+              for period in SERVICE_PERIODS}
+    for name, series in variances.items():
+        totals[service[name]] += np.asarray(series, dtype=np.float64).ravel()
+    return {"experience": totals["current"],
+            "changes_in_estimate": totals["future"]}
 
 
 def allocate(variances: dict, service: dict) -> Attribution:
