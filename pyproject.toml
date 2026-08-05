@@ -11,11 +11,16 @@ dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "python-dateutil>=2.8"]
-api = ["fastapi>=0.110", "httpx>=0.27"]
+api = ["fastapi>=0.110", "httpx>=0.27", "uvicorn>=0.27"]
 data = ["pyarrow>=15"]
 
 [tool.setuptools.packages.find]
 include = ["engine*"]
+
+# RFC-032's page. Three text files that are part of the API surface, so
+# they ship with it — a wheel without them serves a 500 at /ui.
+[tool.setuptools.package-data]
+"engine.api.ui" = ["*.html", "*.js", "*.css"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

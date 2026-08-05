@@ -1,0 +1,311 @@
+"""A worked request for every template this deployment can actually run.
+
+The API is discoverable — :func:`engine.api.catalogue.catalogue` walks
+:mod:`engine.library` and every template it finds is offered — and that
+discoverability stops exactly at the point a caller has to write a request.
+``ModelPoint`` is an open attribute bag with no schema, so *which* fields a
+template needs is not something the catalogue can say, and a request missing
+one fails inside the projection with an ``AttributeError`` naming an
+attribute rather than an input.
+
+:func:`engine.core.modeldoc.modelpoint_fields` closes half of that: it reads
+the source and says which fields exist and which are optional. It cannot say
+what a *plausible* value is — that a term assurance is written at 40 for
+twenty-five years and not at 400 for three — and a demonstration needs the
+values, not just the names.
+
+So this module carries one worked example per template, and is honest about
+what that is: a specimen, not a recommendation. Nothing here is calibrated,
+none of it is anybody's assumption basis, and the only claims made for these
+numbers are that they parse, that they run, and that they exercise the
+template's shape. ``tests/test_api_demo.py`` asserts all three, and asserts
+that every example supplies every field its model requires — so an example
+cannot rot into a lie while the template moves under it.
+
+Five templates have no example, which is the more interesting half
+--------------------------------------------------------------------
+The catalogue offers fourteen and nine of them are here. The five missing
+are missing for one reason with two faces, and it is
+:mod:`engine.api.catalogue`'s documented limit rather than an oversight:
+
+* ``IncomeProtection`` needs a ``TransitionMatrix``,
+  ``FixedIndexedAnnuity`` an index-crediting rule, ``UnitLinkedGMDB`` and
+  ``UnitLinkedGMxB`` a bound scenario set. Each is an **object** on
+  :class:`~engine.data.assumptions.Assumptions`, and the request schema
+  carries scalars plus a mortality table, on purpose.
+* ``PayoutAnnuity`` and ``VariablePayoutAnnuity`` need a
+  :class:`~engine.data.basis.ValuationBasis`, and their model points carry
+  ``dob`` and ``valuation`` as :class:`datetime.date` objects. JSON has no
+  date, and :func:`~engine.data.modelpoints.from_dicts` does not coerce
+  one — a string arrives as a string and the template asks it for a year.
+
+:data:`UNAVAILABLE` records that, per template, so ``GET /models`` can say
+which of the fourteen a caller can actually run here and why the rest are
+not. A catalogue that lists a model it cannot run and does not say so is
+worse than one that lists nine.
+
+The way to run the other five is the same as it has always been: pass your
+own ``build`` to :func:`engine.api.app.create_app`, which is where an
+assumption basis richer than a scalar belongs.
+"""
+
+from __future__ import annotations
+
+import copy
+
+
+def _gompertz(ages: range, a: float = 0.0004, b: float = 1.09,
+              base: int = 30) -> dict:
+    """An illustrative mortality curve, ``q_x = a * b ** (x - base)``.
+
+    Written as a formula rather than as eighty magic numbers, because the
+    formula is the honest description: this is a smooth curve chosen to
+    rise the way a real one does, and it is not a published table, not
+    anybody's experience, and not fit for anything but a demonstration.
+    The same shape :mod:`tests.test_ifrs17` measures its end-to-end
+    overlay on.
+
+    Wide enough to cover any age the form is likely to be edited to.
+    :class:`~engine.data.assumptions.MortalityTable` clamps a lookup past
+    its last age rather than extrapolating, so a narrow table would answer
+    an edited model point quietly and wrongly.
+
+    Rounded to eight places, which is far finer than any table is quoted to
+    and keeps the specimen readable when it is shown as JSON in a form.
+
+    Keyed by a **string** age, because everything in this module is a JSON
+    request body and a JSON object has no other kind of key. Keeping the
+    Python integers would make the specimen a thing that had to be
+    converted before it was what it claims to be — and, since
+    :meth:`engine.api.store.RunStore.identify` fingerprints the request as
+    submitted, it would give the same example two identifiers depending on
+    whether it arrived over HTTP or was passed to the store directly.
+    :func:`~engine.api.catalogue.build_assumptions` takes either.
+    """
+    return {str(age): round(min(a * b ** (age - base), 1.0), 8)
+            for age in ages}
+
+
+#: The specimen table the life examples share.
+MORTALITY = _gompertz(range(18, 111))
+
+
+#: One runnable request per template, keyed by model name. Each is a
+#: complete body for ``POST /runs``: the demonstration loads one into the
+#: form and the caller edits it from there.
+#:
+#: ``outputs`` is named rather than left to default to every variable,
+#: because these are the series worth *looking* at — and for the mutual
+#: templates, the ones :mod:`engine.api.reports` needs to measure the block
+#: under IFRS 17. ``proj_len`` runs one period past the term so that the
+#: run-off is visible rather than implied by a truncated chart.
+EXAMPLES: dict = {
+    "TermLife": {
+        "note": "A block of level term assurance — 1,000 policies "
+                "written at 40 for 25 years and 400 at 55 for 15 — "
+                "priced at roughly a fifth margin over expected cost.",
+        "request": {
+            "model": "TermLife",
+            "proj_len": 26,
+            "outputs": ["pols_if", "premiums", "claims", "expenses",
+                        "initial_expenses", "pols_death", "pols_lapse"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.05, "interest": 0.03,
+                "expense_per_policy": 30.0,
+            },
+            "modelpoints": [
+                {"id": "T1", "age_at_entry": 40, "term_years": 25,
+                 "sum_assured": 250_000.0, "annual_premium": 750.0,
+                 "init_pols": 1_000.0},
+                {"id": "T2", "age_at_entry": 55, "term_years": 15,
+                 "sum_assured": 100_000.0, "annual_premium": 1_150.0,
+                 "init_pols": 400.0},
+            ],
+        },
+    },
+    "Endowment": {
+        "note": "A 20-year endowment maturing for its sum assured, showing "
+                "maturities dominating claims at the end of the term.",
+        "request": {
+            "model": "Endowment",
+            "proj_len": 21,
+            "outputs": ["pols_if", "premiums", "claims", "expenses",
+                        "maturities", "pols_death", "pols_lapse"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.04, "interest": 0.03,
+                "expense_per_policy": 40.0,
+            },
+            "modelpoints": [
+                {"id": "E1", "age_at_entry": 40, "term_years": 20,
+                 "sum_assured": 100_000.0, "annual_premium": 4_200.0,
+                 "init_pols": 1_000.0},
+            ],
+        },
+    },
+    "WholeLife": {
+        "note": "Whole life run to age 100 — the same template as the "
+                "endowment, with the maturity benefit switched off by term.",
+        "request": {
+            "model": "WholeLife",
+            "proj_len": 45,
+            "outputs": ["pols_if", "premiums", "claims", "expenses",
+                        "pols_death", "pols_lapse"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.03, "interest": 0.03,
+                "expense_per_policy": 35.0,
+            },
+            "modelpoints": [
+                {"id": "W1", "age_at_entry": 45, "term_years": 45,
+                 "sum_assured": 150_000.0, "annual_premium": 2_200.0,
+                 "init_pols": 1_000.0},
+            ],
+        },
+    },
+    "WithProfitsEndowment": {
+        "note": "A with-profits endowment on the pooled executor: asset "
+                "share, declared and terminal bonus, and the cost of "
+                "smoothing the payout.",
+        "request": {
+            "model": "WithProfitsEndowment",
+            "proj_len": 21,
+            "outputs": ["pols_if", "asset_share", "guaranteed_benefit",
+                        "maturity_payout", "declared_bonus", "terminal_bonus",
+                        "smoothing_cost"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.03, "interest": 0.045,
+                "expense_per_policy": 40.0,
+            },
+            "modelpoints": [
+                {"id": "P1", "age_at_entry": 40, "term_years": 20,
+                 "sum_assured": 100_000.0, "annual_premium": 3_800.0,
+                 "init_pols": 1_000.0},
+                {"id": "P2", "age_at_entry": 55, "term_years": 20,
+                 "sum_assured": 50_000.0, "annual_premium": 2_600.0,
+                 "init_pols": 400.0},
+            ],
+        },
+    },
+    "UniversalLife": {
+        "note": "Universal life: the account value roll-forward, its cost "
+                "of insurance, and the lapse that follows exhaustion.",
+        "request": {
+            "model": "UniversalLife",
+            "proj_len": 31,
+            "outputs": ["pols_if", "premiums", "account_value", "coi_due",
+                        "interest_credited", "death_claims", "surrenders",
+                        "cash_value"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.04, "interest": 0.035,
+                "crediting_rate": 0.03, "expense_per_policy": 60.0,
+            },
+            "modelpoints": [
+                {"id": "U1", "age_at_entry": 45, "term_years": 30,
+                 "face_amount": 250_000.0, "annual_premium": 3_000.0,
+                 "init_pols": 1_000.0},
+            ],
+        },
+    },
+    "FixedAnnuity": {
+        "note": "A single-premium deferred annuity: five years of "
+                "accumulation, then payments for life.",
+        "request": {
+            "model": "FixedAnnuity",
+            "proj_len": 40,
+            "outputs": ["pols_if", "payments", "death_benefits",
+                        "fund_eoy_per_pol"],
+            "assumptions": {
+                "mortality": 0.012, "interest": 0.03, "crediting_rate": 0.025,
+            },
+            "modelpoints": [
+                {"id": "A1", "age_at_entry": 60, "defer_years": 5,
+                 "premium": 100_000.0, "annual_payment": 8_000.0,
+                 "init_pols": 1_000.0},
+            ],
+        },
+    },
+    "GroupLife": {
+        "note": "A group scheme rated at 2.5 per mille of covered "
+                "salary, with the experience refund its rating period "
+                "earns back.",
+        "request": {
+            "model": "GroupLife",
+            "proj_len": 10,
+            "outputs": ["lives_if", "sum_assured", "premiums", "claims",
+                        "expenses", "insurer_result", "experience_refund"],
+            "assumptions": {
+                "mortality": 0.002, "lapse": 0.08, "interest": 0.03,
+                "expense_per_policy": 12.0,
+            },
+            "modelpoints": [
+                {"id": "G1", "age_at_entry": 38, "salary": 55_000.0,
+                 "salary_multiple": 3.0, "unit_rate": 2.5,
+                 "init_pols": 600.0},
+                {"id": "G2", "age_at_entry": 52, "salary": 80_000.0,
+                 "salary_multiple": 3.0, "unit_rate": 2.5,
+                 "init_pols": 250.0},
+            ],
+        },
+    },
+    "CreditLife": {
+        "note": "Single-premium decreasing term over a 20-year repayment "
+                "loan: cover follows the outstanding balance and the "
+                "premium is earned against it.",
+        "request": {
+            "model": "CreditLife",
+            "proj_len": 21,
+            "outputs": ["pols_if", "outstanding_balance", "claims",
+                        "earned_premium", "unearned_premium_reserve",
+                        "refunds", "net_cashflow"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.06, "interest": 0.03,
+                "expense_per_policy": 10.0,
+            },
+            "modelpoints": [
+                {"id": "C1", "age_at_entry": 40, "loan_principal": 200_000.0,
+                 "loan_rate": 0.06, "loan_term_years": 20,
+                 "single_premium": 5_000.0, "init_pols": 1_000.0},
+            ],
+        },
+    },
+}
+
+
+#: Why a catalogued template has no example here, by model name. Each entry
+#: is what a caller would hit if they wrote the request themselves, so it is
+#: a limit of the request schema rather than of the engine.
+UNAVAILABLE: dict = {
+    "IncomeProtection":
+        "needs a TransitionMatrix on the assumptions; the request schema "
+        "carries scalars and a mortality table, not multi-state transitions",
+    "FixedIndexedAnnuity":
+        "needs an index-crediting rule on the assumptions, and index "
+        "returns from a bound scenario set",
+    "UnitLinkedGMDB":
+        "needs a bound scenario set — the fund return is a scenario, and "
+        "the request schema has no scenario format",
+    "UnitLinkedGMxB":
+        "needs a bound scenario set for the fund return, and rider fees "
+        "beyond the scalars the request schema carries",
+    "PayoutAnnuity":
+        "needs a ValuationBasis, and its model points carry dob, valuation "
+        "and sex — JSON has no date and from_dicts does not coerce one",
+    "VariablePayoutAnnuity":
+        "needs a ValuationBasis and a scenario set for the pool return, and "
+        "its model points carry dates",
+}
+
+
+def example(name: str) -> dict | None:
+    """The worked example for ``name``, or ``None`` if there is not one.
+
+    A deep copy: the caller is going to edit it, and a demonstration that
+    mutated the specimen would give the next caller a different one.
+    """
+    found = EXAMPLES.get(name)
+    return copy.deepcopy(found) if found is not None else None
+
+
+def unavailable(name: str) -> str | None:
+    """Why ``name`` has no example, if it is a template known to need more
+    than the request schema carries."""
+    return UNAVAILABLE.get(name)

@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Actuarial engine — demonstration</title>
+<!-- Inline, so the page makes no request this server would answer with a
+     404 and no request it would have to leave the machine for. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='14'%3E%E2%88%91%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/ui/styles.css">
+</head>
+<body>
+
+<header>
+  <h1>Actuarial engine</h1>
+  <span class="sub" id="version">connecting…</span>
+  <span class="spacer"></span>
+  <span class="sub">everything here is a call to the REST API — <a href="/docs">/docs</a></span>
+</header>
+
+<div class="layout">
+  <aside>
+    <h2>Templates</h2>
+    <div id="models"></div>
+  </aside>
+
+  <main>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="run" aria-selected="true">Run</button>
+      <button role="tab" data-tab="results" aria-selected="false">Results</button>
+      <button role="tab" data-tab="model" aria-selected="false">Formulae</button>
+      <button role="tab" data-tab="report" aria-selected="false">IFRS 17</button>
+    </nav>
+
+    <!-- ── run ─────────────────────────────────────────────────────── -->
+    <section id="tab-run">
+      <div class="card">
+        <h3 id="run-title">Request</h3>
+        <p class="note" id="run-note">Pick a template on the left.</p>
+        <textarea id="request" spellcheck="false" wrap="off"
+          aria-label="Run request JSON"></textarea>
+        <div class="row" style="margin-top:10px">
+          <button class="action" id="submit">Submit run</button>
+          <button class="ghost" id="reset">Reset to example</button>
+          <button class="ghost" id="resubmit" title="POST the same request with its keys in reverse order">Resubmit, keys reordered</button>
+          <span class="grow"></span>
+          <span id="request-state" class="pill">no request</span>
+        </div>
+        <div id="request-error" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card" id="run-card" hidden>
+        <h3>Run</h3>
+        <p class="note">
+          <code>POST /runs</code> returns 202 and an identifier that is a
+          fingerprint of the inputs, not a ticket. The states below arrive on
+          <code>GET /events</code>.
+        </p>
+        <dl class="facts" id="run-facts"></dl>
+        <div class="log" id="events" style="margin-top:10px"></div>
+        <div id="idempotency" style="margin-top:10px"></div>
+      </div>
+    </section>
+
+    <!-- ── results ─────────────────────────────────────────────────── -->
+    <section id="tab-results" hidden>
+      <div class="card" id="results-empty">
+        <h3>No results yet</h3>
+        <p class="note">Submit a run and its output series appear here.</p>
+      </div>
+      <div class="card" id="results-card" hidden>
+        <h3>Aggregate by period</h3>
+        <p class="note">
+          Summed across the block, the way the executor that produced the run
+          sums. Click a series to hide it.
+        </p>
+        <div id="results-chart"></div>
+        <div class="legend" id="results-legend"></div>
+        <div class="readout" id="results-readout"></div>
+      </div>
+      <div class="card" id="results-table-card" hidden>
+        <h3>The numbers</h3>
+        <p class="note" id="results-digest-note"></p>
+        <div class="tablewrap"><table id="results-table"></table></div>
+      </div>
+    </section>
+
+    <!-- ── formulae ────────────────────────────────────────────────── -->
+    <section id="tab-model" hidden>
+      <div class="card">
+        <h3 id="model-title">Formula browser</h3>
+        <p class="note" id="model-doc"></p>
+        <dl class="facts" id="model-facts"></dl>
+      </div>
+
+      <div class="card">
+        <h3>Dependency graph</h3>
+        <p class="note">
+          Traced by <em>running</em> the model over the request on the Run tab,
+          so it is this run's graph. Solid edges are same-period; dashed ones
+          reach back a period, which is what makes a projection a projection.
+          Click a variable for its lineage.
+        </p>
+        <div class="row" style="margin-bottom:10px">
+          <button class="action" id="trace">Trace graph</button>
+          <label class="field">trace length
+            <input type="number" id="trace-length" value="3" min="1" max="60" style="width:70px">
+          </label>
+          <span class="grow"></span>
+          <span id="graph-state" class="pill">not traced</span>
+        </div>
+        <div id="graph-error"></div>
+        <div id="lineage" class="small muted" style="margin-bottom:8px"></div>
+        <div class="graphwrap" id="graph" hidden></div>
+      </div>
+
+      <div class="card">
+        <h3>Variables</h3>
+        <p class="note" id="vars-note">Every <code>@var</code>, its docstring, its assumption binding and its source.</p>
+        <div class="vars" id="vars"></div>
+      </div>
+    </section>
+
+    <!-- ── ifrs 17 ─────────────────────────────────────────────────── -->
+    <section id="tab-report" hidden>
+      <div class="card">
+        <h3>IFRS 17 — general measurement model</h3>
+        <p class="note">
+          An overlay, not a second calculator: it names series the run already
+          holds and re-derives no cashflow. Whole block as one group.
+        </p>
+        <div class="row">
+          <label class="field">inflows<input type="text" id="r-inflows" value="premiums" size="26"></label>
+          <label class="field">outflows<input type="text" id="r-outflows" value="claims, expenses" size="26"></label>
+          <label class="field">coverage units<input type="text" id="r-units" value="pols_if" size="18"></label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <label class="field">acquisition series<input type="text" id="r-acq" value="initial_expenses" size="18"></label>
+          <label class="field">risk adj. % of<input type="text" id="r-ra-of" value="claims" size="12"></label>
+          <label class="field">margin<input type="number" id="r-ra" value="0.05" step="0.01" style="width:80px"></label>
+          <label class="field">discount rate<input type="number" id="r-rate" value="0.03" step="0.005" style="width:90px"></label>
+          <label class="check" style="align-self:end;padding-bottom:5px">
+            <input type="checkbox" id="r-discount-units"> discount coverage units
+          </label>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="action" id="measure">Measure</button>
+          <span class="grow"></span>
+          <span id="report-state" class="pill">not measured</span>
+        </div>
+        <div id="report-error" style="margin-top:10px"></div>
+      </div>
+
+      <div id="report-out" hidden>
+        <div id="report-banner"></div>
+        <div class="card">
+          <h3>The contractual service margin, rolled forward</h3>
+          <p class="note">
+            Profit written into the CSM at inception and released as service is
+            provided — so writing profitable business reports nothing on day one.
+          </p>
+          <div id="csm-chart"></div>
+          <div class="legend" id="csm-legend"></div>
+          <div class="readout" id="csm-readout"></div>
+        </div>
+        <div class="card">
+          <h3>Insurance service result</h3>
+          <div id="pl-chart"></div>
+          <div class="legend" id="pl-legend"></div>
+          <div class="readout" id="pl-readout"></div>
+        </div>
+        <div class="card">
+          <h3>Statement</h3>
+          <div class="tablewrap"><table id="report-table"></table></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script src="/ui/app.js"></script>
+</body>
+</html>
