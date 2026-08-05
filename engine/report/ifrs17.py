@@ -444,6 +444,9 @@ def measure(group: Group, *, coverage: CoverageUnits,
     loss_recognised[0] = loss[0]
 
     loss_amortised = np.zeros(n)
+    #: What a loss component is made of, period by period — the amounts a
+    #: systematic allocation can set against it.
+    loss_basis = group.outflows + ra_release
 
     for t in range(n):
         accreted[t] = (csm[t] * accretion_factor[t] if csm_growth is None
@@ -482,13 +485,26 @@ def measure(group: Group, *, coverage: CoverageUnits,
 
         # B119: once a loss component exists, the period's expected claims
         # and risk adjustment release are split between it and insurance
-        # revenue on a systematic basis. Allocated here on the same coverage
-        # units that release the CSM — the two are halves of one allocation,
-        # and different drivers would leave a residue at run-off. Capped at
-        # what there is to allocate, since the split cannot make either side
-        # negative.
-        loss_amortised[t] = min(carried_loss * fractions[t],
-                                group.outflows[t] + ra_release[t])
+        # revenue on a systematic basis. The basis is the loss's own
+        # constituents — this period's service expenses as a share of all
+        # that remain — NOT the coverage units that release the CSM. The
+        # difference matters exactly when claims and coverage part company:
+        # allocated on coverage units and capped by the period's outflows, a
+        # group whose claims land early froze the unamortised remainder the
+        # day its outflows stopped, and carried a loss component forever
+        # inside a fulfilment-cashflow balance of zero. On its own basis the
+        # loss telescopes to nothing with the last service expense.
+        #
+        # The cap keeps the split from making either revenue or expenses
+        # negative. It now binds only when the loss exceeds every service
+        # expense left to allocate it against — an acquisition-driven loss,
+        # which B125's recovery mechanism would amortise and this module
+        # does not model (see the RFC's scope note).
+        remaining_basis = loss_basis[t:].sum()
+        loss_fraction = (
+            loss_basis[t] / remaining_basis if remaining_basis > 0.0 else 0.0
+        )
+        loss_amortised[t] = min(carried_loss * loss_fraction, loss_basis[t])
         loss[t + 1] = carried_loss - loss_amortised[t]
 
     # Revenue is what the group earned for service provided: the expected

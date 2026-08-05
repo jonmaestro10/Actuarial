@@ -441,3 +441,19 @@ def test_a_projected_term_assurance_measures_end_to_end():
     assert measured.reserve[-1] == pytest.approx(0.0, abs=1e-7)
     assert 0.0 < measured.net_premium_ratio < 1.0
     assert "NPR=" in repr(measured)
+
+
+def test_a_reserve_floored_for_the_whole_life_still_reconciles():
+    """Front-loaded benefits against level premiums: the unfloored reserve
+    is negative from the first period on, so the floor binds throughout,
+    the deficiency is recognised as incurred, and nothing is stranded —
+    income is simply the cash in each period."""
+    n = 12
+    benefits = np.zeros(n)
+    benefits[:4] = 2500.0
+    cohort = Cohort(np.full(n, 1000.0), benefits)
+    result = measure(cohort, locked_in=LOCKED)
+    assert (result.reserve == 0.0).all()
+    assert result.net_income[:4] == pytest.approx(np.full(4, -1500.0))
+    assert result.net_income[4:] == pytest.approx(np.full(n - 4, 1000.0))
+    assert result.total_income() == pytest.approx(net_cash(cohort), abs=1e-9)

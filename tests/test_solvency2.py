@@ -480,3 +480,36 @@ def test_a_full_standard_formula_position_on_a_projected_book():
     assert position.solvency_ratio > 0.0
     assert position.binding_lapse in LAPSE_SHOCKS
     assert 0.25 < position.diversification < 0.40
+
+
+def test_the_stress_passes_through_a_full_basis_and_a_monthly_projection():
+    """The stress machinery was built against the unisex ``MortalityTable``;
+    this holds it to the full ``MortalityBasis`` — sex-distinct rates and a
+    generational improvement scale — on a monthly step. The claims ratio
+    lands just under the 15% stress because stressed mortality removes
+    exposure earlier, which is the economics and not an error."""
+    from engine.data.mortality import MortalityBasis
+    from engine.core.runner import run as run_model
+    from engine.library.term_life import TermLife
+
+    rates = {"M": {a: min(0.0005 * 1.09 ** (a - 30), 1.0) for a in range(121)},
+             "F": {a: min(0.0004 * 1.09 ** (a - 30), 1.0) for a in range(121)}}
+    improvement = {"M": {a: 0.01 for a in range(121)},
+                   "F": {a: 0.012 for a in range(121)}}
+    basis = MortalityBasis(rates, improvement=improvement, year_start=2026)
+    scaled = ScaledMortality(basis, 1.15)
+    for sex in ("M", "F"):
+        assert scaled.q_at(60, sex=sex, year=2030) == pytest.approx(
+            1.15 * basis.q_at(60, sex=sex, year=2030), rel=1e-15)
+
+    assumptions = Assumptions(mortality=basis, lapse=0.05, interest=0.03,
+                              freq=12)
+    point = ModelPoint(id=1, age_at_entry=45, term_years=10,
+                       sum_assured=100_000.0, annual_premium=800.0,
+                       init_pols=1000.0, sex="F")
+    stressed = Stress.standard("mortality").apply(assumptions)
+    base = sum(run_model(TermLife, [point], assumptions, 121,
+                         outputs=["claims"]).aggregate("claims"))
+    shocked = sum(run_model(TermLife, [point], stressed, 121,
+                            outputs=["claims"]).aggregate("claims"))
+    assert 1.10 < shocked / base < 1.15

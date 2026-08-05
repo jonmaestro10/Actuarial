@@ -480,3 +480,42 @@ def test_the_bridge_needs_at_least_one_series():
 
     with pytest.raises(ValueError, match="at least one series"):
         Group.from_run(Empty(), inflows=[], outflows=["x"])
+
+
+def test_the_loss_component_finishes_with_the_last_service_expense():
+    """Found in review, after the module had merged: allocated on coverage
+    units and capped by each period's outflows, a group whose claims land
+    early froze the unamortised remainder the day its outflows stopped —
+    70% of the loss component carried forever inside a fulfilment-cashflow
+    balance of zero. The loss is made of service expenses, so it amortises
+    on its own basis: this period's share of all that remain."""
+    n = 10
+    out = np.zeros(n)
+    out[:3] = 800.0
+    group = Group(np.full(n, 150.0), out)
+    m = measure(group, coverage=flat_units(n), current=FLAT4)
+    assert m.onerous
+    assert m.loss_component[3] == pytest.approx(0.0, abs=1e-9)
+    assert (m.loss_component[3:] == 0.0).all()
+    assert m.total_profit() == pytest.approx(net_cash(group), abs=1e-9)
+
+
+def test_an_acquisition_driven_loss_beyond_all_service_expenses_is_the_b125_gap():
+    """The one strand that remains, and it is stated rather than silent.
+
+    A day-one loss larger than every service expense the group will ever
+    incur can only arise from acquisition cashflows, whose recovery is
+    B125's separate revenue gross-up — not modelled here (see the RFC).
+    The allocation takes everything it lawfully can: the residue equals
+    the loss less the whole allocatable basis, revenue never goes
+    negative, and total profit still reconciles to net cash.
+    """
+    n = 10
+    group = Group(np.full(n, 100.0), np.full(n, 20.0), acquisition=2000.0)
+    m = measure(group, coverage=flat_units(n), current=FLAT4)
+    basis = group.outflows.sum() + m.risk_adjustment_release.sum()
+    assert m.loss_component[0] > basis
+    assert m.loss_component[-1] == pytest.approx(
+        m.loss_component[0] - basis, rel=1e-9)
+    assert (m.insurance_revenue >= -1e-9).all()
+    assert m.total_profit() == pytest.approx(net_cash(group), abs=1e-8)
