@@ -138,6 +138,40 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Counterparty default, and the cliff at seven per cent**
+  ([RFC-028](docs/rfc-028-counterparty.md)): the last module PLAN §5.3
+  names, and the only one in the Basic SCR that is neither a scenario nor a
+  factor table — it builds an explicit loss distribution and reads capital
+  off its standard deviation. Which is why it behaves as it does.
+  **Article 200's lower band boundary is a cliff**: the upper one is
+  continuous by construction (5 × 20% = 100% of the loss-given-default,
+  exactly the third band), but `3 × 7%` against `5 × 7%` moves the
+  requirement by **14 percentage points of ΣLGD** — 66.7% — for an
+  arbitrarily small change. Walked across on a real book: thirty-seven
+  equal counterparties give σ/ΣLGD of 7.00091% and capital **350.05**; a
+  thirty-eighth identical counterparty gives 6.99728% and **209.92**. Same
+  total exposure, same credit quality, 0.0036 percentage points of standard
+  deviation, and **40% of the requirement gone** — of which diversification
+  is 0.11 and the multiplier is 140.02. RFC-026 named a 10 basis point
+  discontinuity in the spread table as a defect; this one is 140 times
+  larger and load-bearing. **The third band is calibrated to one unrated
+  counterparty**: a single 4.2% name sits at σ/ΣLGD of **20.0589%**,
+  clearing the twenty per cent boundary by six hundredths of a percentage
+  point, so the capital is the whole exposure — and splitting it in two
+  drops it into the 5σ band at 16.4% less for identical exposure. **A
+  solvency ratio *is* a credit quality step**, which only became checkable
+  once RFC-026 had transcribed Article 186(2): two independently
+  transcribed tables from different sections agree exactly on all five
+  ratios they share — 196%/175%/122%/95%/75% are steps 1/2/3/4/5-6 in both
+  — a structure neither table states. The variance splits cleanly and the
+  split *is* the book: `V_inter` is identical to the last digit whether the
+  thousand is held against one name or fifty, and the whole of the module's
+  diversification lives in `V_intra`, falling from 60.1% of the variance to
+  2.9%. Two more sharp edges: a receivable crossing three months costs
+  **six times** as much (Art 202), and a heavily collateralised reinsurer
+  is treated as **worse** at 1.8× the loss-given-default (Art 192(2)),
+  because the collateral its other cedants hold is what will not be
+  available to this one.
 - **The adjustment, and the minus sign in front of Article 206**
   ([RFC-027](docs/rfc-027-adjustment.md)): the layer above RFC-014's
   stresses and RFC-026's market risk — Annex IV's aggregation into a Basic
