@@ -56,7 +56,8 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   (`scripts/benchmark.py`: 100k policies × 60 years in seconds, ~40× the
   interpreter).
 - Product templates: term assurance, whole life and endowment (with net,
-  gross, Zillmerised and full-preliminary-term reserves), single-premium
+  gross, Zillmerised and full-preliminary-term reserves), with-profits
+  endowment on the pooled executor, single-premium
   deferred fixed annuity, payout and variable-payout annuities, unit-linked
   with GMxB riders, income protection on the multi-state engine, universal
   life with a §7702 corridor and a no-lapse guarantee, and fixed-indexed
@@ -137,6 +138,27 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **With-profits: asset shares, bonuses and the estate**
+  ([RFC-019](docs/rfc-019-with-profits.md)): PLAN §5.2's "later" line, and
+  the first template to use `@pool` for what RFC-001 introduced it for — that
+  decorator was written for "a variable-payment adjustment, **a with-profits
+  bonus or an asset share**", and only the first had ever exercised it. Every
+  other template computes what the office *owes*; this one computes what each
+  policy has **earned**. The mortality profit is the pooled term and not
+  incidentally so: when a policyholder dies the fund pays the guarantee and
+  releases that life's asset share, and the difference falls on everybody
+  else — a transfer *between* policies, which a per-policy formula cannot
+  see. Its sign tracks one crossing nothing in the code knows about: −202 per
+  policy at duration 10 (the guarantee is dear), +176 at duration 24 (the
+  asset share has overtaken it). **A bonus declaration is cheapest at issue
+  and dearest at maturity**, which is the opposite of the first guess:
+  declaring 2% costs the *present value* of raising every future payment, so
+  31% of its nominal amount at duration 0 and 95% at duration 24 — three
+  times as much for the identical announcement. A real bug found on the way:
+  masking the asset share with `in_term` zeroed it at exactly the date the
+  maturity payout is struck against, so every policy silently got its
+  guarantee and **no terminal bonus at all** — the same lesson
+  `IncomeProtection` records as "the chain outlives the contract".
 - **Policy reserves, whole life and endowment**
   ([RFC-018](docs/rfc-018-reserves.md)): PLAN §5.2's *first* bullet, and a
   structural gap as well as a product one — every template here projects
