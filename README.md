@@ -138,6 +138,42 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **The adjustment, and the minus sign in front of Article 206**
+  ([RFC-027](docs/rfc-027-adjustment.md)): the layer above RFC-014's
+  stresses and RFC-026's market risk — Annex IV's aggregation into a Basic
+  SCR, Article 204's operational charge, and the loss-absorbing capacity of
+  technical provisions and deferred tax that RFC-014 scoped out. So
+  `SCR = BSCR + SCR_op + Adj` is finally written down. **The adjustment is
+  negative**, because Article 103 *sums* it — and Article 206(1)'s leading
+  minus does not survive machine reading: in the consolidated PDF's text
+  layer it arrives as the same mojibake `Ä` that stands for the minus
+  inside `BSCR − nBSCR`, so an extraction that resolves one and not the
+  other yields a formula that looks complete and is wrong. It had to be
+  confirmed against the original OJ typesetting. Drop it and nothing
+  raises: the SCR is wrong by twice the adjustment, in the direction nobody
+  investigates. **Absorption does not survive re-aggregation**: Article
+  206(2) recomputes each module net and then re-aggregates, so on a fund
+  whose modules give up **210** the Basic SCR falls by only **165.24** —
+  21.3% eaten by the aggregation, RFC-026's Article 164(3) finding one
+  level up, and zero when only one module carries risk. **The two halves
+  compete**: Article 207(1)'s loss is `BSCR + Adj_TP + SCR_op` and `Adj_TP`
+  is negative, so at a 25% tax rate each unit of with-profits absorption
+  buys exactly **0.75** of SCR — measured at 0%, 10%, 19%, 25% and 40% and
+  exactly `1 − t` every time. **Two things sit outside the aggregation and
+  it shows**: Article 203's intangible charge is added outside the square
+  root, so 100 of it adds 100 to the Basic SCR where 100 of health risk
+  adds 45.49 — the same capital at **2.2 times** the price; and Article
+  204(1)'s `0.25·Exp_ul` is added outside the 30% cap, so a Basic SCR of 20
+  caps the charge at 6 and 400 of unit-linked expenses take it to **106**.
+  That cap also makes operational risk a function of the risks it is
+  supposed to be separate from — de-risk the investments and an unchanged
+  operational exposure charges less. And **a composite gets a fifth of its
+  capital from two zeros**: Annex IV says a life book and a non-life book
+  at the same insurer share no risk at all, worth **19.3%** against running
+  them apart, and 34.55 more if those cells took the 0.25 every other cell
+  takes. Article 207(2a)'s "probable future taxable profit" demonstration
+  is worth a **quarter of the requirement** (608.54 against 456.41) and has
+  no arithmetic in it, so it is an input.
 - **Solvency II market risk** ([RFC-026](docs/rfc-026-market-risk.md)):
   PLAN §5.3's last unbuilt line, blocked twice on nothing but reaching
   `eur-lex.europa.eu` — which serves a JavaScript challenge to anything
