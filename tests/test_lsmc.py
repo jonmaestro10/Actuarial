@@ -197,8 +197,9 @@ def test_the_residual_tells_you_nothing_about_the_surface():
     error at some settings and under-states it at others.
 
     The dangerous direction is the flattering one, and it is pinned below:
-    at one inner scenario per node the residual is the **smallest** of any
-    setting while the surface is the **worst**, by a factor of eight.
+    at degree 3, two inner scenarios per node give a **lower** residual than
+    five — so an in-sample reading picks them as the better fit — while the
+    surface is five times further out.
     """
     exact = reference(400)
     measured = {}

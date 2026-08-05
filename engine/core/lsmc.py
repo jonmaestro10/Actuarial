@@ -84,13 +84,12 @@ class ProxyFit:
     settings on the GMxB block in RFC-007 the ratio ran from 0.11 to 1.84,
     with no pattern.
 
-    The dangerous direction is the flattering one. At one inner scenario per
-    node the residual is the *smallest* of any setting and the surface is
-    the *worst* — an in-sample statistic looking excellent while the answer
-    is eight times further out than it appears. That is the failure mode
-    PLAN §4.4's "with error estimates" exists to prevent, and it is why
-    :func:`proxy_error` measures against a reference rather than against the
-    fit.
+    The dangerous direction is the flattering one. At degree 3, two inner
+    scenarios per node give a *lower* residual than five — so an in-sample
+    reading picks them as the better fit — while the resulting surface is
+    five times further out. That is the failure mode PLAN §4.4's "with error
+    estimates" exists to prevent, and it is why :func:`proxy_error` measures
+    against a reference rather than against the fit.
     """
 
     coefficients: np.ndarray
