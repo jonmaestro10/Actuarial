@@ -132,6 +132,21 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Scale-out across cores** ([RFC-008](docs/rfc-008-scale-out.md)): the
+  last Phase 2 exit. Sharding is safe for the same reason chunking is —
+  model points are independent — so per-policy results are **bitwise**
+  identical for any worker count, and a pooled model is *refused* rather
+  than sharded into a reduction over the wrong population. The measurement
+  decided the design: shipping per-policy series back is a **loss at every
+  size** (0.25× at 100k policies, and worse as the block grows) because the
+  results are the payload — 200 MB through pipes against 1.4 s of
+  arithmetic. Reducing *in the worker*, which is what PLAN §4.3's "results
+  reduce as streaming aggregations" actually asks for, is **2.5× on four
+  cores**. One caveat stated rather than discovered: block totals regroup
+  the summation per shard, so a worker-count change can move a total by an
+  ulp and belongs recorded beside the run id. Cross-machine dispatch is not
+  here; the sharding, the safety argument and the reduction are what it
+  would need first.
 - **LSMC proxies, with the error estimate that licenses them**
   ([RFC-007](docs/rfc-007-lsmc.md)): PLAN §4.4 admits proxy models "as an
   optional, clearly-labeled acceleration with error estimates", so this
@@ -294,7 +309,7 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   different run ids and the same results digest, which is the
   bitwise-equivalence claim stated as an audit trail.
 
-Layer 0 in PLAN §5.1 is complete, as are the Phase 2 exit criteria except
-multi-node scale-out. Next: kernel fusion (the graph and the forward loop
-are in place; nothing is compiled yet), reductions beyond a sum for `@pool`,
-cross-validated proxy bases, and multi-node scale-out.
+Layer 0 in PLAN §5.1 is complete, and so are the Phase 2 exit criteria.
+Next: kernel fusion (the graph and the forward loop are in place; nothing is
+compiled yet), cross-machine dispatch on top of the sharding, reductions
+beyond a sum for `@pool`, and cross-validated proxy bases.
