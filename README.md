@@ -55,11 +55,12 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   model code runs per policy or across a whole batch
   (`scripts/benchmark.py`: 100k policies × 60 years in seconds, ~40× the
   interpreter).
-- Product templates: level-premium term assurance, single-premium deferred
-  fixed annuity, payout and variable-payout annuities, unit-linked with GMxB
-  riders, income protection on the multi-state engine, universal life with a
-  §7702 corridor and a no-lapse guarantee, and fixed-indexed annuities with a
-  lifetime withdrawal rider — each with golden tests.
+- Product templates: term assurance, whole life and endowment (with net,
+  gross, Zillmerised and full-preliminary-term reserves), single-premium
+  deferred fixed annuity, payout and variable-payout annuities, unit-linked
+  with GMxB riders, income protection on the multi-state engine, universal
+  life with a §7702 corridor and a no-lapse guarantee, and fixed-indexed
+  annuities with a lifetime withdrawal rider — each with golden tests.
 - Model points round-trip through Parquet (`pip install -e ".[data]"`).
 - **Stochastic executor**: `run_stochastic()` broadcasts model points
   against a `ScenarioSet` into `(time, model point, scenario)` slabs with
@@ -136,6 +137,29 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Policy reserves, whole life and endowment**
+  ([RFC-018](docs/rfc-018-reserves.md)): PLAN §5.2's *first* bullet, and a
+  structural gap as well as a product one — every template here projects
+  cashflows and lets the overlays build a liability, but a traditional
+  assurance is valued on a **reserve**, which is a property of the contract
+  rather than of a reporting framework. Almost everything in it is an
+  **exact identity**: prospective equals retrospective; an endowment *is* a
+  term assurance plus a pure endowment (`==` on floats); the reserve is
+  self-financing under `(V+P)(1+i) = qS + pV'` to 1e-8. And the two layers
+  check each other — the closed-form premium and the year-by-year
+  projection share no code, yet the projected PV of premiums equals that of
+  benefits to nine significant figures. **What the net premium reserve
+  leaves out is expenses**: on the same contract it opens at exactly 0.00
+  while the gross premium reserve opens at −3,178, and the sign runs the
+  *other* way from the obvious guess — charging more makes the gross reserve
+  more negative, because the valuation capitalises the profit the net basis
+  refuses to see (−737 at a 5% loading, −17,828 at 40%). The strain is the
+  gap between the bases, not the sign of either. Zillmer and full
+  preliminary term rank `FPT ≤ Zillmer ≤ net` at every duration and converge
+  on the same maturity value. A real bug found on the way: the retrospective
+  reserve subtracted an endowment's maturity at the duration it *falls due*
+  rather than after, so the two definitions disagreed by exactly the sum
+  assured — invisible on the term assurance the first smoke test used.
 - **IFRS 17, the premium allocation approach** ([RFC-017](docs/rfc-017-paa.md)):
   the last of the three models §5.3 names, so **GMM, VFA and PAA are now all
   in place**. It is the only one that is a *simplification* rather than a
