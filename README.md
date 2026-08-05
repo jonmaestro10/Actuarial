@@ -33,6 +33,18 @@ result = run(TermLife, modelpoints, assumptions, proj_len=30,
 result.aggregate("claims")   # deterministic per-time-step totals
 ```
 
+Or look at it running ([RFC-032](docs/rfc-032-demo-ui.md)):
+
+```bash
+pip install -e ".[api]"
+python scripts/demo.py          # then open http://127.0.0.1:8000/ui
+```
+
+A worked request per template, the run's states as they arrive on the event
+stream, the aggregates charted, the dependency graph with a variable's
+lineage on click, and an IFRS 17 measurement of the block. Everything on the
+page is a call to the REST API at `/docs`.
+
 ## Layout
 
 | Path | Contents |
@@ -41,8 +53,9 @@ result.aggregate("claims")   # deterministic per-time-step totals
 | `engine/data/` | Assumptions, mortality basis, yield curves, assets, model points, scenarios |
 | `engine/library/` | Product templates — each ships with golden tests |
 | `engine/report/` | Reporting overlays (products × frameworks) |
+| `engine/api/` | REST API, worked example requests, and the `/ui` demonstration |
 | `tests/` | DSL mechanics, closed-form golden tests, reference reconciliation |
-| `scripts/` | Benchmarks and the VPLA parity harness |
+| `scripts/` | Benchmarks, the VPLA parity harness, and the demo server |
 | `docs/` | RFCs, design notes, and prior-art reviews |
 
 ## Status
@@ -138,6 +151,46 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **A page for the engine, and what a catalogue owes a caller**
+  ([RFC-032](docs/rfc-032-demo-ui.md)): `python scripts/demo.py` serves the
+  API and a demonstration at `/ui` — submit a run and watch its states
+  arrive on the event stream, chart the aggregates, browse the formulae with
+  the dependency graph, measure the block under IFRS 17. No build step, no
+  package manager, no CDN: the charts are hand-drawn SVG, because this repo
+  has one runtime dependency and a JavaScript toolchain would be the largest
+  thing in the tree. A test reads the URLs out of the page's source and
+  asserts each one is a route the app serves, so nothing on it reaches
+  around the API. **The page was the easy half.** `GET /models` offered
+  fourteen templates and nine of them could not be run — each needing an
+  assumption *object* the request schema deliberately does not carry — and
+  said nothing about it; it now carries `example` and `unavailable` per
+  template, and a test submits every unavailable one and **requires it to
+  fail**, because a note claiming a template needs a transition matrix is
+  worth nothing if the template in fact runs. Which fields a template needs
+  from its model points had no answer anywhere in the engine, so
+  `modelpoint_fields` **parses** the source rather than tracing it — a field
+  read only under `if t == 9` is invisible to a three-period trace — and
+  reads required against optional off the code (`self.mp.x` has nowhere to
+  fall back to; `getattr(self.mp, "x", 0)` says in its own third argument
+  that it may be absent). It also reports when it *cannot* see: a read whose
+  name is computed sets `reflective`, so the list is stated as a lower bound
+  instead of implying it is the answer. Eight worked example requests ship
+  with four tests over them, one of which found this: **a JSON object key is
+  a string**, so a mortality table keyed by integer age came back keyed by
+  strings, and since a run is identified by a fingerprint of its request,
+  the same example gave two identifiers depending on whether it arrived over
+  HTTP or was handed to the store — the same question, computed twice.
+  `POST /runs/{id}/reports/ifrs17` measures a completed run's block as one
+  group, naming series the run already holds so **no cashflow crosses the
+  wire**, and returns total profit against undiscounted net cash as the
+  check on itself. Building it surfaced a trap worth the RFC on its own: a
+  `YieldCurve` defaults to twelve periods a year and `Assumptions` to one,
+  so a curve built without looking at the run accretes **a month of interest
+  per annual period** — the roll-forward still balances, the closing CSM is
+  still exactly zero, and every number in between is wrong. And
+  `?aggregate=true` returns the executor's own block totals, because the two
+  executors reduce differently and a client adding up the per-model-point
+  arrays itself gets a number close to the engine's rather than equal to it.
 - **The REST API, and what happens to a float on the way out**
   ([RFC-031](docs/rfc-031-rest-api.md)): PLAN §6's last unbuilt line — run
   submission, status, results retrieval and a webhook/event stream — on

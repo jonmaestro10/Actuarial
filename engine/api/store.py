@@ -69,6 +69,16 @@ class Run:
     state: RunState = RunState.QUEUED
     record: RunRecord | None = None
     arrays: dict | None = None
+    #: The executor's own result object, kept so that anything reading this
+    #: run afterwards aggregates the way the executor that produced it
+    #: aggregates. The two differ: the interpreted executor sums with
+    #: :func:`~engine.core.vector.stable_sum` and the vectorized one with
+    #: NumPy's pairwise reduction, so re-summing ``arrays`` here would give
+    #: a number that is *close to* rather than *equal to* the one the run
+    #: reported. In a repo whose accuracy claims are bitwise that is not a
+    #: rounding difference, it is a second answer. It costs no memory worth
+    #: counting — the arrays it holds are the arrays already held above.
+    result: object | None = None
     error: str | None = None
     submitted_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -166,6 +176,7 @@ class RunStore:
             outputs = record.outputs
             run.arrays = {name: np.asarray(result.array(name))
                           for name in outputs}
+            run.result = result
             run.record = record
             self.registry.add(record)
             run.state = RunState.SUCCEEDED

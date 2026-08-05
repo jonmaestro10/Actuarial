@@ -41,11 +41,108 @@ not evidence of anything.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import textwrap
 from dataclasses import dataclass
 
 from engine.core.graph import DependencyGraph
+
+
+@dataclass(frozen=True)
+class ModelPointFields:
+    """What a template reads from its model points.
+
+    ``required`` is read directly and has nowhere to fall back to;
+    ``optional`` is read through a ``getattr`` that supplies a default, so
+    a model point without it still runs. ``reflective`` says the scan
+    found a read it could not resolve to a name, and therefore that
+    ``required`` is a lower bound rather than the answer.
+    """
+
+    required: tuple = ()
+    optional: tuple = ()
+    reflective: bool = False
+
+    def __iter__(self):
+        """Iterating gives the required fields — the common question."""
+        return iter(self.required)
+
+
+def _mp_read(node) -> bool:
+    """Is this expression ``self.mp``?"""
+    return (isinstance(node, ast.Attribute) and node.attr == "mp"
+            and isinstance(node.value, ast.Name) and node.value.id == "self")
+
+
+def modelpoint_fields(model_cls) -> ModelPointFields:
+    """Which model-point fields a template reads, found by reading it.
+
+    The dependency graph answers what a variable reads from *the model*;
+    this answers what the model reads from *its data*, which is the other
+    half of the question a formula browser is asked and the one a API
+    caller needs before it can supply a model point at all. Nothing else in
+    the engine knows: :class:`~engine.data.modelpoints.ModelPoint` is an
+    open attribute bag with no schema, so a missing field surfaces as an
+    ``AttributeError`` from inside a projection rather than as a rejected
+    input.
+
+    Found by parsing rather than by running, deliberately — the opposite of
+    :meth:`~engine.core.model.Model.trace`. A trace discovers the fields
+    *this* model point led the code to read, so a field wanted only on a
+    branch the specimen did not take is invisible to it. The source has
+    every branch in it.
+
+    Required against optional is the distinction that makes the answer
+    usable, and the source carries it: ``self.mp.sum_assured`` has nowhere
+    to fall back to, while ``getattr(self.mp, "sex", None)`` says in its
+    own third argument that the field may be absent. Every template in the
+    library uses the second form for its options, so the split is read off
+    the code rather than curated.
+
+    What parsing cannot see is the read whose *name* is computed:
+    :class:`~engine.library.unit_linked.UnitLinkedGMxB` collects its rider
+    parameters out of ``self.mp.__dict__``, and no static scan can say what
+    is in there. That sets ``reflective``, which is the scan reporting the
+    limit of what it knows rather than a caller having to discover it from
+    a projection that fails.
+    """
+    required: set = set()
+    optional: set = set()
+    reflective = False
+    for klass in model_cls.__mro__:
+        try:
+            source = inspect.getsource(klass)
+        except (OSError, TypeError):  # pragma: no cover - built without source
+            continue
+        try:
+            tree = ast.parse(textwrap.dedent(source))
+        except (SyntaxError, IndentationError):  # pragma: no cover - defensive
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and _mp_read(node.value):
+                if node.attr.startswith("__"):
+                    # ``self.mp.__dict__``: the whole bag, by name unknown.
+                    reflective = True
+                else:
+                    required.add(node.attr)
+            elif (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "getattr"
+                    and node.args and _mp_read(node.args[0])):
+                name = node.args[1] if len(node.args) > 1 else None
+                if not isinstance(name, ast.Constant) \
+                        or not isinstance(name.value, str):
+                    reflective = True
+                elif len(node.args) > 2:
+                    optional.add(name.value)
+                else:
+                    required.add(name.value)
+    return ModelPointFields(
+        required=tuple(sorted(required)),
+        optional=tuple(sorted(optional - required)),
+        reflective=reflective,
+    )
 
 
 def _source_of(fn) -> str:
