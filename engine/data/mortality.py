@@ -84,6 +84,32 @@ def _depth(d) -> int:
     return 1 + max(_depth(v) for v in d.values())
 
 
+def split_annual(q, sub_period, freq: int, method: str = "udd"):
+    """Split an annual ``q`` into one of ``freq`` equal sub-periods of a
+    year of age.
+
+    Extracted from :meth:`MortalityBasis.periodic_rate` so that anything
+    holding a *stressed* annual rate — a Solvency II mortality stress, say —
+    splits it exactly the way the basis does, rather than carrying a second
+    copy of the arithmetic that could drift from this one.
+
+    - ``"udd"``: uniform distribution of deaths, so the conditional rate
+      rises through the year: ``(q/m) / (1 - (k/m) q)``.
+    - ``"constant_force"``: a constant hazard, ``1 - (1 - q)^(1/m)``.
+
+    Both telescope back exactly to the annual survival over a full year.
+    """
+    if method not in ("udd", "constant_force"):
+        raise ValueError(
+            f"method must be 'udd' or 'constant_force', got {method!r}"
+        )
+    if freq < 1:
+        raise ValueError(f"freq {freq} must be >= 1")
+    if method == "constant_force":
+        return 1.0 - (1.0 - q) ** (1.0 / freq)
+    return (q / freq) / (1.0 - (np.asarray(sub_period) / freq) * q)
+
+
 class MortalityBasis:
     """Mortality rates by age, sex and calendar year, with fractional ages.
 
@@ -520,16 +546,8 @@ class MortalityBasis:
         denominator is bounded below by ``1/m``, and at ``q = 1`` the last
         sub-period rate is exactly 1.
         """
-        if method not in ("udd", "constant_force"):
-            raise ValueError(
-                f"method must be 'udd' or 'constant_force', got {method!r}"
-            )
-        if freq < 1:
-            raise ValueError(f"freq {freq} must be >= 1")
         q = self.q_at(ages, sex=sex, year=year, duration=duration)
-        if method == "constant_force":
-            return 1.0 - (1.0 - q) ** (1.0 / freq)
-        return (q / freq) / (1.0 - (np.asarray(sub_period) / freq) * q)
+        return split_annual(q, sub_period, freq, method=method)
 
     def sex_indices(self, sex) -> np.ndarray:
         codes = np.atleast_1d(np.asarray(sex, dtype=object))

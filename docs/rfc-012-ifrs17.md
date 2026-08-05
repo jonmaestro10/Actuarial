@@ -67,6 +67,24 @@ service expenses by the same amount and cannot touch the service result —
 the loss was recognised when it arose, and earning it a second time through
 revenue would double count it.
 
+The loss amortises on **its own basis** — each period's service expenses as
+a share of all that remain — not on the coverage units that release the CSM.
+The first implementation used the coverage units, capped by each period's
+outflows, and a post-merge review found what that does when claims and
+coverage part company: a group whose claims land early froze the unamortised
+remainder the day its outflows stopped, carrying 70% of the loss component
+forever inside a fulfilment-cashflow balance of zero. On its own basis the
+loss telescopes to nothing with the last service expense. Profit was never
+affected — the allocation nets out of the service result — which is exactly
+why the reconciliation invariant could not catch this one and a targeted
+probe was needed.
+
+One strand remains, and it is stated rather than silent: a day-one loss
+larger than *every* service expense the group will ever incur can only come
+from acquisition cashflows, whose recovery is B125's separate revenue
+gross-up — see the scope note below. The allocation takes everything it
+lawfully can and the residue equals the un-allocatable excess.
+
 ## The finding: grouping moves more than a year's profit
 
 IFRS 17 requires contracts to be grouped by profitability, and the effect is
@@ -156,3 +174,9 @@ Each of these is its own RFC rather than a flag on this one:
 - **Transition** — full retrospective, modified retrospective, fair value.
 - **Subsequent recognition of new contracts into an existing group**, which
   needs a weighted-average locked-in rate.
+- **B125's acquisition-cost gross-up** — the portion of premium that
+  recovers acquisition cashflows, recognised in revenue with the same amount
+  in expenses. Its absence means an acquisition-driven loss component larger
+  than all future service expenses cannot fully amortise here; the residue
+  is bounded, tested, and harmless to profit, but a group with that shape
+  wants the gross-up modelled first.
