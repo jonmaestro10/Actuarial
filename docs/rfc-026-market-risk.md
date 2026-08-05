@@ -131,8 +131,10 @@ that.
 
 ## The finding: interest-down binds when the assets are shorter
 
-Second hypothesis, and it holds. Hold the value at 1,741.31 and shorten the
-assets against the same twenty-five year liability:
+Second hypothesis, and it holds. Same twenty-five year liability, same
+1,741.31 of assets, all of them a one-year/forty-year barbell reweighted to
+hit each duration — so the 11.477 row is the last row of the table above,
+and the shape is held constant while only the duration moves:
 
 | asset duration | parallel +100bp | parallel −100bp | 2015 SCR | binds | 2026 SCR | binds |
 |---|---|---|---|---|---|---|
