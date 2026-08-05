@@ -30,6 +30,7 @@ that cannot be argued with. Here it is::
                  + investment income
                  − default loss
                  + realised gain on sales
+                 − trading cost
                  + net liability cashflow
                  + shortfall
 
@@ -452,12 +453,20 @@ class AssetProjection:
     earned_rate: np.ndarray
     book_yield: np.ndarray
     shortfall: np.ndarray
+    traded: np.ndarray
+    trading_cost: np.ndarray
     exhausted_at: int | None
     portfolio: Portfolio
 
     @property
     def net_investment_income(self) -> np.ndarray:
-        return self.investment_income - self.default_loss + self.realised_gain
+        return (self.investment_income - self.default_loss
+                + self.realised_gain - self.trading_cost)
+
+    @property
+    def turnover(self) -> float:
+        """Total notional traded to hold a duration target."""
+        return float(self.traded.sum())
 
     def annual_earned_rate(self, freq: int) -> np.ndarray:
         """The per-period earned rate restated as an annual effective one."""
@@ -502,7 +511,8 @@ def _sale_order(holdings, order: str):
 
 def project(portfolio: Portfolio, liability_cashflows, rates, *,
             reinvestment: Reinvestment | None = None,
-            defaults: DefaultBasis | None = None) -> AssetProjection:
+            defaults: DefaultBasis | None = None,
+            strategy=None) -> AssetProjection:
     """Roll a portfolio forward against a liability cashflow.
 
     ``liability_cashflows[t]`` is net cash **into** the fund over period
@@ -520,6 +530,11 @@ def project(portfolio: Portfolio, liability_cashflows, rates, *,
     applied, and whatever is left over is invested or raised. Because
     nothing moves mid-period there is no interest-on-flow convention to
     argue about.
+
+    ``strategy`` is an optional trading rule consulted **after** the cash
+    has settled — see :class:`engine.data.rebalance.DurationTarget`. Without
+    one the fund never trades except to meet cash, which is the behaviour
+    every earlier result here was measured on.
     """
     reinvestment = reinvestment or Reinvestment()
     flows = np.asarray(liability_cashflows, dtype=np.float64).ravel()
@@ -542,6 +557,8 @@ def project(portfolio: Portfolio, liability_cashflows, rates, *,
     earned = np.zeros(n)
     yields = np.zeros(n)
     shortfall = np.zeros(n)
+    traded = np.zeros(n)
+    trading_cost = np.zeros(n)
     exhausted_at: int | None = None
 
     for t in range(n):
@@ -624,12 +641,22 @@ def project(portfolio: Portfolio, liability_cashflows, rates, *,
                 sold[t] = raised
             book.holdings = [h for h in book.holdings if h.book != 0.0]
 
+        # Trading to a duration target, after the cash has settled. A
+        # rebalance realises a gain or loss on the part sold exactly as a
+        # forced sale does, and the spread it crosses leaves the fund for
+        # good — so both land in the identity rather than in a valuation.
+        if strategy is not None and book.holdings:
+            notional, charged, gain = strategy.rebalance(book, end_curve, t + 1)
+            traded[t] = notional
+            trading_cost[t] = charged
+            realised[t] += gain
+
         closing_book[t] = sum(h.book for h in book.holdings)
         closing_market[t] = sum(h.market_value(end_curve, t + 1)
                                 for h in book.holdings)
         if opening_book[t] > 0.0:
-            earned[t] = ((income[t] - loss[t] + realised[t])
-                         / opening_book[t])
+            earned[t] = ((income[t] - loss[t] + realised[t]
+                          - trading_cost[t]) / opening_book[t])
 
     return AssetProjection(
         opening_book=opening_book, closing_book=closing_book,
@@ -637,7 +664,8 @@ def project(portfolio: Portfolio, liability_cashflows, rates, *,
         investment_income=income, default_loss=loss, realised_gain=realised,
         coupons=coupons, purchased=purchased, sold=sold,
         liability_cashflow=flows, earned_rate=earned, book_yield=yields,
-        shortfall=shortfall, exhausted_at=exhausted_at, portfolio=book,
+        shortfall=shortfall, traded=traded, trading_cost=trading_cost,
+        exhausted_at=exhausted_at, portfolio=book,
     )
 
 
