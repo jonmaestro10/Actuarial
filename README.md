@@ -132,6 +132,24 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Multi-state Markov models** ([RFC-009](docs/rfc-009-multistate.md)):
+  PLAN §5.2's health and protection engine, and the step past multiple
+  decrements. The difference is one word — **recovery**: a decrement model
+  can express falling ill but not getting better, because its populations
+  only ever shrink. What replaces survivorship is one matrix multiply per
+  period, and the **DSL needed nothing new** — a template writes one `@var`
+  per state and the forward equation falls out as ordinary formulas. Rows
+  summing to one is checked rather than assumed, so total occupancy is
+  conserved for the whole projection (8.9e-16), and a two-state chain
+  reproduces `(1-q)^t` survivorship to the last bit, so this *contains* the
+  decrement engine rather than sitting beside it. Running monthly needs the
+  twelfth **matrix root**, not the matrix over twelve — the naive version
+  misses the annual matrix by **5.6 percentage points**. And a valid annual
+  matrix need not have a valid monthly one at all: at 85% annual recovery
+  the root has a negative probability and at 98% it is complex. That is the
+  **embedding problem**, a property of the data rather than the arithmetic,
+  and it is refused rather than clipped. First template: `IncomeProtection`,
+  where waiver of premium is not a rider but the model.
 - **Scale-out across cores** ([RFC-008](docs/rfc-008-scale-out.md)): the
   last Phase 2 exit. Sharding is safe for the same reason chunking is —
   model points are independent — so per-policy results are **bitwise**
@@ -309,7 +327,9 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   different run ids and the same results digest, which is the
   bitwise-equivalence claim stated as an audit trail.
 
-Layer 0 in PLAN §5.1 is complete, and so are the Phase 2 exit criteria.
-Next: kernel fusion (the graph and the forward loop are in place; nothing is
-compiled yet), cross-machine dispatch on top of the sharding, reductions
-beyond a sum for `@pool`, and cross-validated proxy bases.
+Layer 0 in PLAN §5.1 is complete, and so are the Phase 2 exit criteria;
+this is into Phase 3 breadth. Next: more of §5.2 (whole life and endowment,
+universal life, fixed-indexed annuities, a deferred-period income protection
+on the multi-state engine), the §5.3 reporting overlays, kernel fusion (the
+graph and the forward loop are in place; nothing is compiled yet), and
+cross-machine dispatch on top of the sharding.

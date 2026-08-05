@@ -23,6 +23,7 @@ import numpy as np
 from engine.data.decrements import Decrements
 from engine.data.expenses import Commission, ExpenseScale, Expenses
 from engine.data.mortality import MortalityBasis
+from engine.data.multistate import TransitionMatrix
 from engine.data.reinsurance import NoReinsurance, Treaty
 from engine.data.tax import TaxBasis
 
@@ -196,7 +197,8 @@ class Assumptions:
                  expenses: "Expenses | None" = None,
                  commission: "Commission | None" = None,
                  reinsurance: "Treaty | None" = None,
-                 tax: "TaxBasis | None" = None):
+                 tax: "TaxBasis | None" = None,
+                 transitions: "TransitionMatrix | None" = None):
         if freq < 1 or 12 % freq:
             raise ValueError(f"payment frequency {freq} must divide 12")
         if not 0.0 <= lapse < 1.0:
@@ -245,6 +247,11 @@ class Assumptions:
         #: Tax basis. A zero-rate basis is the default, so a pre-tax
         #: projection is unchanged and no template needs a branch.
         self.tax = tax if tax is not None else TaxBasis()
+        #: Multi-state transition matrix, for the health and protection
+        #: family. Annual, like every other rate here; `periodic_transitions`
+        #: takes the matrix root when the projection runs finer.
+        self.transitions = transitions
+        self._periodic_transitions = None
         self.crediting_rate = crediting_rate
         self.amc = amc
         self.gmdb_fee = gmdb_fee
@@ -271,6 +278,7 @@ class Assumptions:
             "commission": self.commission,
             "reinsurance": self.reinsurance,
             "tax": self.tax,
+            "transitions": self.transitions,
             "crediting_rate": self.crediting_rate,
             "amc": self.amc,
             "gmdb_fee": self.gmdb_fee,
@@ -356,6 +364,29 @@ class Assumptions:
     def per_period(self, annual_amount):
         """An annual cashflow spread evenly over the periods of a year."""
         return annual_amount / self.freq
+
+    def periodic_transitions(self) -> "TransitionMatrix":
+        """The transition matrix for one projection period.
+
+        At ``freq = 1`` the annual matrix itself. Finer, its ``freq``-th
+        **matrix root** — not the matrix divided by ``freq``, which ignores
+        every path that leaves a state and comes back inside the year, and
+        is the whole thing a multi-state model exists to capture.
+
+        Cached, because an eigendecomposition per period would be absurd,
+        and because the root either exists or raises: see the embedding
+        problem in engine/data/multistate.py.
+        """
+        if self.transitions is None:
+            raise ValueError(
+                "this assumption set carries no transition matrix; a "
+                "multi-state template needs one"
+            )
+        if self.freq == 1:
+            return self.transitions
+        if self._periodic_transitions is None:
+            self._periodic_transitions = self.transitions.root(self.freq)
+        return self._periodic_transitions
 
     def at_year(self, offset: int) -> "Assumptions":
         """The same basis, ``offset`` years later on the calendar.
