@@ -138,6 +138,33 @@ Into Phase 1 of the [roadmap](PLAN.md#8-roadmap):
   age index, so an ultimate-only lookup evaluates the same expression it
   always did: the identity is asserted with `==` on floats, and the VPLA
   parity harness still reports bitwise on every rate.
+- **Ring-fenced funds, and where the diversification goes**
+  ([RFC-029](docs/rfc-029-ring-fenced.md)): the restriction RFC-027 named
+  and scoped out. **It costs exactly what RFC-027 measured**: ring-fence
+  that RFC's life fund away from its non-life fund and Article 217(9) takes
+  back **19.28%** — 720.69 merged becoming 892.79 as two notional
+  requirements — the same number, to the last digit reported, that Annex
+  IV's two zeros were worth, computed from different articles in a
+  different module a session apart. **Ring-fencing identical funds costs
+  nothing**: the bound is the triangle inequality on the Annex IV norm and
+  it is an *equality* for parallel module mixes, measured at zero to
+  2.3e-13. So the intuition runs backwards — the cost rises from 0% to
+  **29.63%** as the second fund goes from a copy of the first to carrying
+  nothing it carries, which is exactly where an insurer would most want to
+  pool them. Ring-fencing only costs the diversification you actually had.
+  **And Article 217(6) can hand back more than 217(9) takes**: a fund's
+  notional SCR uses the scenario worst for the *undertaking as a whole*,
+  not its own, so a with-profits fund whose market risk is worst on falling
+  rates sitting beside a shareholder fund whose is worst on rising ones is
+  measured under rising — 255.34 against a standalone 365.79. Netted, the
+  lost diversification is 15.76 and the scenario relief **110.44**;
+  ring-fencing that fund is worth having, and nothing in the reported
+  figures says so. **The own-funds side is much the larger cost**: on the
+  aligned case the requirement effect is worth 0.60 percentage points of
+  solvency ratio and Article 81(1)'s trapped surplus — 334.21 above what
+  the fund needs — is worth **46.05**, seventy-six times as much. So
+  Article 216(2)'s Article 304 exemption is almost entirely an own-funds
+  question, not a capital-requirement one.
 - **Counterparty default, and the cliff at seven per cent**
   ([RFC-028](docs/rfc-028-counterparty.md)): the last module PLAN §5.3
   names, and the only one in the Basic SCR that is neither a scenario nor a
