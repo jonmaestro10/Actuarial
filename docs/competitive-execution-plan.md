@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,447
-   tests — 2,407 of them without the `[compile]` extra, whose 40 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,462
+   tests — 2,422 of them without the `[compile]` extra, whose 40 are
    RFC-072's bitwise measurement) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -832,11 +832,57 @@ a way to say *provisional*; and §3.C makes the standard projection amount
 disclosure-only for year-end 2026, which is why it sequences behind reserve
 arithmetic.
 
-### F3 — Exact-decimal audit mode (RFC-051) — effort M
+### F3 — Exact-decimal audit mode (RFC-051) — effort M — **done**
 PLAN §3.4's unbuilt promise: the interpreted executor over
 `decimal.Decimal` with a configured context, opt-in and slow, for sign-off
 runs; the RFC documents the agreement bound against the float executors and
 why it is what it is. No incumbent offers an exact-arithmetic mode at all.
+
+**Outcome (RFC-051).** Built, and the bound the plan asked for now exists:
+across the nine templates the mode can audit, the interpreted float executor
+agrees with 34-digit decimal to between **1.1e-15 and 1.0e-13** relative,
+worst case over every variable and every period. Roughly thirteen
+trustworthy significant digits, measured rather than assumed.
+
+Four things worth carrying forward.
+
+**The conversion is the whole feature.** `0.035` is stored as
+`0.03500000000000000333…`, and that error exists before any arithmetic
+happens. Conversion goes through `Decimal(repr(x))`, which recovers what the
+actuary wrote — not `Decimal(x)`, which preserves the binary value and would
+defeat the point while still completing, still using decimal arithmetic and
+still reporting 34 digits. Both readings are offered (`as_written`,
+`as_stored`) because the gap between two such runs *is* the representation
+error with arithmetic error held constant, and without both a discrepancy
+has two candidate causes and no way to separate them.
+
+**"Exact" has a horizon that depends on the inputs.** `(1 − q)^t` with
+`q = 0.015` is genuinely exact — equal to an independently computed closed
+form — only while `3t` fits the 34 digits of decimal128, i.e. `t <= 11`. At
+`t = 13` the chain and the closed form part company. Neither is wrong, and
+34 digits against double's 16 is still the point; but a sign-off pack is
+exactly the document where a reader takes a label at face value, so the
+limit is asserted rather than described.
+
+**A bug this nearly shipped with, caught by asserting equality rather than a
+tolerance.** The proxy first converted every argument down to float on its
+way into the assumption layer. `Decrements.split` takes the *in-force count*,
+so that put the whole survival chain back into float arithmetic while the
+answer still arrived wearing `Decimal` — the run completed, the types were
+right, the numbers were the float numbers. The rule now distinguishes by
+value: integral arguments are lookup keys and go down to `int`; non-integral
+arguments are quantities and pass through. It works because
+`Decrements.split` is "deliberately uncoerced", a property RFC-004 chose for
+an unrelated reason.
+
+**Coverage is a partition, asserted in CI.** 9 audited, 8 outside (5 bind a
+scenario set, 3 pooled or coupled — the interpreted executor cannot run
+those either), 2 refused (`PayoutAnnuity`, `PensionBuyout`: the assumption
+layer hands back arrays and a one-policy-at-a-time decimal run has nothing
+to apply them to). Falling back to float there would produce a sign-off run
+that was a float run wearing a label. The test also asserts **none of the
+three buckets may empty out**, which is RFC-071's trap met from the other
+direction.
 
 ### F4 — The findings catalogue (RFC-052) — effort S
 The sharp-edge findings (counterparty band cliff, interest-SCR duration
