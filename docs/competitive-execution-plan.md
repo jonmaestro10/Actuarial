@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,224
+   naive implementation otherwise. The suite (`pytest`, currently 2,243
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -842,7 +842,11 @@ order unless there is a concrete reason not to.
 ---
 
 *Next action for the implementing agent: C5 (§10, general insurance beyond
-the chain-ladder LIC, RFC-054) — `engine/library/long_term_care.py` on the
+the chain-ladder LIC, RFC-054) — whose first half, Mack standard errors, is
+already pinned by `tests/test_published_sources.py` against Table 3 of the
+published paper and fails loudly the moment `incurred_claims.py` grows a
+`standard_error`. Or the remaining nine §6.C tables (RFC-067), each of which
+needs reading against the primary text before it is worth having — `engine/library/long_term_care.py` on the
 multi-state engine, with `engine/library/income_protection.py` as the
 pattern. Two things C3 leaves on the record. First, the executor
 classification note below has now been exercised and it holds: `PensionBuyout`
@@ -857,14 +861,18 @@ That is now the largest single gap in the pack's coverage and it is a schema
 item, not a library one.
 
 The dated-set gap that C1 and C2 both left on the record is now **half
-answered and half scoped**. F2 is built (RFC-050). VM-20 Appendix 1.F was
+answered and half built** (RFC-067). F2 is built (RFC-050). VM-20 Appendix 1.F was
 read and does not contain scenario data at all — it prescribes shocks to a
-generator, so carrying it means building the generator. But the prescribed
-**assumption sets** are carryable dated data: VM-22 §6.C holds eleven
-numeric tables and a closed-form mortality basis, and building them is the
-next real dated-set item. See
-`docs/sources/vm22-section-6-prescribed-assumptions.md`. It sits inside the
-Standard Projection Amount, which §3.C makes disclosure-only for 2026. B1 (§4) remains unstarted and carries a
+generator, so carrying it means building the generator. The prescribed **assumption sets** were the
+carryable half, and `engine/report/vm22_prescribed.py` now carries Tables
+6.1 and 6.7 with §6.C.2's expense rule and §6.C.8.i's mortality formula.
+`Provisional` is the mechanism RFC-050 said the dated-set pattern lacked:
+the NAIC's own square brackets around `[1.025]` and `[2.5%]` mark figures
+still under discussion, and the flag is *derived* from the values rather
+than listed beside them. The other nine tables are recorded and refused
+rather than approximated. The standard projection amount itself is still
+unbuilt — §3.C makes it disclosure-only for 2026, which is why the
+assumptions land before the calculation. B1 (§4) remains unstarted and carries a
 written assessment of why. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4
 (RFC-036) — milestone M1 — F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044,
 RFC-045, RFC-046) — milestone M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) —
