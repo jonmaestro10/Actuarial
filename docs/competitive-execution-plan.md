@@ -63,7 +63,7 @@ what any incumbent ships rather than merely reaching parity.
 
 | Deficiency (landscape §3/§5) | Today | Parity target | Beyond-parity move | Item |
 |---|---|---|---|---|
-| Incumbent migration tooling | 🟡 parity core shipped (A1, RFC-033); no incumbent readers yet | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
+| Incumbent migration tooling | 🟡 parity core (A1, RFC-033) + Prophet readers (A2, RFC-034); scaffold and MoSes outstanding | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
 | Compiled kernels | ❌ | Numba forward-loop kernels | Compiled executor joins the **bitwise** equivalence class — incumbents compile but never prove equivalence | B1 |
 | Cross-machine scale-out | 🟡 one machine | Multi-machine dispatch | Bitwise-identical results regardless of grid topology, verified by the registry | B2 |
 | Governance: RBAC, approvals | ❌ | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
@@ -130,7 +130,7 @@ others; tolerance policy honoured per variable; markdown renders; registry
 entry round-trips. VPLA harness still passes against a checkout (manual,
 documented in the RFC).
 
-### A2 — Prophet readers (RFC-034) — effort M
+### A2 — Prophet readers (RFC-034) — effort M — **shipped**
 
 **Build:** `engine/migrate/prophet.py` (new package `engine/migrate/`).
 
@@ -583,5 +583,5 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: claim RFC-034 and begin A2 (§3),
-following the protocol in §1. A1 shipped as RFC-033.*
+*Next action for the implementing agent: claim RFC-036 and begin A4 (§3),
+following the protocol in §1. A1 shipped as RFC-033, A2 as RFC-034.*
