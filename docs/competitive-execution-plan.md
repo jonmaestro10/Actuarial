@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,079
+   naive implementation otherwise. The suite (`pytest`, currently 2,085
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -61,6 +61,16 @@ them; the acceptance criteria assume them.
 6. **Registry-first.** Any new artifact a run produces (parity report,
    approval record, evidence pack) is content-addressed and recorded through
    `engine/core/registry.py`, never as loose files with mutable names.
+6a. **Check against somebody else's arithmetic where you can.** Golden
+   tests written here are checks on an implementation; they cannot catch a
+   misreading of the method, because the misreading reproduces perfectly
+   across every implementation of it. `docs/sources/` logs published
+   material with numbers in it — provenance, contents, and what each one
+   holds up — and `tests/test_published_sources.py` asserts against those
+   figures. Reading VM-22's actual text found three errors in RFC-039 that
+   the item's own 35 tests all agreed with. Where a source is recorded but
+   its primary text could not be retrieved, the log marks it *unverified*
+   and nothing asserts against it.
 7. **Scoreboard maintenance.** When an item flips a ❌/🟡 in
    `competitive-landscape.md` §3 to ✅/🟡, update that table row and this
    document's §2 inventory in the same commit.
