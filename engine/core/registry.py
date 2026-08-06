@@ -91,6 +91,25 @@ class RunRecord:
     #: Not part of ``run_id``: the git commit and the clock are context, and
     #: a run repeated from the same source at a later time is the same run.
     code_version: str | None = None
+    #: The shard tree of a dispatched run: ``{shard index: results digest}``
+    #: for the pieces this answer was reduced from, and the arithmetic
+    #: attestation the workers agreed on.
+    #:
+    #: **Not part of ``run_id``**, and that is the claim rather than an
+    #: omission. RFC-075's whole point is that where a shard ran cannot move
+    #: a number: the reduction is by shard index, so a run split five ways
+    #: and the same run split eight ways are the *same run* and must share an
+    #: identifier. Putting the topology in the identity would make a
+    #: correctly reproduced answer look like a different one.
+    #:
+    #: Recorded because it is the evidence *for* that claim. A reviewer
+    #: comparing two records with one ``run_id``, one ``results_digest`` and
+    #: different shard trees is looking at the guarantee being kept.
+    shards: dict | None = None
+    #: The arithmetic every worker attested to. ``None`` for an undispatched
+    #: run — which is not the same as "one machine", and the difference is
+    #: why it is nullable rather than defaulted to this machine's.
+    arithmetic: str | None = None
     created_at: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -105,13 +124,22 @@ class RunRecord:
     def to_dict(self) -> dict:
         record = asdict(self)
         record["outputs"] = list(self.outputs)
+        if self.shards is not None:
+            record["shards"] = {str(k): v for k, v in self.shards.items()}
         return record
 
     @classmethod
     def from_dict(cls, record: dict) -> "RunRecord":
         record = dict(record)
         record["outputs"] = tuple(record["outputs"])
+        if record.get("shards"):
+            record["shards"] = {int(k): v
+                                for k, v in record["shards"].items()}
         return cls(**record)
+
+    @property
+    def dispatched(self) -> bool:
+        return bool(self.shards)
 
 
 def _results_digest(result, outputs: Sequence[str]) -> str:

@@ -103,16 +103,37 @@ The wire form carries the model as a catalogue **name**, never as a pickle. A
 worker that could be made to unpickle whatever a coordinator sent it would be
 a remote code execution endpoint wearing a projection engine's clothes.
 
-## What is not built
+## The shard tree, and what it is deliberately not part of
 
-The registry's shard tree. `DispatchReport` records the shard digests, the
-attempt counts and the attestations, which is the content such a record
-needs, but it is not yet written under a parent run record. That is the
-remaining half of B2's acceptance and it is a small piece of work against
-`engine/core/registry.py`.
+`record_dispatched_run` writes the shard tree into the `RunRecord` — the
+per-shard results digests, the attempt counts, and the arithmetic the workers
+attested to.
 
-**Milestone M2 is therefore not claimed.** B1 is done and B2 is most of the
-way, but M2 is "the unanswerable benchmark" — the nested-stochastic numbers
+The `run_id` is the **undispatched** one, and that is the claim rather than an
+oversight. RFC-075's whole point is that where a shard ran cannot move a
+number, so a run split five ways and the same run split eight ways are the
+*same run* and must share an identifier. Putting the topology into the
+identity would make a correctly reproduced answer look like a different one,
+which is the opposite of what a run registry is for.
+
+So the tree sits beside the identity as the **evidence** for the claim. Two
+records with one `run_id`, one `results_digest` and different shard trees are
+the guarantee being kept, in a form a reviewer can read — and that is
+asserted:
+
+```
+run_id equal across 5 shards, 8 shards and undispatched:  True
+results_digest equal:                                     True
+shard trees differ:                                       True  (5 vs 8)
+```
+
+A run made with `require_matching_arithmetic=False` records
+`arithmetic="mixed"`, because the record is the one place that fact could
+otherwise not be recovered from.
+
+## Milestone M2
+
+**Not claimed.** B1 and B2 are both done, but M2 is "the unanswerable benchmark" — the nested-stochastic numbers
 across N workers *with* the reproducibility statement — and the honest
 statement has changed shape since it was written. It is now "bitwise across
 workers that attest alike", which is still a claim no incumbent makes, and it
@@ -120,7 +141,7 @@ should be published in those words rather than the plan's original ones.
 
 ## Acceptance
 
-`tests/test_dispatch.py` — 16 tests.
+`tests/test_dispatch.py` — 19 tests.
 
 Bitwise equality at six shard counts including both degenerate ones, with
 shape and dtype asserted separately. The reduction is shown to be by index

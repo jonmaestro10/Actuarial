@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,508
-   tests — 2,462 of them without the `[compile]` extra, whose 46 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,511
+   tests — 2,465 of them without the `[compile]` extra, whose 46 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
@@ -360,7 +360,7 @@ marketing = engineering). If any op resists bitwise reproduction under Numba,
 the RFC documents the op and the replacement chosen — the tolerance does not
 move (§1.2).
 
-### B2 — Cross-machine dispatch (RFC-038) — effort L — **mostly done**
+### B2 — Cross-machine dispatch (RFC-038) — effort L — **done**
 
 **Build:** `engine/core/dispatch.py`, `engine/api/worker.py`.
 
@@ -406,9 +406,14 @@ that does *not* vary. An attestation that agrees everywhere is the same as no
 attestation, and it would have shipped looking like a safeguard. `PROBE_LENGTH`
 is now 4096 with a test holding it above 1024.
 
-**Not built:** the registry's shard tree. `DispatchReport` carries the shard
-digests, attempt counts and attestations, but they are not yet written under a
-parent run record. Small work against `engine/core/registry.py`.
+**The shard tree is recorded, and its `run_id` is the undispatched one.**
+That is the claim rather than an oversight: where a shard ran cannot move a
+number, so a run split five ways and the same run split eight ways are the
+same run and must share an identifier — putting the topology into the identity
+would make a correctly reproduced answer look like a different one. The tree
+sits beside the identity as the *evidence*, and a run made with
+`require_matching_arithmetic=False` records `arithmetic="mixed"` because the
+record is the one place that fact could otherwise not be recovered.
 
 **Milestone M2 — "the unanswerable benchmark":** B1 + B2. Publish the
 nested-stochastic numbers (the 20M-inner-cell benchmark, compiled, across

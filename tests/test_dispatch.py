@@ -322,3 +322,86 @@ def test_the_wire_form_carries_a_model_name_and_never_a_pickle():
                for v in captured["json"]["fields"].values())
     assert isinstance(answer["attestation"], Attestation)
     assert answer["stacked"]["pols_if"].dtype == np.float64
+
+
+# --------------------------------------------------------------------------
+# The shard tree, and what it is deliberately not part of
+# --------------------------------------------------------------------------
+
+def test_the_topology_is_recorded_but_is_not_part_of_the_run_identity():
+    """**The record is the evidence for RFC-075's claim, not a decoration.**
+
+    Where a shard ran cannot move a number, so a run split five ways and the
+    same run split eight ways are the *same run* and must share a
+    ``run_id``. Putting the topology into the identity would make a correctly
+    reproduced answer look like a different one — which is the opposite of
+    what a run registry is for.
+
+    So the shard tree sits beside the identity rather than inside it, and a
+    reviewer comparing two records with one ``run_id``, one
+    ``results_digest`` and different shard trees is looking at the guarantee
+    being kept."""
+    from engine.core.dispatch import record_dispatched_run
+    from engine.core.registry import RunRecord, record_run
+
+    points, assumptions, proj_len = build(n=24, proj_len=20)
+    _, undispatched = record_run(FixedAnnuity, points, assumptions, proj_len,
+                                 executor="vectorized")
+    _, five, _ = record_dispatched_run(FixedAnnuity, points, assumptions,
+                                       proj_len, local_submit, workers=5)
+    _, eight, _ = record_dispatched_run(FixedAnnuity, points, assumptions,
+                                        proj_len, local_submit, workers=8)
+
+    assert five.run_id == eight.run_id == undispatched.run_id
+    assert five.results_digest == eight.results_digest \
+        == undispatched.results_digest
+
+    assert len(five.shards) == 5 and len(eight.shards) == 8
+    assert list(five.shards) != list(eight.shards)
+    assert five.dispatched and eight.dispatched
+    assert not undispatched.dispatched
+    assert undispatched.shards is None
+
+    # The arithmetic the workers agreed on is recorded; an undispatched run
+    # records none, which is not the same claim as "one machine".
+    assert five.arithmetic == attest().digest
+    assert undispatched.arithmetic is None
+
+
+def test_the_shard_tree_survives_the_registry_round_trip():
+    """Shard indices are integers and JSON keys are strings. A record that
+    came back with ``{"0": ...}`` would compare unequal to the one written,
+    and an append-only log whose entries stop matching themselves is worse
+    than no log."""
+    from engine.core.dispatch import record_dispatched_run
+    from engine.core.registry import RunRecord
+
+    points, assumptions, proj_len = build(n=12, proj_len=10)
+    _, record, _ = record_dispatched_run(FixedAnnuity, points, assumptions,
+                                         proj_len, local_submit, workers=3)
+    written = record.to_dict()
+    assert set(written["shards"]) == {"0", "1", "2"}
+    assert RunRecord.from_dict(written) == record
+
+
+def test_a_mixed_arithmetic_run_records_that_it_was_mixed():
+    """If a caller passes ``require_matching_arithmetic=False`` they get an
+    answer, and the record has to say the answer is not reproducible. A run
+    record that hid this would be the one place the fact could not be
+    recovered from."""
+    from engine.core.dispatch import record_dispatched_run
+
+    points, assumptions, proj_len = build(n=12, proj_len=10)
+    other = Attestation("cafe", "beef", "2.4.6", "elsewhere")
+
+    def mixed(shard, payload):
+        answer = local_submit(shard, payload)
+        if shard.index == 1:
+            answer["attestation"] = other
+        return answer
+
+    _, record, report = record_dispatched_run(
+        FixedAnnuity, points, assumptions, proj_len, mixed, workers=3,
+        require_matching_arithmetic=False)
+    assert record.arithmetic == "mixed"
+    assert not report.workers_agreed

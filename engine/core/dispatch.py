@@ -311,3 +311,38 @@ def dispatch(
                                      for i in range(len(shards))], axis=1)
                for name in names}
     return ArrayRunResult(stacked=stacked, mp_ids=batch.ids), report
+
+
+def record_dispatched_run(model_cls, modelpoints, assumptions, proj_len,
+                          submit, *, outputs=None, **kwargs):
+    """:func:`dispatch`, with a registry record carrying the shard tree.
+
+    The record's ``run_id`` is the *undispatched* one, deliberately. RFC-075's
+    claim is that where a shard ran cannot move a number, so a run split five
+    ways and the same run split eight ways are the same run and must share an
+    identifier — putting the topology into the identity would make a correctly
+    reproduced answer look like a different one.
+
+    The shard tree is recorded beside it as the evidence for that claim: two
+    records with one ``run_id``, one ``results_digest`` and different shard
+    trees are the guarantee being kept, in a form a reviewer can read.
+    """
+    from engine.core.registry import RunRecord, _results_digest, record_run
+
+    result, report = dispatch(model_cls, modelpoints, assumptions, proj_len,
+                              submit, outputs=outputs, **kwargs)
+    # The identity of the question, taken from the single-process path so the
+    # two cannot drift: one function decides what a run is called.
+    _, reference = record_run(model_cls, modelpoints, assumptions, proj_len,
+                              outputs=outputs, executor="vectorized")
+    names = tuple(outputs or sorted(model_cls.var_names()))
+    attestations = {a.digest for a in report.attestations.values()}
+    record = RunRecord(
+        **{**reference.to_dict(),
+           "outputs": names,
+           "results_digest": _results_digest(result, names),
+           "shards": dict(report.shard_digests),
+           "arithmetic": (next(iter(attestations)) if len(attestations) == 1
+                          else "mixed")},
+    )
+    return result, record, report
