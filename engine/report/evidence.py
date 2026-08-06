@@ -53,6 +53,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+import numpy as np
+
 from engine.core.fingerprint import fingerprint
 from engine.core.registry import ArtifactRecord, ArtifactRegistry, git_commit
 
@@ -190,6 +192,49 @@ def default_specimens() -> list[dict]:
     return specimens
 
 
+#: How many scenarios of a bound set the pack re-runs alone. Not all of
+#: them: the bridge costs one extra projection per scenario checked, and the
+#: claim it supports — that the scenario axis does not couple — is a property
+#: of the *formulas*, so it either holds everywhere or fails on the first
+#: column. The number actually checked is reported beside the verdict, in
+#: the pack, because a bounded check that reads as an exhaustive one is the
+#: overclaim this whole document exists to avoid.
+SCENARIO_BRIDGE_SAMPLE = 8
+
+
+def _scenario_bridge(specimen: Mapping[str, Any]) -> dict:
+    """Run single scenarios alone and compare them with the slab's columns.
+
+    RFC-068's bridge into the equivalence class, and the exact analogue of
+    RFC-061's pool of one: the stochastic executor evaluates a
+    ``(model point x scenario)`` slab, and if that slab is what it claims to
+    be then scenario ``s`` on its own is column ``s`` of it, bitwise. A
+    template that let one scenario see another — a running maximum taken
+    across the wrong axis, a reduction that swept the slab rather than the
+    block — would break here and nowhere else in this pack.
+    """
+    from engine.core.registry import record_run
+
+    scenarios = specimen["scenarios"]
+    names = list(specimen.get("outputs")
+                 or sorted(specimen["model_cls"].var_names()))
+    slab, _ = record_run(**specimen, executor="stochastic")
+    checked = min(SCENARIO_BRIDGE_SAMPLE, scenarios.n_scenarios)
+    agreed = True
+    for s in range(checked):
+        alone, _ = record_run(**{**specimen, "scenarios": scenarios.single(s)},
+                              executor="stochastic")
+        for name in names:
+            if not np.array_equal(np.asarray(slab.array(name))[:, :, s],
+                                  np.asarray(alone.array(name))[:, :, 0]):
+                agreed = False
+                break
+        if not agreed:
+            break
+    return {"bitwise": agreed, "scenarios_checked": checked,
+            "of_scenarios": scenarios.n_scenarios}
+
+
 def executor_equivalence(specimens: Iterable[Mapping[str, Any]] | None = None,
                          executors: Sequence[str] = ("interpreted",
                                                      "vectorized")) -> Section:
@@ -227,16 +272,32 @@ def executor_equivalence(specimens: Iterable[Mapping[str, Any]] | None = None,
         # Reporting that as a disagreement would be the pack's first lie.
         pooled = list(model_cls.pooled_names())
         coupled = bool(getattr(model_cls, "couples_model_points", False))
-        applicable = [e for e in executors
-                      if not (e == "interpreted" and (pooled or coupled))]
-        excluded = None
-        if len(applicable) < len(executors):
+        # A specimen that binds a scenario set is outside *both* deterministic
+        # executors, and for a blunter reason than pooling: a template reading
+        # `self.scenarios` cannot be handed `None`, so neither of them can
+        # evaluate it at all. RFC-068's third class, held to its own bridge
+        # below rather than reported as a broken run.
+        scenarios = specimen.get("scenarios")
+        if scenarios is not None:
+            applicable = ["stochastic"]
             excluded = (
-                "the interpreted executor evaluates one policy at a time, so "
-                "it cannot reproduce a reduction across the block: "
-                + (f"pooled variables {pooled}" if pooled
-                   else "couples_model_points is set")
+                f"a bound scenario set runs under the stochastic executor "
+                f"alone: {', '.join(executors)} pass no scenarios, and this "
+                f"template reads them ({scenarios.n_scenarios} scenarios x "
+                f"{scenarios.horizon} periods)"
             )
+        else:
+            applicable = [e for e in executors
+                          if not (e == "interpreted" and (pooled or coupled))]
+            excluded = None
+            if len(applicable) < len(executors):
+                excluded = (
+                    "the interpreted executor evaluates one policy at a "
+                    "time, so it cannot reproduce a reduction across the "
+                    "block: "
+                    + (f"pooled variables {pooled}" if pooled
+                       else "couples_model_points is set")
+                )
 
         digests: dict[str, str] = {}
         failure = None
@@ -247,31 +308,43 @@ def executor_equivalence(specimens: Iterable[Mapping[str, Any]] | None = None,
                 failure = f"{executor}: {type(exc).__name__}: {exc}"
                 break
             digests[executor] = record.results_digest
-        # A single-executor template gets the two weaker claims it can
-        # support: the same question asked twice gets the same answer, and
-        # the *formulas* still meet the full invariant on a block of one,
-        # where a pool of one is the same reduction either way (RFC-061).
+        # A single-executor template gets the weaker claims it can support:
+        # the same question asked twice gets the same answer, and the
+        # *formulas* still meet an invariant on a block of one — a pool of
+        # one being the same reduction either way (RFC-061) — or, for a
+        # scenario-bound template, on a set of one, where running a scenario
+        # alone must reproduce its column of the slab (RFC-068).
         repeated = None
         single_point = None
+        single_scenario = None
         if failure is None and len(applicable) == 1:
             _, again = record_run(**specimen, executor=applicable[0])
             repeated = again.results_digest == digests[applicable[0]]
-            one = {**specimen, "modelpoints": list(specimen["modelpoints"])[:1]}
-            try:
-                bridge = {
-                    e: record_run(**one, executor=e)[1].results_digest
-                    for e in executors
-                }
-                single_point = len(set(bridge.values())) == 1
-            except Exception as exc:  # pragma: no cover - defensive
-                single_point = False
-                failure = f"single-point bridge: {type(exc).__name__}: {exc}"
+            if scenarios is not None:
+                try:
+                    single_scenario = _scenario_bridge(specimen)
+                except Exception as exc:  # pragma: no cover - defensive
+                    single_scenario = False
+                    failure = f"scenario bridge: {type(exc).__name__}: {exc}"
+            else:
+                one = {**specimen,
+                       "modelpoints": list(specimen["modelpoints"])[:1]}
+                try:
+                    bridge = {
+                        e: record_run(**one, executor=e)[1].results_digest
+                        for e in executors
+                    }
+                    single_point = len(set(bridge.values())) == 1
+                except Exception as exc:  # pragma: no cover - defensive
+                    single_point = False
+                    failure = f"single-point bridge: {type(exc).__name__}: {exc}"
         agreed = (failure is None and len(applicable) > 1
                   and len(set(digests.values())) == 1)
         entries.append({
             "template": name,
             "n_modelpoints": len(list(specimen["modelpoints"])),
             "proj_len": specimen["proj_len"],
+            "n_scenarios": None if scenarios is None else scenarios.n_scenarios,
             "executors": list(applicable),
             "results_digest": (next(iter(digests.values()))
                                if failure is None and len(set(digests.values())) == 1
@@ -282,23 +355,28 @@ def executor_equivalence(specimens: Iterable[Mapping[str, Any]] | None = None,
             "excluded_because": excluded,
             "repeats_deterministically": repeated,
             "bitwise_on_one_modelpoint": single_point,
+            "bitwise_on_one_scenario": single_scenario,
             "error": failure,
         })
     entries.sort(key=lambda row: row["template"])
     in_class = [row for row in entries if row["in_equivalence_class"]]
     agreed = sum(row["bitwise_identical"] for row in in_class)
     outside = len(entries) - len(in_class)
+    stochastic = sum(row["n_scenarios"] is not None for row in entries)
     return Section(
         "equivalence", "Executor equivalence",
         f"{agreed} of {len(in_class)} templates bitwise-identical across "
         f"{', '.join(executors)}"
-        + (f"; {outside} outside it by construction (pooled or coupled), "
-           f"each held instead to determinism and to the same invariant on a "
-           f"block of one, where the reduction is the same either way."
+        + (f"; {outside} outside it by construction "
+           f"({outside - stochastic} pooled or coupled, {stochastic} bound "
+           f"to a scenario set), each held instead to determinism and to the "
+           f"same invariant on a block of one or a set of one, where the "
+           f"reduction and the slab are the same either way."
            if outside else "."),
         {"available": True, "executors": list(executors),
          "n_templates": len(entries), "n_in_class": len(in_class),
          "n_bitwise": agreed, "n_outside_class": outside,
+         "n_scenario_bound": stochastic,
          "templates": entries},
     )
 
@@ -397,6 +475,35 @@ def audit_chain(log=None) -> Section:
     )
 
 
+#: What the pack's digest is and is not an identity for. Stated because the
+#: benchmarks section used to claim the pack "rebuilds to the same digest
+#: anywhere", and that was never true.
+#:
+#: It is true *on a machine*: CI builds the pack twice and `diff -r` fails if
+#: any digest moved, which is what RFC-049's acceptance criterion asserts and
+#: what the claim was reaching for. Across machines it is false, and the
+#: reason is not the engine's determinism but NumPy's: `np.exp` and `**` over
+#: an array dispatch on the CPU's instruction set, so the same NumPy on two
+#: microarchitectures returns values differing in the last unit in the last
+#: place. Found when a CI runner and the machine the specimens were written
+#: on — identical NumPy 2.4.6, identical Python — produced different digests,
+#: and reproduced with `NPY_DISABLE_CPU_FEATURES=AVX512_SPR,AVX512_ICL,X86_V4`.
+#:
+#: Nothing the repo claims elsewhere is weakened by this. The dual-executor
+#: invariant compares two executors *on one machine* and is untouched; so is
+#: the registry's determinism check, and so is every golden test, which
+#: either states an exact closed form or reconciles to a tolerance. What is
+#: affected is precisely the one claim that quantified over machines.
+REPRODUCIBILITY_SCOPE = (
+    "This pack's digest is reproducible on a given machine — CI rebuilds it "
+    "and requires the two to be identical — and is not a cross-machine "
+    "identity. NumPy dispatches `exp` and `**` on the CPU's instruction set, "
+    "so two machines running the same NumPy can differ in the last ULP, and "
+    "a digest is over bits. Cite a pack digest alongside the environment "
+    "section, which records what it was built on."
+)
+
+
 def benchmarks(records: Sequence[Mapping[str, Any]] | None = None) -> Section:
     """Benchmark numbers, if somebody measured some.
 
@@ -407,9 +514,11 @@ def benchmarks(records: Sequence[Mapping[str, Any]] | None = None) -> Section:
     if not records:
         return Section(
             "benchmarks", "Benchmarks",
-            "No benchmark on record for this pack; it is therefore "
-            "machine-independent and rebuilds to the same digest anywhere.",
-            {"available": True, "n_benchmarks": 0, "benchmarks": []},
+            "No benchmark on record for this pack, so nothing in it is a "
+            "measurement of this machine's speed. It is not therefore "
+            "machine-independent: see `reproducibility_scope`.",
+            {"available": True, "n_benchmarks": 0, "benchmarks": [],
+             "reproducibility_scope": REPRODUCIBILITY_SCOPE},
         )
     rows = [dict(record) for record in records]
     return Section(

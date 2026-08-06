@@ -31,6 +31,8 @@ from engine.report.vm22_prescribed import (
     FX_CATEGORIES,
     FX_CATEGORIES_CARRIED,
     LAPSE_TABLES_CARRIED,
+    TABLES_CARRIED,
+    TABLES_NOT_CARRIED,
     VM22_PRESCRIBED_2026,
     PrescribedAssumptions,
     PrescribedError,
@@ -332,13 +334,40 @@ def test_an_impossible_improvement_scale_or_direction_is_refused():
 
 def test_the_dated_set_says_what_it_carries_and_what_it_does_not():
     """The set's own text is the provenance a reader gets without opening
-    docs/sources/, and it has to name the nine tables that are absent —
-    otherwise a caller reasonably assumes §6.C is covered."""
+    docs/sources/, and it has to name the tables that are absent — otherwise
+    a caller reasonably assumes §6.C is covered.
+
+    Asserted against the **derived** lists rather than against a spelled-out
+    count, because this string had been saying "Table 6.1 and Table 6.7 are
+    carried; the other nine" for as long as RFC-067 had been carrying seven,
+    and the test asserting `"nine" in text` was enforcing the error rather
+    than catching it. The string travels into `__fingerprint__` and so into
+    every run record citing this set, which is the reason a stale coverage
+    claim here is worse than a stale one in a docstring."""
     text = VM22_PRESCRIBED_2026.text
-    assert "Table 6.1" in text and "Table 6.7" in text
-    assert "nine" in text and "not" in text
+    assert len(TABLES_CARRIED) == 7 and len(TABLES_NOT_CARRIED) == 4
+    assert not set(TABLES_CARRIED) & set(TABLES_NOT_CARRIED)
+    for table in TABLES_CARRIED + TABLES_NOT_CARRIED:
+        assert f"Table {table}" in text, table
+    assert f"{len(TABLES_CARRIED)} of 11" in text
+    assert "not transcribed" in text
     assert "provisional" in text
     assert VM22_PRESCRIBED_2026.label.startswith("VM-22 §6.C")
+
+
+def test_what_the_set_says_it_carries_is_what_it_carries():
+    """Two independent readings of the same fact, which is the only kind of
+    check that catches a provenance string drifting from the code. The lapse
+    and *F*x refusals name what they carry; those names have to agree with
+    the table inventory the text is built from."""
+    assert set(LAPSE_TABLES_CARRIED) == {"indexed", "with_glb"}   # 6.4, 6.6
+    assert "6.4" in TABLES_CARRIED and "6.6" in TABLES_CARRIED
+    assert "6.5" in TABLES_NOT_CARRIED
+    with pytest.raises(PrescribedError):
+        base_lapse_rate(0, 65, table="fixed")
+    assert "6.7" in TABLES_CARRIED and "6.8" in TABLES_CARRIED
+    for absent in ("6.9", "6.10", "6.11"):
+        assert absent in TABLES_NOT_CARRIED
 
 
 # --------------------------------------------------------------------------
@@ -494,10 +523,16 @@ def test_the_fixed_annuity_lapse_table_is_refused_and_here_is_why():
     sits in its IGP cycle. The third does not: Example 3's contract year 5
     comes out at **2.0%** where the text says **1.0%**.
 
-    So either the reading is wrong in a way Examples 1 and 2 cannot
-    discriminate, or the Guidance Note has an error. Carrying the table on a
-    reading that fails one of its own examples would put a plausible number
-    in every cell, which is worse than the refusal."""
+    The first of those is now closed, by an argument that uses no reading at
+    all: 25% occurs at exactly one cell of Table 6.5 and 65% at exactly one
+    other, so Example 3's own years 4 and 6 pin the row offset either side of
+    year 5 — forcing *1 yr after expiry*, whose values are 10.0%, 2.0% and
+    75.0%. **1.0% appears in no at-or-after-expiry row of the table.** The
+    reading computes 2.0% because the table leaves nothing else.
+
+    The refusal stands regardless. Whether the Guidance Note has a typo or an
+    unstated axis switch is the drafters' to say, and either way carrying the
+    table would put a plausible number in every cell."""
     with pytest.raises(PrescribedError, match="interest guarantee period"):
         base_lapse_rate(0, 65, table="fixed")
     assert set(LAPSE_TABLES_CARRIED) == {"indexed", "with_glb"}

@@ -27,6 +27,47 @@ def from_dicts(rows: Iterable[dict]) -> list[ModelPoint]:
     return [ModelPoint(**row) for row in rows]
 
 
+#: Sentinel for "this field is required". ``None`` cannot serve: a model
+#: point may legitimately carry ``None``, and a caller who omits a default
+#: is saying something different from one who supplies ``None``.
+_REQUIRED = object()
+
+
+def per_policy_field(mp, name, default=_REQUIRED, *, dtype=np.float64):
+    """A model-point field, always with a policy axis, whatever it is bound to.
+
+    A field read off a :class:`ModelPointBatch` is already an array over the
+    block. Read off a lone :class:`ModelPoint` — the interpreted executor, a
+    direct instantiation, :meth:`~engine.core.model.Model.trace` — it is a
+    bare scalar, date or string. A ``setup()`` that iterates the field works
+    in the first case and raises in the second, and this is what removes the
+    difference.
+
+    ``dtype`` is keyword-only and has no safe default for the non-numeric
+    case, which is the point of the signature. Numeric fields want
+    ``float64``; a field holding dates or sex codes wants ``object``, and
+    ``np.asarray(date(...), dtype=float64)`` does not fail cleanly — it
+    raises from inside NumPy about a type it cannot convert, several frames
+    from the template that asked. Making the choice explicit at every call
+    site is why this exists as one function rather than two: a caller cannot
+    reach for the numeric one out of habit without seeing the other.
+
+    The batch case is an **identity**: ``np.asarray`` on an array of the
+    right dtype returns it unchanged, and ``np.atleast_1d`` on a 1-D array
+    returns it unchanged. So lifting the single-point case cannot move a
+    vectorized or stochastic number, which is the property that let RFC-070
+    widen the per-policy equivalence class instead of carving an exception
+    out of it.
+    """
+    value = getattr(mp, name, default)
+    if value is _REQUIRED:
+        raise ValueError(
+            f"model point field {name!r} is required here and is not set. "
+            f"Fields present: {sorted(getattr(mp, 'fields', mp.__dict__))}"
+        )
+    return np.atleast_1d(np.asarray(value, dtype=dtype))
+
+
 class ModelPointBatch:
     """Struct-of-arrays view of a homogeneous set of model points.
 

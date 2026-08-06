@@ -6,7 +6,9 @@ Produced by the **National Association of Insurance Commissioners**.
 
 <https://content.naic.org/sites/default/files/pbr_data_valuation_manual_current_edition.pdf>
 
-Retrieved and machine-read (PyMuPDF) at pages 22-25 to 22-45 of the chapter.
+Retrieved and machine-read (PyMuPDF) at pages 22-25 to 22-53 of the chapter
+— Section 6 runs to 22-53, and Tables 6.10 and 6.11 begin at 22-44 and
+22-47 and continue past the 22-45 this line used to claim.
 Verified: the section exists, was read, and contains what follows.
 
 ## Why this file exists
@@ -116,7 +118,7 @@ disclosure-only for year-end 2026, which is why the assumptions land before
 the calculation.
 
 
-## Table 6.5 fails one of its own worked examples
+## Table 6.5 contradicts itself, and the reading is exonerated
 
 The one absence with a specific, recheckable reason rather than a general
 one. §6.C.5's Table 6.5 — fixed annuities with no guaranteed living benefits
@@ -133,13 +135,92 @@ column by where the contract sits in its IGP cycle):
 | 2: 3-yr IGP + 3-yr SC, then the same again | 1, 1, 1, 75, 1, 1, 75 | **exact** |
 | 3: 1-yr IGP + 3-yr SC, then 2-yr IGP, no SC | 2.5, 2.5, 2.5, 25, **1**, 65 | 2.5, 2.5, 2.5, 25, **2**, 65 |
 
-Two of three reproduce exactly. Example 3's contract year 5 comes out at 2.0%
-against the text's 1.0% — the contract has renewed into a *longer* IGP with no
-surrender charge, which is the one transition Examples 1 and 2 never exercise.
+This section previously said "either the reading is wrong in a way the first
+two examples cannot discriminate, or the Guidance Note has an error". The
+first disjunct is now closed, and the reason does not depend on the reading
+at all.
 
-So either the reading is wrong in a way the first two examples cannot
-discriminate, or the Guidance Note has an error. The table is not carried,
-and `engine.report.vm22_prescribed.base_lapse_rate` refuses it by name with
-the dimension identified. The discrepancy lives in
-`tests/test_vm22_prescribed.py` so it is recheckable against the 2027 text
-rather than sitting in a comment.
+**Example 3 is inconsistent with Table 6.5 on its own terms.** Take no
+reading and simply ask which of the table's 21 printed cells can produce each
+stated number:
+
+- **25%** occurs at exactly one cell — *Upon expiry*, column A.
+- **65%** occurs at exactly one cell — *2 yrs after expiry*, column C.
+
+Those two pin contract year 4 to row offset 0 and year 6 to row offset +2,
+bracketing year 5. The row axis is titled *"Years Before or After Surrender
+Charge (SC) Expiration"*, so it advances one per contract year and can only
+fall when a new surrender charge appears — and Example 3's contract renews
+with **no** surrender charge. Year 5 is therefore forced to *1 yr after
+expiry*, whose three values are **10.0%, 2.0%, 75.0%**.
+
+**1.0% is not among them, and does not appear in any at-or-after-expiry row
+of the table.** It occurs only in column B's three *before*-expiry rows. So
+no re-reading of the column axis can rescue it either, and positing an
+unstated second surrender charge cannot: a new charge lets the row *fall*,
+and this would need it to *rise* by three in one year.
+
+Column B at *1 yr after expiry* is **2.0%** — exactly what the reading
+computes. The table forces the reading's answer.
+
+**The enumeration.** 144 parameterised readings — six axes crossed
+(expiry-row offset, which SC event governs, IGP-expiry convention,
+expiring-versus-incoming IGP in a renewal year, the non-final-year column,
+post-SC row behaviour) — against all three examples:
+
+| readings | examples reproduced |
+|---|---|
+| 140 | none |
+| 2 | Example 2 only |
+| 1 | Example 1 only |
+| **1** | **Examples 1 and 2** |
+| 0 | anything including Example 3 |
+
+Examples 1 and 2 **uniquely determine** the carried reading within that
+space, which is a positive finding worth having. A further sweep over every
+contract structure — surrender-charge lengths 1 to 8, with and without
+renewal, all IGP length sequences — found **no** structure producing Example
+3's sequence.
+
+**Readings that do fit all three exist and are contrived.** Relaxing the row
+axis so that each column may run on either the SC clock or the IGP clock
+yields exactly two fits, both variants of "column B reads its row off the IGP
+expiry". They are rejected on three grounds: the row header names one event
+and glosses it "(SC)" so there can be no doubt; the extra clause is inert
+everywhere except the single disputed cell, which is one free parameter
+fitted to one observation; and it makes **three of the drafters' own printed
+numbers unreachable** — column B's 2.0% at 1, 2 and 3+ years after expiry
+can then never apply to any contract. The straightforward reading reaches all
+21 cells, and uses one of exactly those three for the disputed year.
+
+So the two hypotheses are: Example 3's year 5 should read **2%** — cost, one
+typo — or an unstated axis switch plus three dead cells.
+
+**Nothing published bears on it.** The table is textually frozen: the APF
+2025-11 attachment of 27 May 2024, the 17 April 2025 draft (where it is
+numbered 6.56) and the 2026 plenary-adopted amendments are identical in
+headers, cells and all three examples, down to a doubled space in "in&nbsp;&nbsp;contract
+years" that survives in all three — one source file propagated forward, never
+re-derived. Example 3 has read 1% in every version ever exposed. Its
+predecessor in the July 2023 SPA exposure draft was a different table
+entirely (numbered 6.10, keyed by attained age, and **empty**, with no
+Guidance Note), so the IGP columns and the three examples were substituted in
+wholesale in one step. No erratum, amendment, comment letter or practitioner
+paper works the examples. APF 2026-03, adopted 30 April 2026, reopened
+§6.C.5 to fix units in the dynamic-lapse formula and left the Guidance Note
+alone — and its authors are the VM-22 Subgroup's chair and vice-chair, which
+reads as unnoticed rather than known-and-fixed.
+
+**Status: unresolved, and the refusal stands.** `base_lapse_rate` refuses
+the table by name with the dimension identified. The evidence now supports
+the stronger statement that the reading is exonerated and Example 3 is
+internally inconsistent, but which of the two the drafters intend is theirs
+to say — the answerable form of the question is *"under your intended rule,
+when does column B's printed 2.0% after-expiry block ever apply?"*
+
+Two shape notes for whoever carries this table if it is resolved: it has
+**seven rows, not eleven**, with "3 yrs or more" end rows rather than "5 yrs
+or more", so `SURRENDER_CHARGE_ROWS` must not be reused; and Example 3's
+contract is under-specified in the text — it never states that the contract
+renews into further 1-year IGPs through years 2 and 3, which its own 2.5%
+values require.

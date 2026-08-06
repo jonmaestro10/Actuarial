@@ -44,12 +44,24 @@ them; the acceptance criteria assume them.
      *single-model-point bridge* into the per-policy class, where a pool of
      one is the same reduction either way and both executors agree bitwise.
 
+   **Amended again by RFC-068 — there are three.** A template that reads
+   `self.scenarios` cannot be handed `None`, and both deterministic
+   executors hand it exactly that, so it runs under the stochastic executor
+   and under no other:
+
+   - **scenario class** — for scenario-bound templates: run-to-run
+     determinism plus a *single-scenario bridge*, where `ScenarioSet.single(s)`
+     run alone reproduces column `s` of the `(model point × scenario)` slab
+     bitwise. A template can be in this class *and* the block class —
+     `VariablePayoutAnnuity` is — and the bridge is then the assertion that
+     the pooled reduction sweeps the block and not the slab.
+
    Nothing is weakened to a tolerance. B1's acceptance criterion is read
    against whichever class a template belongs to.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,281
+   naive implementation otherwise. The suite (`pytest`, currently 2,392
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -106,8 +118,8 @@ what any incumbent ships rather than merely reaching parity.
 | Regulatory track record / evidence | 🟡 evidence pack shipped (F1, RFC-049): test inventory, run equivalence attestation, coverage, parity records, digest-identical rebuild in CI | — | Machine-generated validation **evidence pack** — the closest software can get to a track record | F1 |
 | Vendor library update cadence | ✅ shipped (F2, RFC-050): `engine/report/regdiff.py` | — | Regulation-as-dated-sets diff reports — per-module deltas, per-clause forward *and* backward drivers, and a named residual, because the clauses provably do not add up | F2 |
 | Exact-decimal audit mode (PLAN §3.4 promise) | ❌ | — | Decimal sign-off executor; no incumbent offers one | F3 |
-| General insurance beyond chain-ladder LIC | 🟡 | Reserve variability (Mack, ODP bootstrap) + premium-liability template | Reserve *ranges* reproduced against published triangles in CI — Igloo/ResQ assert them, we prove them | C5 |
-| Takaful | ❌ | Wakala/mudarabah template on the with-profits chassis | Surplus distribution and qard hasan golden-tested in the open | C6 |
+| General insurance beyond chain-ladder LIC | ✅ shipped (C5, RFC-054) | Reserve variability (Mack, ODP bootstrap) + premium-liability template | Reserve *ranges* reproduced against published triangles in CI — Igloo/ResQ assert them, we prove them | C5 |
+| Takaful | ✅ shipped (C6, RFC-055): `FamilyTakaful` on the hybrid wakala–mudarabah model | Wakala/mudarabah template on the with-profits chassis | Surplus distribution and qard hasan golden-tested in the open — and two findings beyond that: the mudarabah share is a **call option** rather than a fee, so volatility at a fixed mean moves money from participants to operator; and the qard's generational transfer is exactly `distribution_rate × qard_repaid`, which is why it never appears in an operator's accounts as anything but a smaller distribution | C6 |
 | GPU kernels | ❌ | Stochastic slabs on GPU behind a `[gpu]` extra | Run-to-run determinism on-device plus an *asserted* CPU reconciliation bound — a stated posture no vendor gives | B3 |
 | Live Excel add-in | ❌ | Submit runs and pull results from inside Excel | Every pulled block stamped with the run fingerprint — a spreadsheet that can prove where its numbers came from | E4 |
 | Multi-tenant SaaS packaging | ❌ | Container images, per-tenant isolation, deploy blueprint | Tenant isolation asserted by tests, not by policy document | G1 |
@@ -524,7 +536,7 @@ results; `tests/test_general_insurance.py` golden-tests the template and
 passes the dual-executor equivalence suite; a PAA measurement of a GI block
 appears in the worked examples.
 
-### C6 — Takaful (RFC-055) — effort M
+### C6 — Takaful (RFC-055) — effort M — **done**
 `engine/library/takaful.py` on the with-profits chassis
 (`engine/library/with_profits.py` is the structural pattern: two funds and a
 distribution rule). Model the participants' risk fund vs the shareholder
@@ -535,8 +547,48 @@ hand-computed miniature funds (`tests/test_takaful.py`); the sharp-edge
 finding to look for: how the qard repayment ordering changes the split of
 surplus between generations of participants.
 
+**Outcome.** `FamilyTakaful` on the hybrid wakala–mudarabah model, and three
+findings rather than the one asked for.
+
+The **mudarabah share is a call option**, not a fee. A mudarib shares profit
+and not loss, so the operator's take is `share × max(earned, 0)`: hold the
+mean return fixed, raise the volatility, and the operator earns strictly
+more while the participants earn strictly less by exactly as much. Measured
+on a two-point set whose mean is exactly zero — at ±40% the operator takes
+eight times what it takes at ±5%, on unchanged contract terms. Same shape as
+`MonthlySum`'s cap, and invisible in any deterministic projection.
+
+The **qard's generational transfer** was the finding asked for, and the
+interesting part is what it collapses to:
+`surplus_if_qard_ignored − distributable_surplus` is
+`distribution_rate × qard_repaid` identically. So the transfer never appears
+in an operator's accounts as a payment between generations — it appears as
+a slightly smaller distribution, which is why nobody measures it. Computed
+on purpose and fed to nothing, in the `floor_outside_reserve` habit.
+
+**The third instance of the when-versus-what limit, and a fourth.** RFC-041
+and RFC-042 both found that a quantity depending on *when* a life entered a
+state is not expressible over states; §10 asked the next agent to watch for
+a third. It is here and it is not in a state chain: **the qard cannot be
+attributed to the cohorts whose claims drew it** — the loan is a property of
+the fund, and a repayment at `t` cannot be traced to the deficit at `s`.
+That it appeared in a pooled fund settles what the limit is a property of:
+the *question*, not the multi-state engine. The fourth turned up at the
+other end of the run — the risk fund outlives the participants, still
+distributes, and has nobody to distribute to; `unallocated_surplus` reports
+the residual and nothing allocates it, because the contract does not say who
+gets it and practice does not agree.
+
+Executor class, checked rather than assumed: `@pool` variables put it in
+RFC-061's block class (`PooledBlockError` over a block, block-of-one bridge,
+chunk-invariance) *and*, because the worked example binds scenarios, in
+RFC-068's scenario class. Second template in both, after
+`VariablePayoutAnnuity`. A deterministic fund is either always in surplus or
+always in deficit and never draws a qard at all, which is why the specimen
+is stochastic.
+
 **Milestone M5 — "deeper than AXIS where it counts, wider than the field":**
-C1–C6 shipped, each with its sharp-edge finding documented.
+C1–C6 shipped, each with its sharp-edge finding documented. **Reached.**
 
 ---
 
@@ -878,59 +930,102 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: C6 (§10, Takaful, RFC-055) is the
-next unstarted C-item. Also open: the four remaining §6.C tables (RFC-067) —
-**Table 6.5 fails one of its own three worked examples** under a reading
-that reproduces the other two exactly, which needs somebody to decide whether
-the reading or the Guidance Note is wrong; and the three structured-settlement
-*F<sub>x</sub>* sets, which cross a contract-year band with sex — `engine/library/long_term_care.py` on the
-multi-state engine, with `engine/library/income_protection.py` as the
-pattern. Two things C3 leaves on the record. First, the executor
-classification note below has now been exercised and it holds: `PensionBuyout`
-is vectorized-only by chassis and `LongevitySwap` is in RFC-061's block class
-by being pooled, so the class is a property of the product and the RFC states
-it. C4 inherits the same question — `IncomeProtection` is already in
-`UNAVAILABLE` for needing a `TransitionMatrix`, so an LTC template on that
-engine will be too. Second, **half the catalogue is now invisible to the
-evidence pack's specimen set** (eight of sixteen templates), all of them for
-one reason: the RFC-032 request schema cannot express an assumption object.
-That is now the largest single gap in the pack's coverage and it is a schema
-item, not a library one.
+*Next action for the implementing agent: **milestone M5 is reached** — C1–C6
+are all shipped, each with its sharp-edge finding documented, and the
+catalogue's nineteen templates all have a worked example for the first time
+since RFC-032, and the evidence pack's equivalence section is fully attested
+for the first time. Two things are open, plus one standing rule the last
+three RFCs earned.
 
-The dated-set gap that C1 and C2 both left on the record is now **half
-answered and half built** (RFC-067). F2 is built (RFC-050). VM-20 Appendix 1.F was
+**1. The evidence pack's equivalence section is clean — keep it that way.**
+This entry used to name the open work; there is none. RFC-068 read the
+section closely and found five unattested templates that were two findings,
+RFC-069 (F5) discharged the shape bug behind three of them, and RFC-070 (F6)
+discharged the last two — which turned out not to be the "real limitation"
+both earlier RFCs had recorded. **11 of 11 bitwise-identical, no unattested
+row.**
+
+What replaces it is a standing rule the three bugs earned. All of them were
+a `setup()` or an executor written for the batch case and run against the
+single-policy one, and every one produced **equal numbers with an unequal
+contract** — a spurious `(1,)` axis, a missing one, an `int64` where the
+array executors store `float64`. That failure mode is invisible to any test
+that compares values, which is most of them. New per-policy tests should
+assert shape, dtype and value **separately**; `tests/test_slab_binding.py`
+and `tests/test_spouse_binding.py` are the pattern.
+
+And the harder-won rule, from RFC-070: **a class boundary wants a
+mechanism.** RFC-061's pooled class raises `PooledBlockError` and RFC-068's
+scenario class cannot be handed `None`, so both are enforced. The one
+boundary that rested on a docstring sentence — RFC-041's "vectorized and
+stochastic only … a stated class, not an omission" — was wrong for as long
+as it existed, and the pack had been contradicting it the whole time. Where
+a class exclusion cannot be enforced, it is a test, not a paragraph.
+
+**2. The four §6.C tables still uncarried (RFC-067).** Unchanged and still
+needing a human: **Table 6.5 fails one of its own three worked examples**
+under a reading that reproduces the other two exactly, so either the reading
+is wrong where those two cannot discriminate or the Guidance Note has an
+error. The three structured-settlement *F<sub>x</sub>* sets each cross a
+contract-year band with sex, and a second dimension read wrongly is a
+plausible number in every cell rather than an obviously missing one. Seven
+of eleven are carried.
+
+**3. B1 (§4) is still unstarted** and carries a written assessment of why.
+When it lands, note that RFC-070's rule applies to it directly: a compiled
+executor joining the bitwise class needs the class boundary enforced by a
+mechanism, and its equality checks want shape and dtype asserted alongside
+value — all three of F5/F6's bugs would have passed a value-only check.
+
+Three notes the last two runs put on the record and this one closes or
+extends.
+
+The **executor classification note** is now exercised three times and has
+grown a class. §1.2 reads: per-policy (bitwise across both deterministic
+executors), block (RFC-061 — pooled or coupling, bridged by a pool of one),
+and **scenario** (RFC-068 — a template reading `self.scenarios` cannot be
+handed `None`, bridged by a set of one). `VariablePayoutAnnuity` and
+`FamilyTakaful` are in two classes each, which is what the bridges are for:
+the single-scenario check is precisely the assertion that a pooled reduction
+sweeps the block and not the slab.
+
+The **request-schema gap** is closed. It was eight of sixteen templates
+invisible to the evidence pack at C3, twelve of eighteen after E5 (RFC-066),
+and is now nineteen of nineteen after E6 (RFC-068). `UNAVAILABLE` is empty
+and is kept, empty, so the next template to outgrow the schema has somewhere
+to say so — a partition the tests assert, rather than a count.
+
+The **when-versus-what limit** now has four instances and its shape is
+settled. RFC-041 (a spouse pension escalating from the date of death) and
+RFC-042 (the LTC benefit pool) made it look like a property of the
+multi-state engine. RFC-055 found it twice in a pooled fund with no state
+chain in sight — the qard cannot be attributed to the cohorts whose claims
+drew it, and the risk fund outlives the participants and has nobody left to
+distribute to. So it is a property of the **question**: anything that asks
+"when did this arise" of a state that records only "what is true now". Watch
+for it as a question, not as an engine.
+
+The dated-set gap that C1 and C2 both left on the record is **half answered
+and half built** (RFC-067). F2 is built (RFC-050). VM-20 Appendix 1.F was
 read and does not contain scenario data at all — it prescribes shocks to a
-generator, so carrying it means building the generator. The prescribed **assumption sets** were the
-carryable half, and `engine/report/vm22_prescribed.py` now carries Tables
-6.1 and 6.7 with §6.C.2's expense rule and §6.C.8.i's mortality formula.
-`Provisional` is the mechanism RFC-050 said the dated-set pattern lacked:
-the NAIC's own square brackets around `[1.025]` and `[2.5%]` mark figures
-still under discussion, and the flag is *derived* from the values rather
-than listed beside them. Seven of the eleven tables are now
-carried. Table 6.5 is refused for a **specific** reason: it fails one of its
-own three worked examples under a reading that reproduces the other two
-exactly, so either the reading is wrong where those two cannot discriminate
-or the Guidance Note has an error. The three structured-settlement sets need
-a read of their own. The standard projection amount itself is still
-unbuilt — §3.C makes it disclosure-only for 2026, which is why the
-assumptions land before the calculation. B1 (§4) remains unstarted and carries a
-written assessment of why. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4
-(RFC-036) — milestone M1 — F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044,
-RFC-045, RFC-046) — milestone M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) —
-milestone M4 — C1, C2, C3 (RFC-039, RFC-040, RFC-041) and F2 (RFC-050),
-with VM-22's remediation V1–V4 (RFC-062, RFC-063).
+generator, so carrying it means building the generator. The prescribed
+**assumption sets** were the carryable half, and
+`engine/report/vm22_prescribed.py` now carries Tables 6.1 and 6.7 with
+§6.C.2's expense rule and §6.C.8.i's mortality formula. `Provisional` is the
+mechanism RFC-050 said the dated-set pattern lacked: the NAIC's own square
+brackets around `[1.025]` and `[2.5%]` mark figures still under discussion,
+and the flag is *derived* from the values rather than listed beside them.
+The standard projection amount itself is still unbuilt — §3.C makes it
+disclosure-only for 2026, which is why the assumptions land before the
+calculation.
 
-**One unplanned item, identified and built this run: E5 (RFC-066).** C3
-added two templates that could carry no worked example, taking the count to
-eight of sixteen unavailable over HTTP and therefore invisible to the
-evidence pack's specimen set. The request schema now takes a `kind` and
-carries a `ValuationBasis` — and two of them, for the swap — with ISO-8601
-dates coerced at the HTTP boundary rather than inside `from_dicts`. Eleven
-specimens, up from eight. What remains out of scope is now one
-reason rather than three: a bound scenario set (three templates), and an
-index-crediting rule that reads one. That decision was taken and built before
-C4 rather than after: `assumptions.transitions` is carried, and
-`IncomeProtection` — stranded since RFC-032 — has a worked example.*
+Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 —
+F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045, RFC-046) — milestone
+M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) — milestone M4 — C1–C6
+(RFC-039, RFC-040, RFC-041, RFC-042, RFC-054, RFC-055) — **milestone M5** —
+and F2 (RFC-050), with VM-22's remediation V1–V4 (RFC-062, RFC-063), the
+two unplanned schema items E5 and E6 (RFC-066, RFC-068), and the two
+equivalence-attestation items F5 and F6 (RFC-069, RFC-070).*
 
 ### E5 — Assumption objects in the request schema (RFC-066) — effort S — **done**
 Unplanned, and raised by C3. The RFC-032 request schema carried scalars and
@@ -952,3 +1047,135 @@ and every remaining exclusion is the **same** reason — a bound scenario set,
 or an index-crediting rule that reads one — asserted by a test so the list
 cannot be padded with new excuses while staying the same length. C4's LTC
 template lands on the multi-state engine with an example on day one.
+
+### E6 — The bound scenario set in the request schema (RFC-068) — effort S — **done**
+Unplanned, and the last of the reasons E5 left standing. `scenarios` is now
+a **top-level request key** — a discriminated union on `kind` over
+`explicit`, `flat` and `lognormal` — and `assumptions.index_credit` a second
+object-valued field. Eighteen specimens, up from fourteen — nineteen once C6 landed; `UNAVAILABLE`
+is empty for the first time since RFC-032 wrote it, and is kept rather than
+deleted so the next template to outgrow the schema has somewhere to say so.
+
+**Outcome.** Three things came out of it that the schema work itself did
+not.
+
+First, *where* it goes was the interesting question, and the engine already
+answered it: `record_run` takes `scenarios` as a sibling of `assumptions`
+and `RunRecord` carries `scenarios_digest` beside `assumptions_digest`, so a
+scenario set is neither a `kind` nor an assumption field but a third thing.
+E5's rule extends: a basis is a kind, a field is a field, and a run input
+that is not an assumption is a request key.
+
+Second, **a seed pins less than it looks like it pins**. `ScenarioSet`
+fingerprints its values; `RunStore.identify` fingerprints the request. For a
+generated set those diverge, because NumPy freezes only the legacy
+`RandomState` stream and not `default_rng`'s — so the request digest
+identifies a *recipe*. The run record's `scenarios_digest` is the identity
+safe to cite, and the digest of the specimen set is pinned by a test,
+because a moved stream would revalue five templates with the whole suite
+still green. `scenarios.kind` therefore has **no default**, which is exactly
+where it differs from E5's `assumptions.kind`: there was no prior meaning to
+preserve, and a default would have chosen an identity for the caller.
+
+Third, §1.2 gained a **third equivalence class** (see above). The
+single-scenario bridge was already the test idiom in four modules; RFC-068
+names it and the evidence pack now performs it, reporting eight of the
+scenarios and saying so, rather than reporting the run as an error.
+
+**And it read the pack's equivalence section closely**, which nothing had.
+Five templates it cannot attest turn out to be two findings: three
+(`GeneralInsurance`, `LongTermCare`, `LongevitySwap`'s bridge) are one shape
+bug — a `setup()` slab read through `Model.at` gives a `(1,)` array under
+the interpreted executor and a scalar elsewhere, so the digests differ with
+every number identical — and two (`PayoutAnnuity`, `PensionBuyout`) are a
+real limitation, the interpreted executor not handling a date-valued
+model-point field. Both are pre-existing, neither is fixed here, and both
+are named in RFC-068's last section. The shape bug became F5 (RFC-069),
+below; the limitation is open item 1 above.
+
+### F5 — The slab read per policy (RFC-069) — effort S — **done**
+Unplanned, and raised by RFC-068's reading of the evidence pack. Three of
+the five templates the pack could not attest were one shape bug: a
+`(n_mp, n_periods)` slab built in `setup()` and read through `Model.at`
+returned a `(1,)` array under the interpreted executor — where the model is
+bound to a single model point and every other variable is a scalar — so
+`record_run` digested `(1, n_t, n_mp)` against the vectorized
+`(n_t, n_mp)` with every number identical.
+
+**Outcome (RFC-069).** Fixed in `Model.at`, and the design point is that
+**the discriminator is the binding, never the shape**. Both placements
+RFC-068 named were, as stated, wrong: squeezing when the leading axis is
+length one collapses the vectorized block of one and the `chunk_size=1`
+chunk — where the `(1,)` slice is *correct*, because the axis is the block
+— and `record_run` never introduced the axis, so it could only squeeze on
+shape (the same trap one level up) while leaving `result.per_mp`
+inconsistent for everything else that reads it, which turned out to be
+real: `RunResult.aggregate` was returning one-element arrays, and so was
+`GeneralInsurance.combined_ratio()` on a directly-built model. `Model.at`
+already keys its scenario branch off model state rather than shape;
+now the model-point branch does too — bound to a `ModelPointBatch` the
+axis stays, bound to a single `ModelPoint` the column comes back as the
+scalar it is, and a slab carrying more than one policy under a
+single-point binding is *refused* with the population named rather than
+read at its first row. No vectorized or stochastic bit moved: the batch
+branch returns the identical object, and the suite's golden `==` tests
+pass unedited. The pack's equivalence line moves from 7 of 11 to **9 of
+11** bitwise, `LongevitySwap`'s single-point bridge from `False` to
+`True`, and `tests/test_slab_binding.py` pins the grant, the trap not
+taken, and both refusals — with value equality asserted separately from
+shape equality, because §1.2 was never breached here, only unprovable.
+
+### F6 — The exclusion that was a bug (RFC-070) — effort S — **done**
+Unplanned, and the last two rows of the same reading. RFC-068 and RFC-069
+both recorded `PayoutAnnuity` and `PensionBuyout` as a **real limitation** —
+`TypeError: 'datetime.date' object is not iterable` under the interpreted
+executor — wanting a decision between teaching the executor dates and
+declaring the two outside the per-policy class. The decision taken was to
+keep the class broad, and the premise turned out to be wrong.
+
+**Outcome (RFC-070).** The interpreted executor handles dates and never
+touched one. Three templates' `setup()` zipped model-point fields directly —
+`zip(self.mp.spouse_dob, self.mp.dob, joint)` — which is an object array over
+a batch and a bare `date` bound to one model point. Dates were incidental;
+`sex` fails on the same line. It survived because the branch is
+**conditional** on `np.any(joint > 0)`, so a policy with no survivor benefit
+never reached it: `PayoutAnnuity`'s A1 and A2 have always run interpreted and
+only A3, with its 60% reversion, failed.
+
+Three things are worth carrying forward.
+
+**An exclusion asserted by prose and by nothing else was not asserted.** Both
+docstrings *stated* the class boundary as a design decision — RFC-041's
+"vectorized and stochastic only … a stated class, not an omission" — and the
+evidence pack disagreed with them the whole time, placing both templates in
+the class and reporting the failure. RFC-041 read a performance argument (the
+per-policy loop is what a `ValuationBasis` exists to avoid) as a correctness
+one. RFC-061's and RFC-068's class boundaries are enforced by a mechanism —
+a raised `PooledBlockError`, a `ScenarioSet` that cannot be `None` — and are
+right; the one that rested on a sentence was wrong for as long as it existed.
+That is now the standard: **a class boundary wants a mechanism, and where
+there is none the claim is a test.**
+
+**One helper, not three.** The repo already had the object-valued idiom in
+`general_insurance.py` and the numeric one in three separate local `_field`
+copies; only the object case was missed, in all three. `per_policy_field`
+now lives in `engine/data/modelpoints.py` with `dtype` keyword-only and no
+safe default for the non-numeric case, so a caller cannot reach for the
+numeric one out of habit without seeing the other exists.
+
+**A dtype was hiding underneath.** Removing the `TypeError` left
+`PayoutAnnuity`'s block digests still unequal with every output equal:
+`age` was `int64` interpreted and `float64` vectorized, because
+`engine/core/vector.py` coerces into a `float64` slab and `runner.py` kept
+whatever the formula returned. RFC-069's failure mode one layer down — the
+executors disagreeing about a *contract* rather than arithmetic — and stacked
+on the same template, which is why neither was visible until the other moved.
+Coerced in `runner.py`, where `vector.py` states the same contract.
+
+The pack's equivalence section now reads **11 of 11 bitwise-identical with no
+unattested row**, for the first time. All three of these bugs have the same
+shape — a `setup()` or an executor written for the batch and run against one
+policy, producing *equal numbers with an unequal contract* — which is
+invisible to any test that compares values. `tests/test_spouse_binding.py`
+and `tests/test_slab_binding.py` both assert shape, dtype and value
+separately for that reason.

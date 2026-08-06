@@ -63,6 +63,7 @@ import numpy as np
 
 from engine.core.model import Model, pool, var
 from engine.core.timeaxis import TimeAxis
+from engine.data.modelpoints import per_policy_field
 from engine.library.pension_buyout import increase_factors
 
 
@@ -98,9 +99,11 @@ class LongevitySwapBasis:
 
 
 def _field(mp, name, default):
-    return np.atleast_1d(
-        np.asarray(getattr(mp, name, default), dtype=np.float64)
-    )
+    """Numeric model-point field with a policy axis. See
+    :func:`engine.data.modelpoints.per_policy_field`, which this is now a
+    name for: the object-valued variant lives beside it, and keeping the two
+    apart in three separate modules is how RFC-070's bug survived."""
+    return per_policy_field(mp, name, default)
 
 
 class LongevitySwap(Model):
@@ -125,9 +128,17 @@ class LongevitySwap(Model):
         spouse_dob = spouse_sex = None
         if np.any(spouse > 0.0):
             spouse_dob = [s if pct > 0 else own for s, own, pct
-                          in zip(self.mp.spouse_dob, self.mp.dob, spouse)]
+                          in zip(per_policy_field(self.mp, "spouse_dob",
+                                                  dtype=object),
+                                 per_policy_field(self.mp, "dob",
+                                                  dtype=object),
+                                 spouse)]
             spouse_sex = [s if pct > 0 else own for s, own, pct
-                          in zip(self.mp.spouse_sex, self.mp.sex, spouse)]
+                          in zip(per_policy_field(self.mp, "spouse_sex",
+                                                  dtype=object),
+                                 per_policy_field(self.mp, "sex",
+                                                  dtype=object),
+                                 spouse)]
 
         self._survival, self._spouse_survival = self._curves(
             terms.projection, axis, spouse_dob, spouse_sex, spouse)

@@ -322,3 +322,33 @@ def test_the_pack_is_written_content_addressed(pack, tmp_path):
     before = (directory / "index.md").read_text()
     pack.write(tmp_path)
     assert (directory / "index.md").read_text() == before
+
+
+def test_the_pack_says_what_its_digest_is_an_identity_for():
+    """The benchmarks section used to say the pack "rebuilds to the same
+    digest anywhere". It never did.
+
+    NumPy dispatches `exp` and `**` over arrays on the CPU's instruction set,
+    so two machines on the same NumPy differ in the last ULP and a digest is
+    over bits. Found when a CI runner and the machine the specimens were
+    written on — identical NumPy 2.4.6, identical Python — disagreed, and
+    reproduced locally with `NPY_DISABLE_CPU_FEATURES`. Three deterministic
+    templates still move under it (`LongTermCare`, `LongevitySwap`,
+    `PensionBuyout`); the scenario-bound specimens no longer do, because
+    RFC-068's generated sets were replaced by literal values.
+
+    What CI actually asserts — two builds on one runner being identical — is
+    unchanged and is what the claim was reaching for. This asserts the
+    section no longer claims the thing it cannot support, and that the
+    scope statement travels *in* the pack rather than in a docstring."""
+    from engine.report.evidence import REPRODUCIBILITY_SCOPE, benchmarks
+
+    section = benchmarks()
+    assert "machine-independent and rebuilds" not in section.summary
+    assert section.content["reproducibility_scope"] == REPRODUCIBILITY_SCOPE
+    assert "cross-machine identity" in REPRODUCIBILITY_SCOPE
+    assert "on a given machine" in REPRODUCIBILITY_SCOPE
+    # The section still reports, rather than going absent, with nothing to
+    # report — the rule every section in this pack follows.
+    assert section.content["available"] is True
+    assert section.content["n_benchmarks"] == 0

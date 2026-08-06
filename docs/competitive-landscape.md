@@ -172,15 +172,15 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 |---|---|---|---|---|
 | Modelling paradigm | Declarative vars, proprietary IDE | Procedural, compiled | Configured, closed code | ✅ Declarative `@var` graph in plain Python, procedural escape hatch |
 | Models in version control / CI | ❌ binary formats | 🟡 partial | ❌ n/a | ✅ git-native, CI on every commit |
-| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 2,281 tests, closed forms, bitwise dual-executor equivalence, parity harness, and checks against **published** figures (docs/sources/ — Mack's Taylor–Ashe reserves reproduced to the rounding he printed) |
+| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 2,392 tests, closed forms, bitwise dual-executor equivalence, parity harness, and checks against **published** figures (docs/sources/ — Mack's Taylor–Ashe reserves reproduced to the rounding he printed) |
 | Vectorised execution across policies × scenarios | ❌ largely per-policy | ❌ | 🟡 | ✅ core design; ~40× interpreter, 100k×60y in seconds |
 | Compiled kernels / GPU | ✅ compiled C | ✅ C++ | ✅ | ❌ planned (graph + forward loop in place, "nothing is compiled yet") |
 | Grid / cross-machine scale-out | ✅ Enterprise grid | ✅ | ✅ GridLink | 🟡 multi-core sharding with bitwise guarantee; no cross-machine dispatch |
 | Stochastic / nested stochastic | ✅ | ✅ | ✅ | ✅ incl. exact mid-life restart (bitwise) and batched inner runs |
 | Proxy models (LSMC) with error estimates | 🟡 add-ons | 🟡 | 🟡 | ✅ with the honest finding that in-sample fit statistics cannot license a proxy |
 | Life savings/protection product library | ✅ broad, vendor-maintained | ✅ | ✅ | ✅ term, WL/endowment, UL (§7702, NLG), FIA (index crediting, GLWB), unit-linked GMxB, payout & variable-payout annuities, income protection (multi-state), with-profits, group & credit life — each with golden tests |
-| Health (US), pensions, takaful | ✅/🟡 | 🟡 | ✅ health | ❌ |
-| General insurance / P&C | 🟡 conversion libs | ❌ | ❌ | 🟡 chain-ladder LIC only |
+| Health (US), pensions, takaful | ✅/🟡 | 🟡 | ✅ health | ✅ long-term care on the multi-state engine (C4, RFC-042), pension buy-in/buy-out and longevity swaps (C3, RFC-041), and family takaful on the hybrid wakala–mudarabah model with surplus distribution and qard hasan (C6, RFC-055) — each shipped with its sharp-edge finding |
+| General insurance / P&C | 🟡 conversion libs | ❌ | ❌ | ✅ chain-ladder LIC plus Mack and ODP-bootstrap reserve **ranges** reproduced against published triangles in CI, and a premium-liability template on the same chassis (C5, RFC-054) |
 | IFRS 17 (GMM/VFA/PAA) | ✅ solution library | ✅ | ✅ | ✅ all three models, one net-cash invariant across every option |
 | Solvency II (BEL, SCR, RM) | ✅ | ✅ | 🟡 | ✅ stresses, market risk (2015/35 **and** 2026/269 as dated sets), counterparty, op risk, LAC adjustment, ring-fenced funds, risk margin |
 | US STAT/GAAP: LDTI, VM-20/21/22 | 🟡 | 🟡 | ✅ deepest | ✅ LDTI + CTE machinery, and **VM-22** for non-variable annuities (RFC-039): CTE stochastic reserve, cash-surrender-value floor, exclusions recorded with their basis, and a dated parameter set that refuses to invent the text's thresholds — corrected against the 1 Jan 2026 text (§3.A's sum over groups, §4.B.1's floor inside the CTE, §7.C.1's ratio over the PV of benefits) and shipped with the finding that the prescribed floor placement is not bracketed by the two obvious ones, so contract-by-contract reserving can be less conservative than aggregating; and **formulaic statutory reserves with asset adequacy** (RFC-040): the modified-premium family as one parameter, CRVM's cap computed rather than tabulated, and cash-flow testing on the same deficiency roll a principle-based reserve uses — shipped with the finding that first-year strain is exactly the cap's bite and its slope is discontinuous where the cap stops binding |
@@ -251,11 +251,15 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
    PLAN §4 plans is not started. For nested-stochastic hedging blocks at
    production scale this is the binding constraint.
 
-2. **Breadth outside life savings/protection.** No US health, pensions,
+2. **Breadth outside life savings/protection.** ~~No US health, pensions,
    longevity swaps/buy-ins as a product line, takaful, or general insurance
    (beyond the chain-ladder LIC). AXIS's US statutory coverage (full
    formulaic reserves, cash-flow testing, VM-22 when it lands) is deeper than
-   the LDTI + VM-20/21 CTE machinery here.
+   the LDTI + VM-20/21 CTE machinery here.~~ **Closed** by C1–C6: VM-22 and
+   formulaic statutory reserves with asset adequacy (RFC-039, RFC-040),
+   pensions and longevity (RFC-041), long-term care (RFC-042), reserve
+   variability and a premium-liability template (RFC-054), and takaful
+   (RFC-055). Milestone M5.
 
 3. **Enterprise governance.** RBAC, 4-eyes assumption approval, segregation
    of duties, production run calendars, SOC 2 — table stakes for an insurer's

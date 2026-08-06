@@ -53,14 +53,26 @@ rather than falling back to one that is present. A mortality factor from the
 wrong category is a plausible number that no test would catch, which is
 precisely the failure mode this chapter has already produced eight times.
 
-**Table 6.5's absence is the specific one.** Its second dimension is the
-*interest guarantee period* rather than attained age, and its own Guidance
-Note supplies three worked examples. Two of the three reproduce exactly
-under the straightforward reading; the third does not — Example 3's contract
-year 5 comes out at 2.0% where the text says 1.0%. Either the reading is
-wrong in a way the first two examples cannot discriminate, or the Guidance
-Note has an error. Carrying it on a reading that fails one of its own
-examples would put a plausible number in every cell.
+**Table 6.5's absence is the specific one, and the reading is exonerated.**
+Its second dimension is the *interest guarantee period* rather than attained
+age, and its own Guidance Note supplies three worked examples. Two reproduce
+exactly under the straightforward reading; Example 3's contract year 5 comes
+out at 2.0% where the text says 1.0%.
+
+That is now known to be the **text's** problem rather than the reading's, and
+the argument needs no reading at all. 25% occurs at exactly one cell of the
+table and 65% at exactly one other; Example 3's own years 4 and 6 therefore
+pin the row offset either side of year 5, forcing it to *1 yr after expiry* —
+whose three values are 10.0%, 2.0% and 75.0%. **1.0% appears nowhere in any
+at-or-after-expiry row.** Column B at that row is 2.0%, which is what the
+reading computes. An enumeration of 144 parameterised readings finds none
+reproducing Example 3, and none at all once the row header is taken to mean
+what it says.
+
+The refusal stands anyway: which of "the Note has a typo" and "an unstated
+axis switch" the drafters intend is theirs to say, and carrying the table on
+either would put a plausible number in every cell. See
+``docs/sources/vm22-section-6-prescribed-assumptions.md``.
 
 The three structured-settlement sets cross a contract-year band with sex,
 and a table whose second dimension is read wrongly is a plausible number in
@@ -259,14 +271,35 @@ class PrescribedAssumptions:
                 "text": self.text}
 
 
+#: §6.C's eleven prescribed tables, split by whether this module carries
+#: them. Listed rather than counted, and the provenance text below is built
+#: from these rather than restating them — the string travels into
+#: ``__fingerprint__`` and therefore into every run record citing this set,
+#: so a hand-written count is a claim about coverage that can go stale
+#: silently while the digest keeps changing for other reasons. It did: the
+#: text said "Table 6.1 and Table 6.7 are carried; the other nine …" for
+#: as long as RFC-067 had been carrying seven.
+TABLES_CARRIED = ("6.1", "6.2", "6.3", "6.4", "6.6", "6.7", "6.8")
+
+#: The four §6.C does state and this module does not transcribe: Table 6.5
+#: (see :func:`base_lapse_rate`) and the three structured-settlement
+#: *F*\ :sub:`x` sets, 6.9 to 6.11.
+TABLES_NOT_CARRIED = ("6.5", "6.9", "6.10", "6.11")
+
+_CARRIED = ", ".join(f"Table {t}" for t in TABLES_CARRIED)
+_ABSENT = ", ".join(f"Table {t}" for t in TABLES_NOT_CARRIED)
+
 #: The 2026 text, carrying what §6.C states.
 VM22_PRESCRIBED_2026 = PrescribedAssumptions(
     label="VM-22 §6.C (2026)",
-    text="NAIC Valuation Manual, 1 January 2026 edition, chapter VM-22, "
-         "Section 6.C. Table 6.1 and Table 6.7 are carried; the other nine "
-         "prescribed tables are recorded in docs/sources/ and not "
-         "transcribed. The escalation and inflation figures are bracketed "
-         "in the text and are therefore provisional.",
+    text=(f"NAIC Valuation Manual, 1 January 2026 edition, chapter VM-22, "
+          f"Section 6.C. {len(TABLES_CARRIED)} of "
+          f"{len(TABLES_CARRIED) + len(TABLES_NOT_CARRIED)} prescribed "
+          f"tables are carried ({_CARRIED}); the other "
+          f"{len(TABLES_NOT_CARRIED)} ({_ABSENT}) are recorded in "
+          f"docs/sources/ and not transcribed. The escalation and inflation "
+          f"figures are bracketed in the text and are therefore "
+          f"provisional."),
 )
 
 

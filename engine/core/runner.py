@@ -68,6 +68,29 @@ def run(
     mp_ids = []
     for i, mp in enumerate(points):
         model = model_cls(mp=mp, assumptions=assumptions, proj_len=proj_len)
-        per_mp.append(model.run(outputs))
+        per_mp.append(_as_float64(model.run(outputs)))
         mp_ids.append(getattr(mp, "id", i))
     return RunResult(per_mp=per_mp, mp_ids=mp_ids)
+
+
+def _as_float64(series_by_name: dict) -> dict:
+    """Every recorded series as ``float64``, which is the executors' contract.
+
+    ``engine/core/vector.py`` stores into a ``float64`` slab and coerces
+    every value on the way in, so a variable whose formula returns an
+    integer — an attained age, a duration count — is a float by the time any
+    caller sees it. The interpreted executor kept whatever the formula
+    happened to produce, so the same variable came back ``int64``.
+
+    Equal numbers, different dtype, and therefore a different
+    ``results_digest``: the same failure mode as RFC-069's spurious policy
+    axis, one layer down and invisible until RFC-070 removed the exception
+    that was hiding it. ``PayoutAnnuity.age`` is the instance.
+
+    Coerced in the executor rather than in :meth:`Model.series`, which keeps
+    the model honest about what its formulas return — and which is exactly
+    where ``vector.py`` does it, so the two executors state the same
+    contract in the same place.
+    """
+    return {name: [float(value) for value in values]
+            for name, values in series_by_name.items()}

@@ -22,10 +22,10 @@ template's shape. ``tests/test_api_demo.py`` asserts all three, and asserts
 that every example supplies every field its model requires — so an example
 cannot rot into a lie while the template moves under it.
 
-Four templates have no example, and they all want the same thing
-----------------------------------------------------------------
-The catalogue offers eighteen and fourteen of them are here. It was eight
-of sixteen a few commits ago, and the ones that joined were kept out by the
+Every template has one
+----------------------
+The catalogue offers eighteen and all eighteen are here. It was eight of
+sixteen a few commits ago, and every one that joined was kept out by the
 **request schema** rather than by anything about the templates:
 
 * ``PayoutAnnuity``, ``PensionBuyout`` and ``LongevitySwap`` need a
@@ -41,31 +41,36 @@ of sixteen a few commits ago, and the ones that joined were kept out by the
   built and had a worked example from its first commit, which is what the
   sequencing was for.
 
+* ``UnitLinkedGMDB``, ``UnitLinkedGMxB``, ``VariablePayoutAnnuity`` and
+  ``FixedIndexedAnnuity`` need a **bound scenario set** — the fourth needs an
+  index-crediting rule as well, which itself reads index returns from one.
+  ``scenarios`` is now a top-level request key and
+  ``assumptions.index_credit`` an object-valued field (RFC-068).
+
 That mattered beyond the demonstration. The evidence pack's specimen set
 walks ``EXAMPLES``, so a template with no example is invisible to it, and
-half the catalogue was in that position.
+half the catalogue was in that position as recently as RFC-066.
 
-What is left is **one** reason rather than three: ``UnitLinkedGMDB``,
-``UnitLinkedGMxB`` and ``VariablePayoutAnnuity`` need a bound scenario set,
-and ``FixedIndexedAnnuity`` an index-crediting rule that itself reads index
-returns from one. A scenario format is the serialisation that would have to
-be invented for a class still moving — the reasoning
-:mod:`engine.api.catalogue`'s docstring gives, now applying to one thing
-instead of standing in for several.
+:data:`UNAVAILABLE` is now **empty**, and is kept rather than deleted:
+``GET /models`` still answers the question, and the next template to land on
+something the schema cannot express should say so there rather than quietly
+failing to appear. ``tests/test_api_demo.py`` asserts that the two sets
+partition the catalogue, so the two cannot drift apart.
 
-:data:`UNAVAILABLE` records that, per template, so ``GET /models`` can say
-which of the sixteen a caller can actually run here and why the rest are
-not. A catalogue that lists a model it cannot run and does not say so is
-worse than one that lists fourteen.
-
-The way to run the other four is the same as it has always been: pass your
-own ``build`` to :func:`engine.api.app.create_app`, which is where a
-scenario set belongs.
+Four of the eighteen specimens bind a scenario set, which puts them in a
+**third executor class**: they run under the stochastic executor and under
+no other, because a template that reads ``self.scenarios`` cannot be given
+``None``. RFC-068 names the class and the bridge that holds it —
+``ScenarioSet.single(s)``, one scenario run alone reproducing that column of
+the slab bitwise — and :mod:`engine.report.evidence` reports it as a claim
+rather than as a failure.
 """
 
 from __future__ import annotations
 
 import copy
+
+from engine.api.specimen_scenarios import SPECIMEN_RETURNS
 
 
 def _gompertz(ages: range, a: float = 0.0004, b: float = 1.09,
@@ -133,6 +138,38 @@ BASIS_MORTALITY = {
 
 #: A flat 4% annual curve, long enough for an annuitant to run off on.
 BASIS_CURVE = {"rates": 0.04, "freq": 1, "horizon_years": 60}
+
+
+def _scenarios(horizon: int, *, n_scenarios: int = 32) -> dict:
+    """A scenario set for a specimen, in the schema's ``explicit`` form.
+
+    A prefix of :data:`engine.api.specimen_scenarios.SPECIMEN_RETURNS` —
+    literal values, not a seeded generator, and that is a correction rather
+    than a style choice. RFC-068 wrote these as ``lognormal`` requests on the
+    reasoning that a seed pins the stream. It does; it does not pin
+    ``np.exp``, which dispatches on the CPU's instruction set, so the five
+    scenario-bound specimens took different values on different machines and
+    made the evidence pack's digest machine-dependent. CI caught it across
+    two runners. See :mod:`engine.api.specimen_scenarios`.
+
+    Truncating a row is a truncation of the same set, not a different one,
+    so every specimen is reading a prefix of one rectangle. Requesting more
+    than the frozen set holds is a bug in the caller and says so rather than
+    silently returning a short set.
+    """
+    if not 0 < horizon <= len(SPECIMEN_RETURNS[0]):
+        raise ValueError(
+            f"the frozen specimen set covers {len(SPECIMEN_RETURNS[0])} "
+            f"periods; {horizon} were asked for"
+        )
+    if not 0 < n_scenarios <= len(SPECIMEN_RETURNS):
+        raise ValueError(
+            f"the frozen specimen set holds {len(SPECIMEN_RETURNS)} "
+            f"scenarios; {n_scenarios} were asked for"
+        )
+    return {"kind": "explicit",
+            "returns": [list(row[:horizon])
+                        for row in SPECIMEN_RETURNS[:n_scenarios]]}
 
 
 #: One runnable request per template, keyed by model name. Each is a
@@ -476,27 +513,172 @@ EXAMPLES: dict = {
             ],
         },
     },
+    "UnitLinkedGMDB": {
+        "note": "A unit-linked bond with a return-of-premium death "
+                "guarantee, run against 32 fund paths at 18% "
+                "volatility. The guarantee costs nothing on most paths and "
+                "everything on a few, which is why it is priced against a "
+                "distribution rather than a projection.",
+        "request": {
+            "model": "UnitLinkedGMDB",
+            "proj_len": 21,
+            "outputs": ["pols_if", "fund_boy", "fund_eoy", "fund_ret",
+                        "fee_income", "gmdb_claims", "gmdb_strain",
+                        "maturity_payments", "v"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.04, "interest": 0.03,
+                "amc": 0.01, "gmdb_fee": 0.004,
+            },
+            "scenarios": _scenarios(21),
+            "modelpoints": [
+                {"id": "U1", "age_at_entry": 45, "term_years": 20,
+                 "premium": 100_000.0, "gmdb_guarantee": 100_000.0,
+                 "init_pols": 1_000.0},
+                {"id": "U2", "age_at_entry": 58, "term_years": 15,
+                 "premium": 40_000.0, "gmdb_guarantee": 55_000.0,
+                 "init_pols": 400.0},
+            ],
+        },
+    },
+    "UnitLinkedGMxB": {
+        "note": "The same chassis with every rider switched on at once — "
+                "death, maturity and withdrawal guarantees on one contract "
+                "— so the three fees and the three strains can be read "
+                "side by side. The second policy sets `gmwb_ratchet` to "
+                "1.0, which locks the withdrawal base up to the fund at "
+                "each anniversary and never back down.",
+        "request": {
+            "model": "UnitLinkedGMxB",
+            "proj_len": 21,
+            "outputs": ["pols_if", "fund_eoy", "benefit_base", "fee_income",
+                        "gmdb_claims", "gmab_strain", "gmwb_strain",
+                        "withdrawals", "maturity_payments", "v"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.04, "interest": 0.03,
+                "amc": 0.01, "gmdb_fee": 0.004, "gmab_fee": 0.006,
+                "gmwb_fee": 0.005,
+            },
+            "scenarios": _scenarios(21),
+            "modelpoints": [
+                {"id": "X1", "age_at_entry": 55, "term_years": 20,
+                 "premium": 100_000.0, "gmdb_guarantee": 100_000.0,
+                 "gmab_guarantee": 100_000.0, "gmwb_base": 100_000.0,
+                 "gmwb_rate": 0.05, "gmwb_ratchet": 0.0,
+                 "init_pols": 500.0},
+                {"id": "X2", "age_at_entry": 62, "term_years": 15,
+                 "premium": 250_000.0, "gmdb_guarantee": 250_000.0,
+                 "gmab_guarantee": 275_000.0, "gmwb_base": 250_000.0,
+                 "gmwb_rate": 0.04, "gmwb_ratchet": 1.0,
+                 "init_pols": 120.0},
+            ],
+        },
+    },
+    "FixedIndexedAnnuity": {
+        "note": "An FIA with a lifetime withdrawal rider: annual "
+                "point-to-point crediting at a 6% cap, floored at zero, so "
+                "the account ratchets and never falls. Withdrawals start "
+                "in year ten and run for life, which is why the projection "
+                "goes to age 105 rather than to a term. The request schema "
+                "carries no account basis, so this contract has **no "
+                "surrender charge** — its cash value is its account value, "
+                "and a real FIA's would not be.",
+        "request": {
+            "model": "FixedIndexedAnnuity",
+            "proj_len": 46,
+            "outputs": ["pols_if", "index_credit_rate", "av_eop",
+                        "benefit_base", "gaw", "withdrawals", "glwb_strain",
+                        "rider_fee_income", "death_benefits", "v"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.05, "interest": 0.035,
+                "glwb_fee": 0.0105,
+                "index_credit": {"kind": "AnnualPointToPoint", "cap": 0.06,
+                                 "participation": 1.0, "spread": 0.0,
+                                 "floor": 0.0},
+            },
+            "scenarios": _scenarios(46),
+            "modelpoints": [
+                {"id": "F1", "age_at_entry": 60, "premium": 100_000.0,
+                 "init_pols": 1_000.0, "glwb_base": 100_000.0,
+                 "glwb_rate": 0.05, "withdrawal_start_year": 10,
+                 "glwb_rollup": 0.07, "glwb_rollup_years": 10},
+            ],
+        },
+    },
+    "FamilyTakaful": {
+        "note": "A family takaful plan on the hybrid model: a 30% wakala "
+                "fee on contributions, a 20% mudarabah share of investment "
+                "profit, and surplus in the participants' risk fund "
+                "distributed at 25% of its balance a year. 32 paths at 18% "
+                "volatility, which is what makes the qard hasan facility "
+                "do anything — the fund is priced to run off at about zero "
+                "on the mean path, draws a loan on 28% of the paths and "
+                "repays one on 9%, always out of surplus and always ahead "
+                "of any distribution. Pooled, so the interpreted "
+                "executor cannot run it (RFC-061); scenario-bound, so "
+                "neither deterministic executor can (RFC-068).",
+        "request": {
+            "model": "FamilyTakaful",
+            "proj_len": 16,
+            "outputs": ["pols_if", "contribution", "wakala_fee_charged",
+                        "tabarru", "pif", "risk_fund_boy", "claims_paid",
+                        "qard_drawn", "qard_repaid", "qard_outstanding",
+                        "distributable_surplus",
+                        "qard_transfer_to_participants", "surplus_paid",
+                        "operator_income", "v"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.05, "interest": 0.04,
+            },
+            "scenarios": _scenarios(16),
+            "modelpoints": [
+                {"id": "K1", "age_at_entry": 45, "term_years": 15,
+                 "sum_covered": 160_000.0, "annual_contribution": 2_500.0,
+                 "init_pols": 1_000.0},
+                {"id": "K2", "age_at_entry": 58, "term_years": 12,
+                 "sum_covered": 104_000.0, "annual_contribution": 2_000.0,
+                 "init_pols": 400.0},
+            ],
+        },
+    },
+    "VariablePayoutAnnuity": {
+        "note": "A pooled variable payout annuity: three members share a "
+                "fund, and every year the whole pool's pensions are scaled "
+                "by what it has against what it owes. Each member's "
+                "account is set to their own liability at outset, so the "
+                "pool starts balanced and every later adjustment is "
+                "experience rather than an opening mismatch. The scenarios "
+                "drift at the basis's own 4%, so the adjustment measures "
+                "deviation rather than a mismatch of means. Pooled, so "
+                "the interpreted executor cannot run it — see RFC-061.",
+        "request": {
+            "model": "VariablePayoutAnnuity",
+            "proj_len": 41,
+            "outputs": ["lives", "pension", "account_value", "assets",
+                        "liability", "adjustment", "payments"],
+            "assumptions": {
+                "kind": "valuation_basis",
+                "mortality": BASIS_MORTALITY, "curve": BASIS_CURVE,
+                "revalue_every": 1,
+            },
+            "scenarios": _scenarios(41),
+            "modelpoints": [
+                {"id": 'V1', "dob": '1956-01-01', "sex": 'M', "valuation": '2021-01-01', "pension": 12000.0, "account_value": 190900.0, "init_lives": 1.0},
+                {"id": 'V2', "dob": '1946-06-30', "sex": 'F', "valuation": '2021-01-01', "pension": 6000.0, "account_value": 80250.0, "init_lives": 3.0},
+                {"id": 'V3', "dob": '1951-03-15', "sex": 'M', "valuation": '2021-01-01', "pension": 24000.0, "account_value": 344700.0, "init_lives": 1.0},
+            ],
+        },
+    },
 }
 
 
-#: Why a catalogued template has no example here, by model name. Each entry
-#: is what a caller would hit if they wrote the request themselves, so it is
-#: a limit of the request schema rather than of the engine.
-UNAVAILABLE: dict = {
-    "FixedIndexedAnnuity":
-        "needs an index-crediting rule on the assumptions, and index "
-        "returns from a bound scenario set",
-    "UnitLinkedGMDB":
-        "needs a bound scenario set — the fund return is a scenario, and "
-        "the request schema has no scenario format",
-    "UnitLinkedGMxB":
-        "needs a bound scenario set for the fund return, and rider fees "
-        "beyond the scalars the request schema carries",
-    "VariablePayoutAnnuity":
-        "needs a bound scenario set for the pool return — the valuation "
-        "basis and the dates its model points carry are now expressible, "
-        "and the scenario format is not",
-}
+#: Why a catalogued template has no example here, by model name.
+#:
+#: **Empty**, and that is the point of keeping it: every template the
+#: catalogue lists can now be run from a request this deployment carries.
+#: The mechanism stays — ``GET /models`` still reports it, and
+#: ``tests/test_api_demo.py`` still asserts that the two sets partition the
+#: catalogue — because the next template to land on a class the schema
+#: cannot express should say so here rather than quietly not appear.
+UNAVAILABLE: dict = {}
 
 
 def example(name: str) -> dict | None:
