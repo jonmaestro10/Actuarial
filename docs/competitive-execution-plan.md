@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,136
+   naive implementation otherwise. The suite (`pytest`, currently 2,157
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -101,7 +101,7 @@ what any incumbent ships rather than merely reaching parity.
 | Production UI | ✅ runs list, seriatim drill-down, semantic assumption diff, artifact and evidence views shipped (E3, RFC-048) | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have — plus a diff that names the component that moved, and URLs that are citations because the run id is a content digest | E3 |
 | VM-22 | ✅ shipped (C1, RFC-039), corrected against the 1 Jan 2026 text: §3.A sum over groups, §4.B.1 floor inside the CTE, §7.C.1 ratio over PV of benefits, CTE 70 and the 6.0% SERT cap carried with citations | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit — here, that the prescribed floor placement is not bracketed by the two obvious ones, so seriatim reserving can be *less* conservative than aggregating | C1 |
 | US statutory formulaic reserves + AAT | ✅ shipped (C2, RFC-040): the modified-premium family as one parameter, CRVM's cap, and cash-flow testing on RFC-016's deficiency roll | CRVM/net-premium + asset adequacy runner | Same — here, that first-year strain is exactly the cap's bite and vanishes discontinuously in slope where the cap stops binding | C2 |
-| Pensions / longevity as products | ❌ | Buy-in/buy-out, longevity swap templates | Same | C3 |
+| Pensions / longevity as products | ✅ shipped (C3, RFC-041): `PensionBuyout` on the payout-annuity chassis (deferment, revaluation, escalation, reversion) and `LongevitySwap` as a pooled model | Buy-in/buy-out, longevity swap templates | Same — here, that the two templates land in *different* executor equivalence classes, and that the class is a property of the product rather than the chassis | C3 |
 | US health / LTC | ❌ | LTC template on the multi-state engine | Same | C4 |
 | Regulatory track record / evidence | 🟡 evidence pack shipped (F1, RFC-049): test inventory, run equivalence attestation, coverage, parity records, digest-identical rebuild in CI | — | Machine-generated validation **evidence pack** — the closest software can get to a track record | F1 |
 | Vendor library update cadence | ❌ (not software) | — | Regulation-as-dated-sets diff reports (generalize the 2015/35 vs 2026/269 pattern) | F2 |
@@ -374,7 +374,7 @@ what differs is the reduction across scenarios — a maximum over a handful
 of prescribed paths against a CTE over thousands. So the reduction is an
 argument, both are available, and the result records which was used.
 
-### C3 — Pension risk transfer (RFC-041) — effort M
+### C3 — Pension risk transfer (RFC-041) — effort M — **done**
 `engine/library/pension_buyout.py` (buy-in/buy-out on the payout-annuity
 chassis, joint-life, deferred members) and
 `engine/library/longevity_swap.py` (fixed-leg vs floating-leg on a survival
@@ -412,6 +412,28 @@ one that settles per life on an external published index is not.
 Whichever is chosen, §1.2 is not weakened — the RFC states the class and
 the tests assert against that class, exactly as RFC-061 did for the pooled
 pair.
+
+**Outcome (RFC-041).** Both choices made, and they went different ways —
+which is the useful result, because it shows the class is a property of the
+product rather than of the chassis. `PensionBuyout` is on the
+`ValuationBasis` chassis and is therefore **vectorized-only**: the members
+whose value dominates a scheme are the deferreds, whose value moves on the
+improvement scale and the fractional-age split the annual-step templates do
+not carry, so writing it on annual steps to buy membership of the bitwise
+class would have been choosing the test over the product. `LongevitySwap`
+is an **indemnity** swap — its floating leg is the scheme's own experience —
+so `net_settlement` is a `@pool` and it lands in RFC-061's block class,
+with `PooledBlockError` asserted rather than described. An index-based swap
+settling per life would not be pooled; that is a different contract and
+would be a different template, because a flag would put two equivalence
+classes in one file.
+
+Both consequences priced in as predicted. Neither template can carry an
+`EXAMPLES` entry, so both are in `UNAVAILABLE` with reasons. That takes the
+count to **eight of sixteen templates invisible to the evidence pack's
+specimen set**, every one of them because the RFC-032 request schema cannot
+express an assumption object — which is now the largest single gap in the
+pack's coverage, and a schema item rather than a library one.
 
 ### C4 — US health / LTC (RFC-042) — effort M
 `engine/library/long_term_care.py` on the multi-state engine
@@ -757,17 +779,28 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: C3 (§5, pension risk transfer,
-RFC-041) is the next item — `engine/library/pension_buyout.py` on the
-payout-annuity chassis (joint-life, deferred members) and
-`engine/library/longevity_swap.py` (fixed leg against a floating survival
-index), with closed-form joint-life annuity values as the goldens. Read the
-classification note below before writing the first `@var`. One dated-set gap
-is on record from C1 and C2 and neither closed it: the prescribed
-assumption sets and scenario paths (VM-22's Standard Projection Amount, the
-prescribed cash-flow-testing scenarios). B1 (§4) remains unstarted and
-carries a written assessment of why. Shipped so far: A1 (RFC-033), A2
-(RFC-034), A4 (RFC-036) — milestone M1 — F1 (RFC-049), D1–D3 + E1
-(RFC-043, RFC-044, RFC-045, RFC-046) — milestone M3 — E2, E3, E4
-(RFC-047, RFC-048, RFC-056) — milestone M4 — and C1, C2 (RFC-039,
-RFC-040).*
+*Next action for the implementing agent: C4 (§10, US health / LTC,
+RFC-042) is the next item — `engine/library/long_term_care.py` on the
+multi-state engine, with `engine/library/income_protection.py` as the
+pattern. Two things C3 leaves on the record. First, the executor
+classification note below has now been exercised and it holds: `PensionBuyout`
+is vectorized-only by chassis and `LongevitySwap` is in RFC-061's block class
+by being pooled, so the class is a property of the product and the RFC states
+it. C4 inherits the same question — `IncomeProtection` is already in
+`UNAVAILABLE` for needing a `TransitionMatrix`, so an LTC template on that
+engine will be too. Second, **half the catalogue is now invisible to the
+evidence pack's specimen set** (eight of sixteen templates), all of them for
+one reason: the RFC-032 request schema cannot express an assumption object.
+That is now the largest single gap in the pack's coverage and it is a schema
+item, not a library one.
+
+One dated-set gap is on record from C1 and C2 and neither closed it: the
+prescribed assumption sets and scenario paths (VM-22's Standard Projection
+Amount, the prescribed cash-flow-testing scenarios). VM-22's remediation
+plan closed V1–V4 and its open question is the same one — the 16 prescribed
+economic scenarios belong with F2. B1 (§4) remains unstarted and carries a
+written assessment of why. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4
+(RFC-036) — milestone M1 — F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044,
+RFC-045, RFC-046) — milestone M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) —
+milestone M4 — and C1, C2, C3 (RFC-039, RFC-040, RFC-041), with VM-22's
+remediation V1–V4 (RFC-062, RFC-063).*

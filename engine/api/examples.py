@@ -22,9 +22,9 @@ template's shape. ``tests/test_api_demo.py`` asserts all three, and asserts
 that every example supplies every field its model requires — so an example
 cannot rot into a lie while the template moves under it.
 
-Five templates have no example, which is the more interesting half
---------------------------------------------------------------------
-The catalogue offers fourteen and nine of them are here. The five missing
+Half the templates have no example, which is the more interesting half
+----------------------------------------------------------------------
+The catalogue offers sixteen and eight of them are here. The eight missing
 are missing for one reason with two faces, and it is
 :mod:`engine.api.catalogue`'s documented limit rather than an oversight:
 
@@ -33,18 +33,24 @@ are missing for one reason with two faces, and it is
   ``UnitLinkedGMxB`` a bound scenario set. Each is an **object** on
   :class:`~engine.data.assumptions.Assumptions`, and the request schema
   carries scalars plus a mortality table, on purpose.
-* ``PayoutAnnuity`` and ``VariablePayoutAnnuity`` need a
-  :class:`~engine.data.basis.ValuationBasis`, and their model points carry
+* ``PayoutAnnuity``, ``VariablePayoutAnnuity``, ``PensionBuyout`` and
+  ``LongevitySwap`` need a :class:`~engine.data.basis.ValuationBasis` —
+  ``LongevitySwap`` needs two, one per leg — and their model points carry
   ``dob`` and ``valuation`` as :class:`datetime.date` objects. JSON has no
   date, and :func:`~engine.data.modelpoints.from_dicts` does not coerce
   one — a string arrives as a string and the template asks it for a year.
 
-:data:`UNAVAILABLE` records that, per template, so ``GET /models`` can say
-which of the fourteen a caller can actually run here and why the rest are
-not. A catalogue that lists a model it cannot run and does not say so is
-worse than one that lists nine.
+That whole chassis is therefore invisible to the evidence pack's specimen
+set, which walks ``EXAMPLES``. It is a limit of the **request schema**, not
+of the templates, and closing it means teaching the schema to express an
+assumption object rather than adding rows here.
 
-The way to run the other five is the same as it has always been: pass your
+:data:`UNAVAILABLE` records that, per template, so ``GET /models`` can say
+which of the sixteen a caller can actually run here and why the rest are
+not. A catalogue that lists a model it cannot run and does not say so is
+worse than one that lists eight.
+
+The way to run the other eight is the same as it has always been: pass your
 own ``build`` to :func:`engine.api.app.create_app`, which is where an
 assumption basis richer than a scalar belongs.
 """
@@ -292,6 +298,14 @@ UNAVAILABLE: dict = {
     "VariablePayoutAnnuity":
         "needs a ValuationBasis and a scenario set for the pool return, and "
         "its model points carry dates",
+    "PensionBuyout":
+        "needs a ValuationBasis, and its model points carry dob, valuation "
+        "and sex — the same reason PayoutAnnuity is not here, since it is "
+        "the same chassis",
+    "LongevitySwap":
+        "needs two ValuationBasis objects, one per leg, and its model points "
+        "carry dates. It is also pooled, so a demonstration over one model "
+        "point would be a hedge over a scheme of one — see RFC-061",
 }
 
 
