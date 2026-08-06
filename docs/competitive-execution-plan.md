@@ -447,6 +447,21 @@ per-table diff, not a text diff); parity-report and evidence-pack views.
 Same architecture rule as RFC-032: everything on the page is a call to the
 documented REST API.
 
+**Two notes from E2, so E3 starts from what is already true.** (i) That
+architecture rule means most of this item is *API* rather than page: the
+runs list, the results drill-down and the IFRS 17 overlay have routes
+(`engine/api/app.py`), but the assumption diff, the artifact/parity listing
+and the evidence pack have none — writing those routes, with their tests,
+is the first half of E3 and should land before a line of JavaScript.
+(ii) The semantic assumption diff has its substrate already: RFC-047's
+`assumption_rows` flattens an assumption set into `(path, kind, value,
+digest)` rows whose root digest *is* the run's `assumptions_digest`, so a
+per-component diff is a join over two row sets rather than a new walker. It
+currently sits in `engine/excel/workbook.py` behind the `[excel]` extra and
+imports nothing from openpyxl; E3 should lift it into NumPy-only core and
+have both the workbook and the diff route call it, rather than growing a
+second flattener that can disagree with the first.
+
 ### E4 — The live Excel add-in (RFC-056) — effort M
 The tool actuaries will never give up, made a first-class client of the API
 (PLAN §6's "Excel add-in (later)" — now). **Build:** `engine/excel/addin.py`
