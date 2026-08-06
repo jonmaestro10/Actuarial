@@ -185,7 +185,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 | Production UI (runs, results explorer, assumption diffing) | ✅ | ✅ | ✅ | 🟡 demo UI only |
 | Governance: RBAC, approval workflows, multi-user | ✅ | ✅ Unify | ✅ | ❌ |
 | Excel integration | ✅ | ✅ | ✅ | ❌ |
-| Incumbent migration tooling (readers + parity reports) | n/a | n/a | n/a | ❌ planned (PLAN §6); only the VPLA parity harness exists |
+| Incumbent migration tooling (readers + parity reports) | n/a | n/a | n/a | 🟡 parity core shipped (RFC-033): reusable diff engine, Markdown report, registered against both content digests; ❌ Prophet/MoSes readers (RFC-034/035) |
 | Licence / cost model | Heavy, per-core/grid | Heavy | Heavy | Open code; one runtime dependency (NumPy); optional extras |
 | Regulatory track record & support organisation | ✅ decades | ✅ | ✅ | ❌ none |
 

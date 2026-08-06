@@ -63,7 +63,7 @@ what any incumbent ships rather than merely reaching parity.
 
 | Deficiency (landscape §3/§5) | Today | Parity target | Beyond-parity move | Item |
 |---|---|---|---|---|
-| Incumbent migration tooling | ❌ only VPLA harness | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
+| Incumbent migration tooling | 🟡 parity core shipped (A1, RFC-033); no incumbent readers yet | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
 | Compiled kernels | ❌ | Numba forward-loop kernels | Compiled executor joins the **bitwise** equivalence class — incumbents compile but never prove equivalence | B1 |
 | Cross-machine scale-out | 🟡 one machine | Multi-machine dispatch | Bitwise-identical results regardless of grid topology, verified by the registry | B2 |
 | Governance: RBAC, approvals | ❌ | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
@@ -103,7 +103,7 @@ and only the VPLA harness (`scripts/vpla_parity.py`) exists. This workstream
 is first because it has the highest commercial leverage per unit of work and
 because every later benchmark claim (B) is more credible with a parity story.
 
-### A1 — The parity core (RFC-033) — effort M
+### A1 — The parity core (RFC-033) — effort M — **shipped**
 
 Generalize the VPLA harness into a reusable diff engine.
 
@@ -583,5 +583,5 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: claim RFC-033 and begin A1 (§3),
-following the protocol in §1.*
+*Next action for the implementing agent: claim RFC-034 and begin A2 (§3),
+following the protocol in §1. A1 shipped as RFC-033.*
