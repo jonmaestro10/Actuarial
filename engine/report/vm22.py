@@ -124,6 +124,17 @@ from engine.report.pbr import CTE_LEVEL, cte, scenario_reserves
 #: How a group of contracts is valued. §3.A adds one reserve per group.
 METHODS = ("stochastic", "deterministic", "formulaic")
 
+#: §3.F.1's Reserving Categories. Contracts in different categories **may
+#: not be aggregated** when determining the SR or DR — with one exception,
+#: §3.F.2, which permits payout and accumulation together where the company
+#: manages them in an integrated risk-management process and within a
+#: single portfolio or portfolios sharing an ALM strategy.
+RESERVING_CATEGORIES = ("payout_annuity", "longevity_reinsurance",
+                        "accumulation")
+
+#: The only pair §3.F.2 allows to be combined, and only on attestation.
+COMBINABLE = frozenset({"payout_annuity", "accumulation"})
+
 #: How a component may be left out. A component absent for any other
 #: reason is a missing calculation.
 EXCLUSION_BASES = ("ratio_test", "demonstration", "certification")
@@ -347,6 +358,11 @@ class Contract:
     id: str
     scenario_reserve: np.ndarray
     cash_surrender_value: float = 0.0
+    #: §3.F.1's Reserving Category. ``None`` means unclassified, which
+    #: aggregates freely and **is not a VM-22 reserve** — the chapter
+    #: requires the classification, and a pool that never declared one has
+    #: not been held to §3.F.1 by anything.
+    category: str | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "scenario_reserve",
@@ -354,6 +370,12 @@ class Contract:
                                       dtype=np.float64).ravel())
         if self.scenario_reserve.size == 0:
             raise VM22Error(f"contract {self.id!r} has no scenario reserves")
+        if self.category is not None \
+                and self.category not in RESERVING_CATEGORIES:
+            raise VM22Error(
+                f"contract {self.id!r} declares category "
+                f"{self.category!r}; §3.F.1 has {list(RESERVING_CATEGORIES)}"
+            )
 
     @classmethod
     def from_cashflows(cls, id: str, net_cashflows, earned_rates, *,
@@ -378,7 +400,41 @@ class Contract:
 
     def __fingerprint__(self):
         return {"id": self.id, "scenario_reserve": self.scenario_reserve,
-                "cash_surrender_value": self.cash_surrender_value}
+                "cash_surrender_value": self.cash_surrender_value,
+                "category": self.category}
+
+
+def check_aggregable(contracts: Sequence[Contract], *,
+                     combined_payout_accumulation: bool = False) -> None:
+    """§3.F.1: contracts in different Reserving Categories may not be pooled.
+
+    The refusal that matters most in this module, because it is the only
+    one whose absence made the reserve too *small*. Aggregating buys
+    diversification, so a system that pools freely across categories
+    reports less than the chapter permits — and every other deviation found
+    in VM-22 so far erred the safe way.
+
+    ``combined_payout_accumulation`` is §3.F.2's exception, and it is an
+    attestation rather than a computation: the company must manage both
+    categories in an integrated risk-management process and within a single
+    portfolio or portfolios sharing an ALM strategy. This module cannot
+    check either, so it takes the caller's word and records that it did.
+    Longevity reinsurance is never combinable.
+    """
+    declared = {c.category for c in contracts if c.category is not None}
+    if len(declared) <= 1:
+        return
+    if declared == COMBINABLE and combined_payout_accumulation:
+        return
+    raise VM22Error(
+        f"§3.F.1 forbids aggregating Reserving Categories {sorted(declared)} "
+        f"when determining the SR or DR. Only "
+        f"{sorted(COMBINABLE)} may be combined, and only on §3.F.2's "
+        f"criteria — pass combined_payout_accumulation=True to attest that "
+        f"the company manages both in one integrated risk-management "
+        f"process and within a single portfolio or portfolios sharing an "
+        f"ALM strategy."
+    )
 
 
 def _stack(contracts: Sequence[Contract]) -> np.ndarray:
@@ -398,14 +454,22 @@ def _total_floor(contracts: Sequence[Contract]) -> float:
 
 
 def aggregate_stochastic_reserve(contracts: Sequence[Contract], *,
-                                 basis: VM22Basis = VM22_2026) -> float:
+                                 basis: VM22Basis = VM22_2026,
+                                 combined_payout_accumulation: bool = False
+                                 ) -> float:
     """§4.B.1 then §3.F.5.a.iii: floor each scenario, **then** take CTE 70.
 
     "The scenario reserve for any given scenario shall not be less than the
     cash surrender value in aggregate on the valuation date" — so the floor
     is applied per scenario, at the aggregate level, before the tail
     statistic sees it.
+
+    §3.F.1's category rule is enforced first: pooling across Reserving
+    Categories is what would make this number too small, so it is refused
+    rather than reported.
     """
+    check_aggregable(
+        contracts, combined_payout_accumulation=combined_payout_accumulation)
     scenario = _stack(contracts).sum(axis=0)
     floored = np.maximum(scenario, _total_floor(contracts))
     return cte(floored, basis.cte_level)

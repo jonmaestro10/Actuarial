@@ -30,6 +30,7 @@ import pytest
 from engine.report.pbr import cte, scenario_reserves
 from engine.report.vm22 import (
     METHODS,
+    RESERVING_CATEGORIES,
     SERT_CAP,
     VM22_2026,
     AggregateReserve,
@@ -573,3 +574,71 @@ def test_the_greatest_present_value_is_floored_at_zero_and_the_text_is_not():
     # Under the guidance note it would be starting assets *plus a negative*
     # number, i.e. strictly less. Recorded, not asserted against the engine.
     assert contract.scenario_reserve[0] >= 500.0
+
+
+# --------------------------------------------------------------------------
+# §3.F.1 — the categories that may not be pooled
+# --------------------------------------------------------------------------
+
+def test_pooling_across_reserving_categories_is_refused():
+    """§3.F.1, and the only deviation found in VM-22 so far that made the
+    reserve too *small*.
+
+    Aggregating buys diversification, so a module that pools freely across
+    Reserving Categories reports less than the chapter permits. Every other
+    deviation found erred the safe way; this one did not, which is why it
+    is a refusal rather than a note.
+    """
+    payout = Contract("P", [0.0, 0.0, 100.0, 200.0], category="payout_annuity")
+    accum = Contract("A", [200.0, 100.0, 0.0, 0.0], category="accumulation")
+    longevity = Contract("L", [10.0, 10.0, 10.0, 10.0],
+                         category="longevity_reinsurance")
+
+    with pytest.raises(VM22Error, match="§3.F.1 forbids aggregating"):
+        aggregate_stochastic_reserve([payout, accum], basis=HALF)
+    with pytest.raises(VM22Error, match="§3.F.1 forbids aggregating"):
+        aggregate_stochastic_reserve([payout, longevity], basis=HALF)
+
+
+def test_payout_and_accumulation_combine_only_on_the_attestation():
+    """§3.F.2 permits exactly one pair, and only where the company manages
+    both in an integrated risk-management process within a single portfolio
+    or portfolios sharing an ALM strategy. This module cannot check either,
+    so it takes the caller's word — and makes them say it."""
+    payout = Contract("P", [0.0, 0.0, 100.0, 200.0], category="payout_annuity")
+    accum = Contract("A", [200.0, 100.0, 0.0, 0.0], category="accumulation")
+    pooled = aggregate_stochastic_reserve(
+        [payout, accum], basis=HALF, combined_payout_accumulation=True)
+    assert pooled == 200.0            # the diversified figure, as before
+
+
+def test_longevity_reinsurance_never_combines():
+    """§3.F.2's exception names payout and accumulation. Longevity
+    reinsurance is not in it, so the attestation does not unlock it."""
+    longevity = Contract("L", [0.0, 0.0, 100.0, 200.0],
+                         category="longevity_reinsurance")
+    accum = Contract("A", [200.0, 100.0, 0.0, 0.0], category="accumulation")
+    with pytest.raises(VM22Error, match="§3.F.1 forbids"):
+        aggregate_stochastic_reserve([longevity, accum], basis=HALF,
+                                     combined_payout_accumulation=True)
+
+
+def test_one_category_and_unclassified_contracts_both_aggregate():
+    """A single declared category is fine, and so is a wholly unclassified
+    pool — which is backwards compatible and, as the docstring says, not a
+    VM-22 reserve, because nothing has held it to §3.F.1."""
+    same = [Contract("P1", [0.0, 0.0, 100.0, 200.0], category="payout_annuity"),
+            Contract("P2", [200.0, 100.0, 0.0, 0.0], category="payout_annuity")]
+    assert aggregate_stochastic_reserve(same, basis=HALF) == 200.0
+
+    unclassified = block([0.0, 0.0, 100.0, 200.0], [200.0, 100.0, 0.0, 0.0])
+    assert aggregate_stochastic_reserve(unclassified, basis=HALF) == 200.0
+    assert all(c.category is None for c in unclassified)
+
+
+def test_an_unknown_reserving_category_is_refused():
+    with pytest.raises(VM22Error, match="§3.F.1 has"):
+        Contract("X", [1.0, 2.0], category="whatever")
+    assert set(RESERVING_CATEGORIES) == {"payout_annuity",
+                                         "longevity_reinsurance",
+                                         "accumulation"}
