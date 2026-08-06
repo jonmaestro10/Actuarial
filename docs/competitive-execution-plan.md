@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,447
-   tests — 2,407 of them without the `[compile]` extra, whose 40 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,482
+   tests — 2,442 of them without the `[compile]` extra, whose 40 are
    RFC-072's bitwise measurement) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -832,13 +832,59 @@ a way to say *provisional*; and §3.C makes the standard projection amount
 disclosure-only for year-end 2026, which is why it sequences behind reserve
 arithmetic.
 
-### F3 — Exact-decimal audit mode (RFC-051) — effort M
+### F3 — Exact-decimal audit mode (RFC-051) — effort M — **done**
 PLAN §3.4's unbuilt promise: the interpreted executor over
 `decimal.Decimal` with a configured context, opt-in and slow, for sign-off
 runs; the RFC documents the agreement bound against the float executors and
 why it is what it is. No incumbent offers an exact-arithmetic mode at all.
 
-### F4 — The findings catalogue (RFC-052) — effort S
+**Outcome (RFC-051).** Built, and the bound the plan asked for now exists:
+across the nine templates the mode can audit, the interpreted float executor
+agrees with 34-digit decimal to between **1.1e-15 and 1.0e-13** relative,
+worst case over every variable and every period. Roughly thirteen
+trustworthy significant digits, measured rather than assumed.
+
+Four things worth carrying forward.
+
+**The conversion is the whole feature.** `0.035` is stored as
+`0.03500000000000000333…`, and that error exists before any arithmetic
+happens. Conversion goes through `Decimal(repr(x))`, which recovers what the
+actuary wrote — not `Decimal(x)`, which preserves the binary value and would
+defeat the point while still completing, still using decimal arithmetic and
+still reporting 34 digits. Both readings are offered (`as_written`,
+`as_stored`) because the gap between two such runs *is* the representation
+error with arithmetic error held constant, and without both a discrepancy
+has two candidate causes and no way to separate them.
+
+**"Exact" has a horizon that depends on the inputs.** `(1 − q)^t` with
+`q = 0.015` is genuinely exact — equal to an independently computed closed
+form — only while `3t` fits the 34 digits of decimal128, i.e. `t <= 11`. At
+`t = 13` the chain and the closed form part company. Neither is wrong, and
+34 digits against double's 16 is still the point; but a sign-off pack is
+exactly the document where a reader takes a label at face value, so the
+limit is asserted rather than described.
+
+**A bug this nearly shipped with, caught by asserting equality rather than a
+tolerance.** The proxy first converted every argument down to float on its
+way into the assumption layer. `Decrements.split` takes the *in-force count*,
+so that put the whole survival chain back into float arithmetic while the
+answer still arrived wearing `Decimal` — the run completed, the types were
+right, the numbers were the float numbers. The rule now distinguishes by
+value: integral arguments are lookup keys and go down to `int`; non-integral
+arguments are quantities and pass through. It works because
+`Decrements.split` is "deliberately uncoerced", a property RFC-004 chose for
+an unrelated reason.
+
+**Coverage is a partition, asserted in CI.** 9 audited, 8 outside (5 bind a
+scenario set, 3 pooled or coupled — the interpreted executor cannot run
+those either), 2 refused (`PayoutAnnuity`, `PensionBuyout`: the assumption
+layer hands back arrays and a one-policy-at-a-time decimal run has nothing
+to apply them to). Falling back to float there would produce a sign-off run
+that was a float run wearing a label. The test also asserts **none of the
+three buckets may empty out**, which is RFC-071's trap met from the other
+direction.
+
+### F4 — The findings catalogue (RFC-052) — effort S — **done**
 The sharp-edge findings (counterparty band cliff, interest-SCR duration
 matching, AoS ordering dependence, LDTI vs IFRS 17 timing, and RFC-061's
 pool of one — a pooled model run per policy returned plausible numbers in
@@ -846,6 +892,37 @@ which every policy's pool was itself) are currently scattered through RFCs. Coll
 finding, each backed by a runnable script under `scripts/findings/` asserted
 in CI — a demonstrable audit-and-review capability, per landscape §4.4, and
 sales collateral that is also a regression suite.
+
+**Outcome (RFC-052).** Six findings catalogued, each a page in
+`docs/findings/` and a script in `scripts/findings/`, with
+`tests/test_findings.py` asserting the correspondence both ways and running
+every demonstration. Two of F4's named findings — interest-SCR duration
+matching (RFC-026) and LDTI versus IFRS 17 timing (RFC-015) — are **not**
+catalogued, and the README says so rather than leaving a reader to notice.
+
+Three things worth carrying forward.
+
+**The claim is asserted in the test, not in the script.** A script that
+asserted its own claim would pass in CI while proving nothing about the
+engine, because the demonstration and the check would share every
+assumption including the wrong ones. So `demonstrate()` computes and returns
+numbers, and the test judges them. The scripts print for a human as well,
+which is what makes them collateral rather than only tests.
+
+**The correspondence fails in both directions.** A page without a script is
+an unbacked claim — the state the catalogue exists to leave — and a script
+without a page is a demonstration nobody can read. `CATALOGUED` pins the
+slug set, because the parametrised cases would otherwise silently stop
+running over anything: RFC-071's emptied-out refusal, met a third time.
+
+**It caught a bug while being built, and the existing test had not.**
+`representation_error.py` failed on its first run because RFC-051's
+`as_stored` returned a bare `Decimal` rather than an `Exact`, so values read
+that way could not meet the float literals in a `@var` body.
+`tests/test_exact.py` covered that path and passed, because it asked only
+for a variable whose body never meets one. The test checked the feature the
+way its author was thinking about it; the demonstration used it the way a
+user would.
 
 ---
 
@@ -928,6 +1005,78 @@ evidence pack, workbook) are produced into a content-addressed directory.
 
 ---
 
+## 9a. Workstream H — The documentation a buyer expects
+
+The landscape doc's §5.6 point about trust assets applies to documentation as
+directly as to support organisations: an incumbent arrives with an
+installation guide, an architecture description, a user manual and a training
+course, and a repository that arrives with an execution plan and 72 RFCs is
+not obviously the same kind of artefact — however much better the RFCs are.
+
+The RFCs are a *design record*, which is the right thing for them to be and
+the wrong thing to hand a new developer or an evaluating actuary. They are
+chronological, they argue with each other on purpose, and finding out how the
+engine works from them means reading seventy documents in order. What is
+missing is the orthogonal cut: how it is put together *now*, how to run it,
+and how to use it.
+
+Four items, each self-contained. None depends on any B, C, E, F or G item, so
+they can be taken whenever a session suits them — and H1 is worth doing before
+the next long piece of work rather than after.
+
+### H1 — `CLAUDE.md`, the working agreement in the repo — effort S
+The conventions an agent or a new developer needs *before* touching
+anything, currently spread across §1 of this plan, the RFC house style, and
+tribal knowledge that only exists in session prompts: the dependency
+discipline (§1.4), the bitwise invariant (§1.2), the golden-test rule
+(§1.3), the docstring floor, the "assert the refusals as well as the grants"
+convention, the `tests/` layout rules (not a package; never import across
+modules), the evidence-pack verification steps, and the commit-message
+voice. **Build:** `CLAUDE.md` at the repo root.
+
+**Accept:** a test asserts the file names every checked convention it claims
+to cover — the same derivation-over-restatement rule the prescribed-assumption
+provenance string earned, applied to a document that will otherwise drift the
+moment §1 changes.
+
+### H2 — Technology architecture — effort M
+**Build:** `docs/architecture.md`. The layer map (`engine/core`, `data`,
+`library`, `report`, `api`, `migrate`, `parity`) with the dependency rules
+that hold between them and *why*; the three executors and the classes §1.2
+splits them into; the `@var` graph and its evaluation model; where dated
+regulatory data lives and how a dated set is fingerprinted; the run registry,
+approvals and audit chain; and the deployment surfaces (REST, Excel add-in,
+warehouse). With diagrams that are generated from the code where they can be
+— an architecture diagram maintained by hand is a diagram that is wrong.
+
+**Accept:** the layer-dependency claims are asserted by an import-graph test,
+so the document cannot describe a boundary the code has stopped keeping.
+
+### H3 — Developer README — effort S
+The current `README.md` is 969 lines and is doing three jobs at once. Split
+the developer half out: install, the extras and what each is for, running the
+suite (including the `[compile]` extra's separate CI job), the benchmark
+family, how to add a template, how to add a dated regulatory set, how to add
+a finding to the catalogue, and the pre-push verification sequence.
+**Build:** `docs/developing.md`, with `README.md` reduced to the front door.
+
+**Accept:** every command the document quotes is executed in CI, so a stale
+instruction fails the build rather than a new developer's afternoon.
+
+### H4 — User guide — effort M
+For the actuary rather than the developer. **Build:** `docs/user-guide.md`:
+the model catalogue and what each template is for, assumption objects and
+bases, running a valuation through the API and through Excel, reading a run
+record and an evidence pack, the approval workflow, and — the section no
+incumbent ships — **what the engine refuses to do and why**, drawn from the
+findings catalogue (F4) and the prescribed-assumption refusals.
+
+**Accept:** every worked example in the guide is one of the specimens the
+evidence pack already runs, so the guide cannot show an example that does not
+work.
+
+---
+
 ## 10. Sequencing
 
 Priority order (from landscape §6, refined by dependency):
@@ -971,9 +1120,11 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: **B1 (§4, compiled kernels) is the
-next item**, it is the largest thing left, and F8 (RFC-072) has just removed
-the unknown that kept it unstarted through six RFCs — **read that assessment
+*Next action for the implementing agent: **B1 (§4, compiled kernels), then
+B2 and B3** — the whole speed workstream, taken in order because B3 gates on
+B1 and B2 shares its executor contract. B1 is the largest thing left, and F8
+(RFC-072) has just removed the unknown that kept it unstarted through six
+RFCs — **read that assessment
 before designing anything**, because the kernel's contents are now determined
 by IEEE-754 rather than open: correctly-rounded operations only, everything
 else hoisted into a NumPy-computed slab, `fastmath` off, no reduction at any
@@ -1094,6 +1245,13 @@ and the flag is *derived* from the values rather than listed beside them.
 The standard projection amount itself is still unbuilt — §3.C makes it
 disclosure-only for 2026, which is why the assumptions land before the
 calculation.
+
+**Workstream H (documentation) is new and unstarted.** H1 (`CLAUDE.md`), H2
+(architecture), H3 (developer README), H4 (user guide). None gates on
+anything, and H1 is worth taking before the next long piece of work rather
+than after — the conventions an agent needs before touching the repo
+currently live in §1 of this plan and in session prompts, which is not where
+a new developer looks.
 
 Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 —
 F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045, RFC-046) — milestone
