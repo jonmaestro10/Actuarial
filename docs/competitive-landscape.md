@@ -172,7 +172,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 |---|---|---|---|---|
 | Modelling paradigm | Declarative vars, proprietary IDE | Procedural, compiled | Configured, closed code | ✅ Declarative `@var` graph in plain Python, procedural escape hatch |
 | Models in version control / CI | ❌ binary formats | 🟡 partial | ❌ n/a | ✅ git-native, CI on every commit |
-| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 2,059 tests, closed forms, bitwise dual-executor equivalence, parity harness |
+| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 2,080 tests, closed forms, bitwise dual-executor equivalence, parity harness |
 | Vectorised execution across policies × scenarios | ❌ largely per-policy | ❌ | 🟡 | ✅ core design; ~40× interpreter, 100k×60y in seconds |
 | Compiled kernels / GPU | ✅ compiled C | ✅ C++ | ✅ | ❌ planned (graph + forward loop in place, "nothing is compiled yet") |
 | Grid / cross-machine scale-out | ✅ Enterprise grid | ✅ | ✅ GridLink | 🟡 multi-core sharding with bitwise guarantee; no cross-machine dispatch |
@@ -183,7 +183,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 | General insurance / P&C | 🟡 conversion libs | ❌ | ❌ | 🟡 chain-ladder LIC only |
 | IFRS 17 (GMM/VFA/PAA) | ✅ solution library | ✅ | ✅ | ✅ all three models, one net-cash invariant across every option |
 | Solvency II (BEL, SCR, RM) | ✅ | ✅ | 🟡 | ✅ stresses, market risk (2015/35 **and** 2026/269 as dated sets), counterparty, op risk, LAC adjustment, ring-fenced funds, risk margin |
-| US STAT/GAAP: LDTI, VM-20/21/22 | 🟡 | 🟡 | ✅ deepest | ✅ LDTI + CTE machinery, and **VM-22** for non-variable annuities (RFC-039): CTE stochastic reserve, cash-surrender-value floor, exclusions recorded with their basis, and a dated parameter set that refuses to invent the text's thresholds — shipped with the finding that a per-contract floor can zero out the diversification benefit of aggregating; ❌ full statutory formulaic reserves (C2) |
+| US STAT/GAAP: LDTI, VM-20/21/22 | 🟡 | 🟡 | ✅ deepest | ✅ LDTI + CTE machinery, and **VM-22** for non-variable annuities (RFC-039): CTE stochastic reserve, cash-surrender-value floor, exclusions recorded with their basis, and a dated parameter set that refuses to invent the text's thresholds — shipped with the finding that a per-contract floor can zero out the diversification benefit of aggregating; and **formulaic statutory reserves with asset adequacy** (RFC-040): the modified-premium family as one parameter, CRVM's cap computed rather than tabulated, and cash-flow testing on the same deficiency roll a principle-based reserve uses — shipped with the finding that first-year strain is exactly the cap's bite and its slope is discontinuous where the cap stops binding |
 | EV / ALM / asset side | ✅ ALS library | ✅ | ✅ | ✅ EV with TVOG, portfolio projection, defaults, forced-sale ordering, rebalancing strategies |
 | Experience analysis / AvE | 🟡 | 🟡 | 🟡 | ✅ incl. Shapley attribution (order-independent, adds up) — ahead of the field |
 | Reproducibility / run registry | 🟡 run logs | 🟡 Unify | 🟡 | ✅ content-addressed question+answer digests, cross-process verified |

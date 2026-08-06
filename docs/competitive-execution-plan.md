@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,059
+   naive implementation otherwise. The suite (`pytest`, currently 2,080
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -90,7 +90,7 @@ what any incumbent ships rather than merely reaching parity.
 | Excel integration | ✅ audit workbook writer (E2, RFC-047) and live add-in (E4, RFC-056) shipped | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet — and state, in the workbook, the precision the format costs, which no vendor's does | E2 |
 | Production UI | ✅ runs list, seriatim drill-down, semantic assumption diff, artifact and evidence views shipped (E3, RFC-048) | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have — plus a diff that names the component that moved, and URLs that are citations because the run id is a content digest | E3 |
 | VM-22 | ✅ shipped (C1, RFC-039): CTE stochastic reserve, CSV floor, recorded exclusions, dated basis | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit — here, that a per-contract floor can zero out the diversification benefit of aggregating | C1 |
-| US statutory formulaic reserves + AAT | ❌ | CRVM/net-premium + asset adequacy runner | Same | C2 |
+| US statutory formulaic reserves + AAT | ✅ shipped (C2, RFC-040): the modified-premium family as one parameter, CRVM's cap, and cash-flow testing on RFC-016's deficiency roll | CRVM/net-premium + asset adequacy runner | Same — here, that first-year strain is exactly the cap's bite and vanishes discontinuously in slope where the cap stops binding | C2 |
 | Pensions / longevity as products | ❌ | Buy-in/buy-out, longevity swap templates | Same | C3 |
 | US health / LTC | ❌ | LTC template on the multi-state engine | Same | C4 |
 | Regulatory track record / evidence | 🟡 evidence pack shipped (F1, RFC-049): test inventory, run equivalence attestation, coverage, parity records, digest-identical rebuild in CI | — | Machine-generated validation **evidence pack** — the closest software can get to a track record | F1 |
@@ -338,11 +338,31 @@ carries its ratio, a certification carries the actuary's name), because a
 component omitted after a passed test and one nobody computed are the same
 absence and different reserves.
 
-### C2 — US statutory formulaic reserves + AAT (RFC-040) — effort M
+### C2 — US statutory formulaic reserves + AAT (RFC-040) — effort M — **shipped**
 `engine/report/statutory.py`: CRVM / net-premium formulaic reserves (build on
 `engine/library/reserves.py`), plus an asset-adequacy-testing runner joining
 the liability projection to the existing asset side
 (`engine/data/assets.py`, `engine/report/embedded_value.py` patterns).
+
+**Shipped with a finding (RFC-040).** Writing a modified method as a pair
+of net premiums collapses the whole family to one parameter — the expense
+allowance — so net level, CRVM and full preliminary term are one reserve
+function and three ways of choosing its argument, and the two extremes are
+pinned against RFC-018's already-tested code rather than reimplemented.
+CRVM is full preliminary term with that allowance capped, and the first
+year's statutory strain then has a closed form: `V_1 = (E_fpt − E) ·
+ä_{x+1:n−1} / ä_{x:n}` — **exactly the cap's bite**, and exactly zero for
+every plan where the cap does not bind. The reserve is continuous across
+that boundary but not differentiable, so a sensitivity measured where the
+cap is inert predicts zero strain for a plan that has plenty; the suite
+measures the slope on both sides rather than warning about it. Third
+member of the counterparty-cliff family, after RFC-026 and RFC-039.
+
+The asset-adequacy half reinvents nothing: cash-flow testing and a
+principle-based reserve are the same accumulated-deficiency object, and
+what differs is the reduction across scenarios — a maximum over a handful
+of prescribed paths against a CTE over thousands. So the reduction is an
+argument, both are available, and the result records which was used.
 
 ### C3 — Pension risk transfer (RFC-041) — effort M
 `engine/library/pension_buyout.py` (buy-in/buy-out on the payout-annuity
@@ -694,18 +714,21 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: C2 (§5, US statutory formulaic
-reserves + AAT, RFC-040) is the next item — `engine/report/statutory.py`,
-CRVM/net-premium reserves on `engine/library/reserves.py` plus an
-asset-adequacy runner joining the liability projection to the asset side
-(`engine/data/assets.py`, and `engine/report/embedded_value.py` for the
-pattern). It pairs naturally with C1: VM-22's deterministic component and
-the formulaic floor are the same family of calculation, and RFC-039
-deliberately left the Standard Projection Amount out, so if C2 brings
-prescribed assumption sets with it, that gap is the place to close it.
-B1 (§4) remains unstarted and carries a written assessment of why — read it
-before picking the item up, and expect an array-expression compiler rather
-than a wrapper. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) —
-milestone M1 — F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045,
-RFC-046) — milestone M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) —
-milestone M4 — and C1 (RFC-039).*
+*Next action for the implementing agent: C3 (§5, pension risk transfer,
+RFC-041) is the next item — `engine/library/pension_buyout.py` on the
+payout-annuity chassis (joint-life, deferred members) and
+`engine/library/longevity_swap.py` (fixed leg against a floating survival
+index), with closed-form joint-life annuity values as the goldens. Note
+that unlike C1 and C2 these are **templates**, so §1.2's dual-executor
+invariant applies to them directly: they must be bitwise-identical under
+the interpreted and vectorized executors, and a longevity swap that reduces
+across lives would put itself in the block class instead — decide which
+class each belongs to before writing the first `@var`. One dated-set gap
+is on record from C1 and C2 and neither closed it: the prescribed
+assumption sets and scenario paths (VM-22's Standard Projection Amount, the
+prescribed cash-flow-testing scenarios). B1 (§4) remains unstarted and
+carries a written assessment of why. Shipped so far: A1 (RFC-033), A2
+(RFC-034), A4 (RFC-036) — milestone M1 — F1 (RFC-049), D1–D3 + E1
+(RFC-043, RFC-044, RFC-045, RFC-046) — milestone M3 — E2, E3, E4
+(RFC-047, RFC-048, RFC-056) — milestone M4 — and C1, C2 (RFC-039,
+RFC-040).*
