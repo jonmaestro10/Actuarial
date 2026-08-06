@@ -94,9 +94,14 @@ program). Two successors carry it forward:
   paired with **WTW Unify** for automation/orchestration/governance around
   model runs. Same fundamental trade: procedural flexibility over declarative
   auditability.
-- **RNA Analytics R³S Modeler** — the MoSes codebase itself, acquired from
-  WTW, continued and modernised (R³S cloud runs, IFRS 17 solution libraries).
-  Installed base mostly ex-MoSes shops, notably in Asia and the Middle East.
+- **RNA Analytics R³S Modeler** — *correction (Aug 2026): R³S is not the
+  MoSes codebase.* It is **IBM Algo Financial Modeler**, acquired by RNA
+  Analytics from IBM on 30 June 2017 and rebranded R³S. RNA competes in the
+  same free-form-modelling segment and actively markets MoSes-to-R³S
+  migration, which is how it earns its place in this subsection, but the
+  lineage is Algorithmics, not Tillinghast. Continued and modernised (R³S
+  cloud runs, IFRS 17 solution libraries); installed base notably in Asia
+  and the Middle East.
 
 This repo's PLAN takes the opposite bet — declarative by default, "MoSes-style
 free-form procedural code is the escape hatch, not the default" — and the
@@ -299,6 +304,234 @@ platform is a model-risk-averse institution, and the incumbents' weakness
 regulator-familiar).** The counter is exactly the repo's existing habit —
 machine-checked evidence, published benchmarks, parity reports — which is why
 the migration/parity tooling should come before any further product breadth.
+
+---
+
+## 7. Discovery: how the field exposes its engines — outputs and UX
+
+*Added August 2026. The sections above compare what the engines calculate;
+this one compares how anyone gets at them — the surfaces through which models
+are authored, runs are launched and watched, and results reach the people who
+never open the modelling tool. This is the terrain the execution plan's E1–E3
+items (warehouse, Excel, production UI) will be judged against, so it is
+worth knowing precisely.*
+
+### 7.1 Vendor by vendor
+
+**FIS Prophet — now "FIS Insurance Risk Suite."** The components have been
+renamed: Prophet Professional is **Model Developer**, Prophet Enterprise is
+**Enterprise Manager**, Glean is **Experience and Rating Manager**, and the
+Prophet Results Database is the **SQL Connector**. The authoring surface is
+still a Windows desktop IDE — workspaces holding libraries, products, run
+structures and model-point files; a **Diagram View** that navigates
+precedent/dependent variables and shows computed values after a run; a
+Schedule grid of variables across products. The engine generates C++
+compiled with MSVC or GCC (Linux workers supported since the 2024 Q4
+release). Runs go through Enterprise Manager **jobs** with a scheduler and a
+**Runlog**; classic Enterprise has no browser front end. Outputs are
+proprietary results files plus **`.rpt` policy-level files** (user-defined
+"variable groups" select what is written), with model points as
+comma-delimited text. Getting results *out* is an explicit product layer:
+the SQL Connector ETLs results plus the Runlog into Microsoft SQL Server at
+the end of a job; a newer **Flexible Results API** queries Enterprise
+Manager directly (no staging database) and feeds an **Insurance Data
+Repository** built for BI tools. A **Quality Assurance** module automates
+run-vs-run comparisons and regression testing. The 2024-era SaaS tier,
+**Production Manager**, is the first browser-based surface — pay-as-you-go
+execution with GPU/AVX options and spend-monitoring dashboards; it is a run
+console, not a modelling environment. Orchestration (Control Centre /
+**Process Orchestrator**) is REST-startable. Results consumers live in SQL
+Server, Excel extraction templates and BI — never in the IDE.
+
+**WTW RiskAgility FM + Unify.** The IDE is organised into four managers —
+**Code, Input, Run, Output** — around C++ model code, with step-through
+debugging and a visual **Dependency Viewer**; the Team edition adds version
+control via Git or Azure DevOps. Execution scales from desktop to
+Microsoft-HPC grids to **vGrid** (WTW's managed pay-per-use Azure grid);
+GPU execution shipped in June 2026 with a per-run CPU/GPU choice. The
+striking fact is the output story: the **standard output of a run is text
+files**, with custom formats possible and **reporting via an Excel add-in**.
+There is no documented public API for RAFM itself; the automation and
+governance story is **Unify**, a separate platform that drives RAFM (and any
+third-party tool with an API or a PowerShell hook), runs user-defined
+workflows that can pause for review/sign-off, and snapshots input data so a
+result can be traced to source and reruns reproduced. The cloud offer
+(**vPlace**) is a hosted virtual desktop bundling RAFM + vGrid + Unify — a
+managed workplace, not a web application. 2026 releases added LLM
+assistants inside the IDE for writing and explaining model code.
+
+**RNA Analytics R³S** (Algo Financial Modeler lineage — see the §2.2
+correction). Desktop **Modeler** with a **Profiler** for hot-spot analysis
+and a **Development Manager** for multi-user source control. The production
+surface is genuinely web-based and ahead of the other incumbents here:
+**Workflow Manager** submits and manages executions via GUI *or external
+API calls*, schedules recurring runs, invalidates downstream artifacts when
+inputs change, and carries approvals, Active Directory roles and an
+action-level audit trail. A **Toolkit** of APIs runs a model from a run
+archive file — the basis of **Process Manager**, which lets non-modellers
+execute models in a controlled frame, and of customer-built SQL reporting
+databases and embedded execution inside other applications. Outputs are
+Excel reports and data exports managed end-to-end by Workflow Manager, plus
+SQL databases; the AWS "R3S Cloud" deployment wires results into
+**QuickSight** for reporting.
+
+**Moody's AXIS.** The **dataset is the model** — effectively an archive of
+proprietary objects (Batches, Cells, DataLink tables, Formula Tables)
+edited through menus and switches rather than code; **FormulaLink** adds a
+real script editor for the escape-hatch cases, and "turnaround documents"
+(export, edit, re-import) let users generate AXIS objects programmatically.
+The enterprise surface, **EnterpriseLink**, is a Windows client/server
+application — role-customised dashboards, script jobs checked into a
+version-control project, a scheduler, and monitoring of **GridLink** jobs
+(command-line or workstation submission, up to 512 cores per job, three
+compute tiers up to Moody's pay-per-core-hour GLaaS, watched through a "C4"
+Cloud Control Center client). Two facts are worth holding onto. First,
+**an EnterpriseLink REST API does not exist yet** — as of the November 2025
+user forum it is in discovery/beta. Second, the legacy results format is
+**Microsoft Access .MDB files**, with Moody's actively pushing customers to
+SQL Server as 32-bit components retire in 2027. Downstream, AXIS feeds the
+RiskIntegrity subledger products for IFRS 17/LDTI. The UX for
+understanding the closed engine is documentation at industrial scale —
+26,000+ help texts — now fronted by **AXIS Navigator**, a GenAI assistant
+launched September 2025. DataLink, the input mapper, is single-threaded
+and welded into the AXIS executables; a "DataLink as a Service" with its
+own config UI and API layer is itself only a discovery project.
+
+**Milliman MG-ALFA / Integrate.** MG-ALFA is a Windows desktop application
+whose business logic is open to the user in an intuitive syntax (more
+transparent than AXIS, less free-form than MoSes was); runs execute via a
+generated command file through a bridge DLL, with **Seamless Distributed
+Processing** fanning work across grids and later **MG-ALFA Compute for
+Azure**. **Integrate** wraps this in the most consumer-finished surface any
+incumbent ships: tiered offerings culminating in end-to-end automation,
+with **Power BI Embedded dashboards inside the platform**, near-real-time
+run and cost telemetry, sandboxed what-if analysis exposed to
+non-modelling teams, and an API-first architecture claim (Microsoft's 2025
+case study) — all delivered as a managed service with Milliman operators
+watching production. Model development remains a thick-client activity;
+the web surface is for operating and consuming.
+
+**The cloud-native entrants** are defined by their exposure choices as much
+as their engines. **SLOPE** is the only platform where *authoring* is
+browser-native: a no-code formula builder with real-time validation, a
+"Relationship View" tracing assumptions to outputs, auto-versioned
+assumption changes, dynamic reports with drill-down to individual
+model-point output, multi-format export, a REST API, and a **Snowflake
+integration** so actuarial output sits next to corporate data in whatever
+BI tool the insurer already owns. **Coherent Spark** inverts the problem:
+authoring stays in Excel, and the product is the exposure layer — named
+ranges become a governed **REST API** with SDKs, a Testing Center that
+auto-generates regression testbeds, git-style versioning with dual
+approval, and (new) an MCP surface for AI agents; consumers are systems,
+not people. **Montoux** is code-centric (a proprietary language plus
+Python, developed in VSCode/Git/Jupyter) with an "Output Studio" for
+drill-down and APIs into Power BI. **OAC Mo.net** models in VB.NET in a
+desktop studio, compiles models to DLL/EXE, and — its distinctive move —
+**publishes models as services**: surrender-value quotes callable from
+policy administration, "modelling as a service" over public or private
+APIs. **Open source** exposes only code: modelx offers Spyder-plugin
+widgets (object tree, DataFrame viewer, precedent/dependent tracer) and
+pandas/Excel outputs; cashflower writes CSVs from a command-line run;
+heavylight and JuliaActuary return DataFrames to whoever is driving the
+REPL or notebook.
+
+### 7.2 Exposure surfaces at a glance
+
+| Platform | Authoring surface | Run submission & monitoring | Results store / format | Results-consumer UX | Programmatic access |
+|---|---|---|---|---|---|
+| Prophet / IRS | Windows IDE (Diagram View) | Enterprise Manager jobs + Runlog; SaaS Production Manager (browser, GPU, spend dashboards) | Proprietary + `.rpt` policy files → SQL Server (SQL Connector), IDR | SQL/Excel/BI; QA run-comparison module | Flexible Results API; REST via Process Orchestrator |
+| RAFM + Unify | Windows IDE (4 managers, Dependency Viewer) | Run Manager; HPC/vGrid; Unify workflows w/ sign-off gates | **Text files**; custom formats | Excel add-in; Unify dashboards/audit | None public for RAFM; Unify scripting/PowerShell |
+| R³S | Windows Modeler + Profiler | **Web Workflow Manager** (GUI or API), scheduling, approvals | Excel exports; SQL reporting DBs | Workflow dashboards; QuickSight (AWS) | Toolkit APIs (run from archive); Process Manager |
+| AXIS | Windows app; dataset-as-model, menu/switch config | E-Link (Windows client) scheduler; GridLink/GLaaS via C4 client | **.MDB → SQL Server** (transition underway); report batches | Role dashboards (E-Link); RiskIntegrity downstream; 26k help texts + GenAI Navigator | E-Link scripting/CLI; **REST API in beta (Nov 2025)** |
+| MG-ALFA / Integrate | Windows desktop, open logic syntax | Integrate portal, managed ops, run/cost telemetry | Client warehouses; platform output capture | **Power BI Embedded in-platform**; sandboxed what-if for non-modellers | API-first claim (Integrate) |
+| SLOPE | **Browser, no-code** formula builder | In-app cloud runs ("High Performance Mode") | Multi-format export; **Snowflake** | In-app reports w/ model-point drill-down; BI via Snowflake | REST API |
+| Coherent Spark | Excel (named ranges) | n/a — services, not runs | JSON API responses | None — consumers are systems | **REST + SDKs + MCP**; Testing Center |
+| Mo.net | .NET desktop studio | Execution/Quotation services | Excel; BI connectors | Excel | Models compiled to DLL/EXE, **published as services** |
+| lifelib/modelx | Python / Spyder widgets | Python calls | pandas / Excel | Whatever the actuary builds | It *is* the API |
+| This repo | Python `@var` in git | REST `POST /runs` → 202 + fingerprint, event stream; demo UI | Parquet round-trips; content-addressed registry | 🟡 demo UI only | ✅ Python SDK + REST, idempotent by digest |
+
+### 7.3 The patterns
+
+1. **Authoring and consuming are different products everywhere.** Every
+   incumbent splits a thick-client development environment from a
+   production/run-operations layer (Enterprise Manager, Unify, Workflow
+   Manager, EnterpriseLink, Integrate), and the results consumer touches
+   neither — they get a database, a workbook, or a BI dashboard. The
+   "actuarial platform UI" that E3 contemplates is, in the field, mostly a
+   *run-operations* UI; nobody's modelling surface is web-native except
+   SLOPE's.
+
+2. **The real results UX is somebody else's BI tool.** Prophet lands in SQL
+   Server and an "Insurance Data Repository built for BI"; AXIS is
+   mid-migration from Access .MDB to SQL Server; Integrate embeds Power BI;
+   R³S Cloud wires up QuickSight; SLOPE ships a Snowflake integration. The
+   industry has converged on *land the numbers in a queryable store and let
+   BI do the looking* — which is precisely E1's star-schema-in-Parquet
+   design, and validates putting the warehouse before any bespoke results
+   screens. The beyond-parity move stands: none of those stores carries a
+   run fingerprint on every row.
+
+3. **Excel is the universal delivery vehicle, still.** RAFM's standard
+   output is text files plus an Excel reporting add-in; R³S's Workflow
+   Manager manages Excel reports end-to-end; Prophet teaches result
+   extraction templates; AXIS/Integrate both meet Excel on the way out. E2
+   is not a nice-to-have; it is how every incumbent's numbers actually
+   reach sign-off meetings.
+
+4. **APIs are arriving late and partially — except among the newcomers.**
+   The most instructive single fact of this discovery: **AXIS's
+   EnterpriseLink REST API was still in beta in November 2025**, four
+   decades into the product's life. Prophet's REST surface exists only at
+   the orchestration and results-extraction edges; RAFM has no public API
+   at all, hiding automation behind Unify. Meanwhile Spark, Mo.net and
+   SLOPE treat the API *as the product*. This repo's RFC-031 surface —
+   202-with-fingerprint submission, idempotency by content digest, an event
+   stream — is at the newcomers' edge of the field, ahead of every
+   incumbent, and the fingerprint-idempotent identifier has no equivalent
+   anywhere in the survey.
+
+5. **Policy-level drill-down is the output feature vendors lead with.**
+   Prophet's `.rpt` variable groups, AXIS's seriatim valuation output,
+   SLOPE's drill-to-model-point debugging, Montoux's Output Studio. The
+   engine here already computes per-policy; the warehouse and UI items
+   should treat *seriatim-with-lineage* as the demo moment, not an option.
+
+6. **Lineage tracing in the authoring UX is table stakes.** Prophet's
+   Diagram View, RAFM's Dependency Viewer, modelx's MxAnalyzer, SLOPE's
+   Relationship View — every platform gives modellers a precedent/dependent
+   navigator. The repo's generated Markdown + dependency graph (RFC-030)
+   covers the documentation half; an *interactive* trace view in E3 would
+   meet the field's baseline expectation.
+
+7. **Run reproducibility is audited by snapshot, not by construction.**
+   Unify snapshots input files so reruns can be reproduced; Prophet keeps a
+   Runlog; E-Link keeps job logs and version-control projects. All of it is
+   *evidence collected around* the run. The registry here makes the run
+   identifier itself the evidence — same question, same digest, refusal on
+   determinism failure — which remains the sharpest differentiator this
+   discovery found, and one no surveyed surface replicates.
+
+8. **AI assistants are appearing on every surface at once** — AXIS
+   Navigator over 26,000 help texts, LLM assistants inside RAFM, Montoux's
+   Model Copilot, Spark's MCP endpoint. The incumbents need these layers
+   because their engines are opaque to language models. Plain-Python
+   models in git are maximally legible to the same tools with no
+   intermediary product — worth stating in any pitch, and worth an MCP
+   surface here eventually (a natural E3-adjacent item).
+
+*Discovery sources: FIS product pages and Prophet community/training
+material; WTW RAFM brochure, Unify pages, vGrid/vPlace listings and the
+June 2026 GPU release; RNA Analytics software pages, Workflow Manager
+brochure and AWS/Azure marketplace listings; Moody's AXIS module pages, the
+November 2025 AXIS user-forum deck, and SOA "The Modeling Platform" (June
+2020); Milliman Integrate pages, the Power BI press release and Microsoft's
+2025 case study; slopesoftware.com, montoux.com, coherent.global/docs,
+softwarealliance.net; lifelib/modelx, cashflower and heavylight
+documentation and repositories. Vendor performance and adoption claims are
+marketing figures, unverified. A small number of well-supported inferences
+remain (e.g. that classic Enterprise Manager and EnterpriseLink have no
+browser front end — consistent across every source, asserted by none);
+weaker inferences were dropped.*
 
 ---
 
