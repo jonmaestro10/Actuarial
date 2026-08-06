@@ -1,13 +1,12 @@
-# RFC-054: Two error bars that are not the same error bar
+# RFC-054: Two error bars that are not the same error bar, and a reserve that is a residual
 
-Status: **partially implemented** — reserve variability only.
-`engine/report/incurred_claims.py`, `tests/test_gi_reserving.py`.
-The premium-liability template (C5's second half) is **not built**; see the
-last section.
+Status: **implemented** — `engine/report/incurred_claims.py`,
+`engine/library/general_insurance.py`, `tests/test_gi_reserving.py`,
+`tests/test_general_insurance.py`.
 
 ## Summary
 
-Execution plan §10, item C5, first half:
+Execution plan §10, item C5. Both halves:
 
 > **Reserve variability:** extend `incurred_claims.py` with Mack standard
 > errors and an over-dispersed-Poisson bootstrap — golden-tested against the
@@ -113,13 +112,44 @@ that their standard deviations agree. Two different streams can agree on a
 summary statistic and disagree on every draw, and it is the draws that a
 published reserve range has to be recomputable from.
 
-## What is not built
+## The second half: the reserve that is a residual
 
-**C5's second half.** `engine/library/general_insurance.py` — earned and
-unearned premium, earning patterns, expected loss and cat-load cashflows,
-pairing with the PAA overlay in `engine/report/paa.py` — is not started. This
-RFC's status says *partially implemented* rather than implying otherwise, and
-the execution plan's C5 entry records which half landed.
+`engine/library/general_insurance.py` is the other side of a general
+insurer's balance sheet. `incurred_claims.py` measures claims that have
+happened; this measures the ones that have not — a policy is written, its
+premium earns over the cover period, and what has not earned is the liability
+for remaining coverage.
+
+**The unearned premium reserve is a residual, not a recursion.** `UPR(t) =
+written − earned to date`. A model that rolled the reserve forward *and*
+accumulated the earnings would hold two representations of one quantity, and
+they disagree in the last bits at best and by an earning pattern at worst.
+The identity is asserted period by period rather than at the end, because a
+pattern that earned the right total in the wrong order passes an endpoint
+check.
+
+**The catastrophe load stays out of the loss ratio.** Rolling it in changes
+*nothing* about the expected cashflow — which is exactly why it is tempting,
+and why it is wrong. The two costs have the same mean and different
+distributions, and every downstream question worth asking (risk adjustment,
+capital, reinsurance attachment) is about the distribution. The test asserts
+both halves: a 62%+5% split and a rolled-up 67% agree period by period on
+total claims, and disagree on everything that distinguishes them.
+
+Earning patterns are named and an unrecognised one is **refused** rather than
+defaulting to uniform: a typo that silently earns the premium a different way
+changes every reserve in the projection and says nothing in the output. Both
+patterns' shares sum to exactly 1, which is what makes the reserve run off to
+zero rather than to a rounding somebody has to explain.
+
+**A different equivalence class from C3 and C4.** Annual steps, scalar
+assumptions, no pooled term — so this one is in §1.2's per-policy bitwise
+class and *owes* the interpreted/vectorized equivalence check rather than a
+statement of which executors it supports. It is asserted with
+`np.array_equal`, not a tolerance. It needed nothing from the basis chassis,
+so it did not take it, and it carries a worked example as a result.
+
+## What is not built
 
 **No published ODP figure is asserted as a golden.** φ is, because it is a
 property of the fit and is quoted consistently in the literature. The
