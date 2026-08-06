@@ -14,6 +14,10 @@ test = ["pytest>=8", "python-dateutil>=2.8"]
 api = ["fastapi>=0.110", "httpx>=0.27", "uvicorn>=0.27"]
 data = ["pyarrow>=15"]
 excel = ["openpyxl>=3.1", "xlwings>=0.31"]
+# The compiler B1 proposes to build on. Present so the bitwise boundary in
+# engine/core/bitwise.py can be *measured* against it rather than asserted;
+# nothing in engine/ imports it, and engine/core stays NumPy-only (§1.4).
+compile = ["numba>=0.61"]
 
 [tool.setuptools.packages.find]
 include = ["engine*"]

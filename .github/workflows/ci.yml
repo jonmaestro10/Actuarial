@@ -10,7 +10,26 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        # 3.13 measured green on the full suite against numpy 2.5.1 before
+        # being added here.
+        #
+        # 3.14 is *not* known to be blocked — an earlier note here said it was
+        # and that note was wrong. It came from testing 3.14.0**rc2**, where
+        # pydantic's `typing._eval_type(..., prefer_fwd_module=True)` raises
+        # TypeError. The parameter was added to CPython between rc2 and
+        # release: it is absent at tag v3.14.0rc2 and present at v3.14.0. So
+        # the failure is an artefact of the pre-release, not a defect, and
+        # 3.14 is untested here rather than excluded. Add it once a runner
+        # with 3.14 *final* has actually run the suite.
+        #
+        # **The matrix is already heterogeneous in NumPy, and permanently.**
+        # numpy 2.5 requires Python >= 3.12, so the 3.11 job resolves 2.4.x
+        # and every other job resolves 2.5.x. That is fine and was checked
+        # rather than assumed: the bit patterns of exp, log, log1p, expm1,
+        # power, sqrt and sin over 200,000 values are byte-identical between
+        # 2.4.6 and 2.5.1, so no golden value and no pack digest moves across
+        # the matrix. It is worth re-checking on the next NumPy minor.
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,3 +46,29 @@ jobs:
           python scripts/evidence_pack.py --out evidence
           python scripts/evidence_pack.py --out evidence-rebuild
           diff -r evidence evidence-rebuild
+
+  # RFC-072's boundary, measured rather than quoted. A separate job because
+  # it is the only thing in the repo that needs a compiler: installing it
+  # into the matrix above would put a 60 MB llvmlite download in front of
+  # every test run, and a failure to build it would block a suite that does
+  # not depend on it. Here it fails on its own.
+  #
+  # It is not optional. Without this job the 39 measurement cases in
+  # tests/test_bitwise_boundary.py skip, and a skipped measurement reads
+  # exactly like a passing one in the summary line.
+  bitwise-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[test,compile]"
+      # REQUIRE_COMPILE_EXTRA turns "the compiler is missing, so skip" into
+      # "the compiler is missing, so fail". Without it a job whose install
+      # step half-succeeded would skip all 39 measurement cases and report
+      # green, which is the failure mode this job exists to prevent.
+      - name: Measure what a compiled kernel reproduces bit for bit
+        env:
+          REQUIRE_COMPILE_EXTRA: "1"
+        run: pytest -q tests/test_bitwise_boundary.py
