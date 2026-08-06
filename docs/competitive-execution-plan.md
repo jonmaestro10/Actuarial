@@ -28,6 +28,24 @@ them; the acceptance criteria assume them.
    New executors (B1) join that equivalence class; new templates (C-items)
    must pass it; nothing may weaken it to a tolerance. If an operation cannot
    be made bitwise-reproducible, replace the operation, not the guarantee.
+
+   **Amended by RFC-061 — there are two classes, not one.** A template
+   declaring `@pool` variables (or setting `couples_model_points`) reduces
+   across the model-point axis, and the interpreted executor evaluates one
+   policy at a time, so it cannot make that reduction: `GroupLife` and
+   `WithProfitsEndowment` are outside the per-policy class *by
+   construction*, not in breach of it. The interpreted executor now refuses
+   such a block rather than returning a pool of one, and the invariant reads:
+
+   - **per-policy class** — interpreted ≡ vectorized ≡ (B1) compiled,
+     bitwise, for every template that does not couple its model points;
+   - **block class** — for pooled and coupling templates: vectorized ≡ (B1)
+     compiled bitwise, plus chunk-invariance, run-to-run determinism, and a
+     *single-model-point bridge* into the per-policy class, where a pool of
+     one is the same reduction either way and both executors agree bitwise.
+
+   Nothing is weakened to a tolerance. B1's acceptance criterion is read
+   against whichever class a template belongs to.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
@@ -63,19 +81,19 @@ what any incumbent ships rather than merely reaching parity.
 
 | Deficiency (landscape §3/§5) | Today | Parity target | Beyond-parity move | Item |
 |---|---|---|---|---|
-| Incumbent migration tooling | ❌ only VPLA harness | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
+| Incumbent migration tooling | 🟡 M1 shipped: parity core (A1, RFC-033), Prophet readers (A2, RFC-034), scaffold (A4, RFC-036); MoSes readers (A3) on pilot demand | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
 | Compiled kernels | ❌ | Numba forward-loop kernels | Compiled executor joins the **bitwise** equivalence class — incumbents compile but never prove equivalence | B1 |
 | Cross-machine scale-out | 🟡 one machine | Multi-machine dispatch | Bitwise-identical results regardless of grid topology, verified by the registry | B2 |
-| Governance: RBAC, approvals | ❌ | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
-| Production run operations | ❌ | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
-| Results warehouse | ❌ | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
+| Governance: RBAC, approvals | 🟡 token auth + four roles (D1, RFC-043) and digest-bound 4-eyes approval (D2, RFC-044) shipped | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
+| Production run operations | 🟡 digest-chained audit log + declarative run calendar shipped (D3, RFC-045) | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
+| Results warehouse | ✅ star schema in partitioned Parquet with the run fingerprint on every fact row (E1, RFC-046) | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
 | Excel integration | ❌ | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet | E2 |
 | Production UI | 🟡 demo only | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have | E3 |
 | VM-22 | ❌ | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit | C1 |
 | US statutory formulaic reserves + AAT | ❌ | CRVM/net-premium + asset adequacy runner | Same | C2 |
 | Pensions / longevity as products | ❌ | Buy-in/buy-out, longevity swap templates | Same | C3 |
 | US health / LTC | ❌ | LTC template on the multi-state engine | Same | C4 |
-| Regulatory track record / evidence | ❌ (not software) | — | Machine-generated validation **evidence pack** — the closest software can get to a track record | F1 |
+| Regulatory track record / evidence | 🟡 evidence pack shipped (F1, RFC-049): test inventory, run equivalence attestation, coverage, parity records, digest-identical rebuild in CI | — | Machine-generated validation **evidence pack** — the closest software can get to a track record | F1 |
 | Vendor library update cadence | ❌ (not software) | — | Regulation-as-dated-sets diff reports (generalize the 2015/35 vs 2026/269 pattern) | F2 |
 | Exact-decimal audit mode (PLAN §3.4 promise) | ❌ | — | Decimal sign-off executor; no incumbent offers one | F3 |
 | General insurance beyond chain-ladder LIC | 🟡 | Reserve variability (Mack, ODP bootstrap) + premium-liability template | Reserve *ranges* reproduced against published triangles in CI — Igloo/ResQ assert them, we prove them | C5 |
@@ -103,7 +121,7 @@ and only the VPLA harness (`scripts/vpla_parity.py`) exists. This workstream
 is first because it has the highest commercial leverage per unit of work and
 because every later benchmark claim (B) is more credible with a parity story.
 
-### A1 — The parity core (RFC-033) — effort M
+### A1 — The parity core (RFC-033) — effort M — **shipped**
 
 Generalize the VPLA harness into a reusable diff engine.
 
@@ -130,7 +148,7 @@ others; tolerance policy honoured per variable; markdown renders; registry
 entry round-trips. VPLA harness still passes against a checkout (manual,
 documented in the RFC).
 
-### A2 — Prophet readers (RFC-034) — effort M
+### A2 — Prophet readers (RFC-034) — effort M — **shipped**
 
 **Build:** `engine/migrate/prophet.py` (new package `engine/migrate/`).
 
@@ -159,7 +177,7 @@ Same shape as A2: `engine/migrate/moses.py`, dialect-driven, fixture-tested,
 feeding the same `ParitySpec`. Lower priority than A2 (Prophet has the larger
 installed base); do after A4 if pilot demand says so.
 
-### A4 — Conversion scaffold (RFC-036) — effort M
+### A4 — Conversion scaffold (RFC-036) — effort M — **shipped**
 
 **Build:** `engine/migrate/scaffold.py`.
 
@@ -176,8 +194,9 @@ installed base); do after A4 if pilot demand says so.
 module that imports, subclasses `Model`, and whose mapping table covers every
 input variable; the emitted `ParitySpec` runs under A1.
 
-**Milestone M1 — "the pilot story":** A1 + A2 + A4 shipped. The landscape
-doc's migration row flips ❌ → 🟡 (✅ once a real estate has been through it).
+**Milestone M1 — "the pilot story":** A1 + A2 + A4 shipped ✅ (RFC-033,
+RFC-034, RFC-036). The landscape doc's migration row is 🟡 (✅ once a real
+estate has been through it).
 
 ---
 
@@ -187,7 +206,7 @@ Landscape §5.1: the binding constraint for production nested-stochastic. The
 graph and forward loop exist (`engine/core/graph.py`, `vector.py`); PLAN §4.2
 and §4.3 are designed but unbuilt.
 
-### B1 — The compiled executor (RFC-037) — effort L
+### B1 — The compiled executor (RFC-037) — effort L — **not started**
 
 **Build:** `engine/core/compiled.py`; optional extra `[compile]` (Numba).
 
@@ -201,8 +220,22 @@ and §4.3 are designed but unbuilt.
 - Cache compiled kernels per (model class, time structure) keyed by the
   graph digest.
 
+**Assessment (2026-08, before starting):** this item is larger than its
+effort marker. Numba cannot compile a `@var` body as written — the bodies
+call into assumption objects (`periodic_q`, `Decrements.split`, expense and
+treaty bases), which are ordinary Python over tables and objects. Emitting a
+jitted forward loop with *the same op order* therefore means translating the
+DSL into a compilable form: an array-expression tape recorded off the
+vectorized executor, or an AST transpiler over `@var` bodies with the
+assumption lookups hoisted into precomputed slabs. Either is a project in
+its own right, and neither can be half-shipped without weakening §1.2. It
+was left unstarted rather than begun badly; F1 (whose dependency A1 was
+already met) was taken next, per §10's own note that B2 does not require B1.
+
 **Accept:** every template in `engine/library/` bitwise-identical across
-interpreted / vectorized / compiled; `scripts/benchmark_compiled.py` extends
+interpreted / vectorized / compiled — read against §1.2's two classes, so
+for the two pooled templates the target is vectorized ≡ compiled plus the
+single-point bridge (RFC-061); `scripts/benchmark_compiled.py` extends
 the benchmark family; target ≥5× over the vectorized executor on the
 100k × 60y benchmark, actual numbers published in the RFC (per PLAN:
 marketing = engineering). If any op resists bitwise reproduction under Numba,
@@ -342,7 +375,7 @@ Landscape §5.3. The run registry already provides the audit substrate; this
 workstream adds the human-workflow layer. All of it lives behind the `[api]`
 extra — the core stays a library.
 
-### D1 — AuthN and roles (RFC-043) — effort M
+### D1 — AuthN and roles (RFC-043) — effort M — **shipped**
 `engine/api/auth.py`: token-based authentication (hashed tokens in a config
 file; no new runtime dependency), four roles — *viewer* (read runs/results),
 *runner* (submit), *approver* (D2), *admin* (principals). Every existing
@@ -350,7 +383,7 @@ route gains a role requirement; `tests/test_auth.py` exercises allowed and
 denied per role. Unauthenticated mode remains the default for library/local
 use — auth activates when a principals file is configured.
 
-### D2 — Assumption approval, 4-eyes (RFC-044) — effort M
+### D2 — Assumption approval, 4-eyes (RFC-044) — effort M — **shipped**
 `engine/core/approvals.py` + API routes. An approval is a content-addressed
 record `(assumption digest, approver, timestamp, note)` in the registry.
 A run submitted in **approved mode** refuses any assumption set whose digest
@@ -359,15 +392,16 @@ point to state in the RFC: approval binds to the *digest*, so an identical
 re-derived assumption set stays approved and any change — however small —
 un-approves. That is stronger than every incumbent's label-based workflow.
 
-### D3 — Audit log and run calendar (RFC-045) — effort S
+### D3 — Audit log and run calendar (RFC-045) — effort S — **shipped**
 Append-only, digest-chained audit log of API mutations (submit, approve,
 principal change) — same tamper-evidence discipline as the registry. A
 production run calendar: scheduled runs defined declaratively (cron
 expression + frozen request fingerprint) executed by a worker script, not
 by core.
 
-**Milestone M3 — "deployable":** D1–D3 + E1. An insurer's model-risk
-function can point at RBAC, 4-eyes, an audit log, and the registry.
+**Milestone M3 — "deployable":** D1–D3 + E1 — **shipped** (RFC-043,
+RFC-044, RFC-045, RFC-046). An insurer's model-risk function can point at
+RBAC, 4-eyes, an audit log, and the registry.
 
 ---
 
@@ -375,7 +409,7 @@ function can point at RBAC, 4-eyes, an audit log, and the registry.
 
 Landscape §5.4 and §6.5.
 
-### E1 — Results warehouse (RFC-046) — effort M
+### E1 — Results warehouse (RFC-046) — effort M — **shipped**
 `engine/data/warehouse.py`: a star schema in partitioned Parquet —
 `fact_cashflow(run_fingerprint, modelpoint_id, scenario, t, variable, value)`
 with dimension tables for runs (fingerprint, model, assumption digests,
@@ -426,7 +460,7 @@ Landscape §4 lists five places the repo is already ahead. These items widen
 those leads into things no incumbent can answer. F1 should land early (after
 A1 and B1) because it compounds: every subsequent item enriches the pack.
 
-### F1 — The validation evidence pack (RFC-049) — effort M
+### F1 — The validation evidence pack (RFC-049) — effort M — **shipped**
 `engine/report/evidence.py` + `scripts/evidence_pack.py`: one command emits a
 content-addressed directory — the test inventory (collected live from
 pytest), the closed-form identity list, the executor-equivalence attestation
@@ -453,8 +487,9 @@ why it is what it is. No incumbent offers an exact-arithmetic mode at all.
 
 ### F4 — The findings catalogue (RFC-052) — effort S
 The sharp-edge findings (counterparty band cliff, interest-SCR duration
-matching, AoS ordering dependence, LDTI vs IFRS 17 timing) are currently
-scattered through RFCs. Collect them: `docs/findings/` with one page per
+matching, AoS ordering dependence, LDTI vs IFRS 17 timing, and RFC-061's
+pool of one — a pooled model run per policy returned plausible numbers in
+which every policy's pool was itself) are currently scattered through RFCs. Collect them: `docs/findings/` with one page per
 finding, each backed by a runnable script under `scripts/findings/` asserted
 in CI — a demonstrable audit-and-review capability, per landscape §4.4, and
 sales collateral that is also a regression suite.
@@ -583,5 +618,10 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: claim RFC-033 and begin A1 (§3),
-following the protocol in §1.*
+*Next action for the implementing agent: B1 (§4) is unstarted and carries a
+written assessment of why — read it before picking the item up, and expect an
+array-expression compiler rather than a wrapper. Everything else on §10's
+path is open; E2 (§7, the Excel workbook) is the next item in sequence.
+Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 —
+F1 (RFC-049), and D1–D3 + E1 (RFC-043, RFC-044, RFC-045, RFC-046) —
+milestone M3.*

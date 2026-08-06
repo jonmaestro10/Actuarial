@@ -22,7 +22,9 @@ competitive with, and in several respects ahead of, what the incumbents offer:
   proprietary IDE.
 - **Validation rigour exceeds industry practice.** 1,326 test functions across
   55 files; closed-form golden tests; two executors (interpreted and
-  vectorized) required to agree **bitwise** on every template; a 408,000-rate
+  vectorized) required to agree **bitwise** on every template that does not
+  pool across model points, and a stated second class of claims for the two
+  that do (RFC-061); a 408,000-rate
   bitwise parity harness against the validated VPLA implementation; a
   content-addressed run registry that refuses a determinism failure. No
   incumbent ships anything like this level of machine-checked accuracy
@@ -181,13 +183,13 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 | Experience analysis / AvE | 🟡 | 🟡 | 🟡 | ✅ incl. Shapley attribution (order-independent, adds up) — ahead of the field |
 | Reproducibility / run registry | 🟡 run logs | 🟡 Unify | 🟡 | ✅ content-addressed question+answer digests, cross-process verified |
 | Model documentation / lineage | ✅ formula browser | 🟡 | 🟡 manual is the doc | ✅ generated Markdown + dependency graph with time offsets; docstring coverage measured and asserted (80.3% floor) |
-| API-first integration | ❌ file drops | 🟡 | 🟡 | ✅ Python SDK + REST (202/fingerprint/event stream), Parquet I/O |
+| API-first integration | ❌ file drops | 🟡 | 🟡 | ✅ Python SDK + REST (202/fingerprint/event stream), Parquet I/O, and a star-schema results warehouse whose every fact row carries the run fingerprint (RFC-046) |
 | Production UI (runs, results explorer, assumption diffing) | ✅ | ✅ | ✅ | 🟡 demo UI only |
-| Governance: RBAC, approval workflows, multi-user | ✅ | ✅ Unify | ✅ | ❌ |
+| Governance: RBAC, approval workflows, multi-user | ✅ | ✅ Unify | ✅ | 🟡 token authentication and four roles on every route (RFC-043), off by default so the library is unchanged, plus 4-eyes assumption approval bound to the content digest rather than to a label (RFC-044) — an approval that cannot silently drift, which no incumbent's label-based workflow offers — and a digest-chained audit log plus a declarative run calendar whose entries freeze the request fingerprint (RFC-045) |
 | Excel integration | ✅ | ✅ | ✅ | ❌ |
-| Incumbent migration tooling (readers + parity reports) | n/a | n/a | n/a | ❌ planned (PLAN §6); only the VPLA parity harness exists |
+| Incumbent migration tooling (readers + parity reports) | n/a | n/a | n/a | 🟡 parity core (RFC-033: reusable diff engine, Markdown report, registered against both content digests), Prophet MPF/results readers (RFC-034, dialect-driven, mapping report) and conversion scaffold (RFC-036); ❌ MoSes readers |
 | Licence / cost model | Heavy, per-core/grid | Heavy | Heavy | Open code; one runtime dependency (NumPy); optional extras |
-| Regulatory track record & support organisation | ✅ decades | ✅ | ✅ | ❌ none |
+| Regulatory track record & support organisation | ✅ decades | ✅ | ✅ | ❌ none — but a machine-generated validation evidence pack (RFC-049): live test inventory, run-level executor-equivalence attestation, coverage, reconciliations on record, digest-identical rebuild asserted in CI |
 
 ---
 

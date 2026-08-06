@@ -12,6 +12,10 @@ does not have. Run it whenever the basis changes::
 
     python scripts/vpla_parity.py --vpla /path/to/vpla
 
+The comparison itself is RFC-033's parity core (:mod:`engine.parity`) since
+that landed: this script's job is loading VPLA and choosing the
+configurations, not owning a diff loop. The printed output is unchanged.
+
 VPLA fetches its tables from S3 inside a pydantic validator, so the harness
 installs a stub for ``application.aws_connection`` that serves the JSON from
 the checkout's own ``data/`` directory instead. Nothing else about the
@@ -37,6 +41,18 @@ from engine.library.annuities import (  # noqa: E402
     annuity_factor,
     reversionary_annuity_factor,
 )
+from engine.parity import (  # noqa: E402
+    ExternalTable,
+    ParitySpec,
+    Tolerance,
+    TolerancePolicy,
+    diff,
+)
+
+#: Bitwise, and stated as such: the engine reproduces VPLA's rates exactly,
+#: so the harness reconciles at zero tolerance rather than at a number
+#: somebody could later loosen.
+EXACT = Tolerance(absolute=0.0, relative=0.0)
 
 
 def install_local_table_loader(vpla_root: Path):
@@ -105,10 +121,14 @@ def build_pair(MortalityTable, table_name, improvement_name, year_start, **optio
 
 
 def compare(theirs, ours, lives, freq, n_periods):
-    """Every period rate and survival factor, compared for equality."""
-    worst = 0.0
-    mismatches = 0
-    total = 0
+    """Every period rate, compared for equality — on the RFC-033 parity core.
+
+    The engine side is a ``(period, life)`` array of rates; the external side
+    is VPLA's own ``mortality_period`` evaluated cell by cell; the tolerance
+    is exact, because this harness has never accepted a difference and the
+    core is where that claim now gets written down. The counts returned are
+    the same three numbers the report has always printed.
+    """
     from dateutil.relativedelta import relativedelta
 
     step = 12 // freq
@@ -116,17 +136,26 @@ def compare(theirs, ours, lives, freq, n_periods):
     sexes = [sex for _, sex in lives]
     valuation = [VALUATION] * len(lives)
     mine = ours.period_mortality(dobs, valuation, sexes, freq, n_periods)
-    for i, (dob, sex) in enumerate(lives):
-        for k in range(n_periods):
-            want = theirs.mortality_period(
+    rows = [
+        {
+            "life": i,
+            "k": k,
+            "mortality": theirs.mortality_period(
                 dob, VALUATION + relativedelta(months=k * step), sex, freq
-            )["mortality"]
-            got = mine[i, k]
-            total += 1
-            if got != want:
-                mismatches += 1
-                worst = max(worst, abs(got - want))
-    return total, mismatches, worst
+            )["mortality"],
+        }
+        for i, (dob, sex) in enumerate(lives)
+        for k in range(n_periods)
+    ]
+    spec = ParitySpec.from_arrays(
+        {"mortality": mine.T}, list(range(len(lives))),
+        ExternalTable.from_rows(rows, source="VPLA mortality_table.py"),
+        {"mortality": "mortality"}, id_column="life", time_column="k",
+        tolerance=TolerancePolicy(EXACT),
+        label=f"VPLA period mortality, freq={freq}",
+    )
+    entry = diff(spec).variable("mortality")
+    return entry.n_compared, entry.n_outside, entry.max_absolute
 
 
 VALUATION = date(2021, 1, 1)

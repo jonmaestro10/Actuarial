@@ -63,25 +63,34 @@ from __future__ import annotations
 import asyncio
 import json
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 
 try:
-    from fastapi import FastAPI, HTTPException, Query, Request, Response
+    from fastapi import (
+        Depends, FastAPI, HTTPException, Query, Request, Response,
+    )
     from fastapi.responses import JSONResponse, StreamingResponse
 except ImportError as exc:  # pragma: no cover - exercised by the extra
     raise ImportError(
         "the REST API needs FastAPI: pip install -e '.[api]'"
     ) from exc
 
+from engine.api.auth import Principals, Role, principal_of, require
 from engine.api.catalogue import (
-    InvalidRequestError, UnknownModelError, build_run, builder, catalogue,
+    InvalidRequestError, UnknownModelError, build_assumptions, build_run,
+    builder, catalogue,
 )
 from engine.api.examples import example as worked_example, unavailable
 from engine.api.reports import measure_run
 from engine.api.store import RunState, RunStore
 from engine.api.ui import UI_FILES, media_type, read_asset
+from engine.core.approvals import (
+    ApprovalRegistry, ApprovalRequired, assumptions_digest, check_approved,
+)
+from engine.core.audit import AuditLog
 from engine.core.modeldoc import document, graph_is_settled, modelpoint_fields
 from engine import __version__ as ENGINE_VERSION
 
@@ -125,7 +134,11 @@ def create_app(models: dict | None = None, *,
                max_workers: int = 1,
                on_event: Callable[[dict], None] | None = None,
                allow_nan: bool = False,
-               ui: bool = True) -> "FastAPI":
+               ui: bool = True,
+               principals: Any = None,
+               approvals: Any = None,
+               require_approval: bool = False,
+               audit: Any = None) -> "FastAPI":
     """Build the application.
 
     ``models`` restricts the catalogue; ``build`` replaces the whole
@@ -140,8 +153,71 @@ def create_app(models: dict | None = None, *,
     one argument: a deployment that wants only the machine surface, or that
     does not want an HTML page on an origin it shares with something else,
     says ``ui=False`` and gets a 404 there.
+
+    ``principals`` turns on RFC-043's authentication: a
+    :class:`~engine.api.auth.Principals`, a path to a principals file, or a
+    mapping in the same shape. ``None`` — the default — leaves the API
+    exactly as it was, which is the right default for a library and the
+    wrong one for a deployment. ``GET /health`` says which mode it is in.
+
+    ``audit`` is RFC-045's digest-chained log — an
+    :class:`~engine.core.audit.AuditLog` or a path to one. Every mutation
+    the API performs is recorded in it; reads are not, because a log that
+    records everything is a log nobody reads.
+
+    ``approvals`` is RFC-044's approval log — an
+    :class:`~engine.core.approvals.ApprovalRegistry` or a path to one — and
+    ``require_approval`` turns on **approved mode**, where a run whose
+    assumption digest nobody else has signed for is refused. Approved mode
+    without ``principals`` raises: four-eyes over anonymous callers is one
+    pair of eyes with extra steps.
     """
     resolved = catalogue() if models is None else dict(models)
+    identities = Principals.resolve(principals)
+    approvals_path = None
+    if isinstance(approvals, ApprovalRegistry) or approvals is None:
+        approval_log = approvals
+    else:
+        approvals_path = Path(approvals)
+        approval_log = (ApprovalRegistry.from_json(approvals_path)
+                        if approvals_path.is_file() else ApprovalRegistry())
+    if require_approval:
+        if identities is None:
+            raise ValueError(
+                "require_approval needs principals: an approval by an "
+                "unidentified caller is not a second pair of eyes"
+            )
+        if approval_log is None:
+            approval_log = ApprovalRegistry()
+    audit_path = None
+    if isinstance(audit, AuditLog) or audit is None:
+        audit_log = audit
+    else:
+        audit_path = Path(audit)
+        audit_log = (AuditLog.from_json(audit_path) if audit_path.is_file()
+                     else AuditLog())
+
+    def _record(request: "Request", action: str, subject: str = "",
+                **detail) -> None:
+        """Append one mutation to the audit log, if there is one.
+
+        The actor is the authenticated principal, or ``anonymous`` on a
+        deployment with no principals — which is honest rather than useful,
+        and is why RFC-045 says an audit log without RFC-043 records what
+        happened but not who did it.
+        """
+        if audit_log is None:
+            return
+        who = principal_of(request)
+        audit_log.append(who.name if who else "anonymous", action, subject,
+                         detail)
+        if audit_path is not None:
+            audit_log.to_json(audit_path)
+
+    reads = require(Role.VIEWER)
+    runs = require(Role.RUNNER)
+    approves = require(Role.APPROVER)
+    administers = require(Role.ADMIN)
     store = RunStore(build or builder(resolved), max_workers=max_workers,
                      on_event=on_event)
     response_class = LenientJSONResponse if allow_nan else JSONResponse
@@ -160,15 +236,70 @@ def create_app(models: dict | None = None, *,
     )
     app.state.store = store
     app.state.models = resolved
+    app.state.principals = identities
+    app.state.approvals = approval_log
+    app.state.audit = audit_log
 
     @app.get("/health")
     def health() -> dict:
+        """Liveness, and how much of it a stranger is told.
+
+        Deliberately the one route with no role requirement: a load
+        balancer has no token and an unreachable health check is an outage.
+        With authentication on it answers the liveness question and stops —
+        the model and run counts are inventory, and inventory is not
+        something an unauthenticated caller needs.
+        """
+        if identities is not None:
+            return {"status": "ok", "engine_version": ENGINE_VERSION,
+                    "auth": "required"}
         return {"status": "ok", "engine_version": ENGINE_VERSION,
+                "auth": "disabled",
                 "models": len(resolved), "runs": len(store)}
+
+    @app.get("/principals", dependencies=[Depends(administers)])
+    def list_principals(request: Request) -> dict:
+        """Who can do what — names and roles, never tokens.
+
+        There is no route to *change* this. The principals file is
+        configuration and arrives through the deployment's own change
+        process; an API that could rewrite its own access control is one bug
+        away from granting itself the roles it likes.
+        """
+        if identities is None:
+            raise HTTPException(
+                404, "this deployment has no principals configured"
+            )
+        you = principal_of(request)
+        return {"principals": identities.summary(),
+                "you": you.summary() if you else None}
+
+    @app.get("/audit", dependencies=[Depends(administers)])
+    def read_audit(limit: int = Query(default=100, ge=1, le=10_000)) -> dict:
+        """The chained log of mutations, newest last, verified on the way out.
+
+        ``head`` is the value worth copying somewhere this deployment does
+        not control: the chain catches an edited entry, and only a published
+        head catches a deleted one.
+        """
+        if audit_log is None:
+            raise HTTPException(404, "this deployment keeps no audit log")
+        try:
+            verified = audit_log.verify()
+            problem = None
+        except Exception as exc:
+            verified, problem = False, str(exc)
+        return {
+            "entries": [e.to_dict() for e in audit_log.events[-limit:]],
+            "total": len(audit_log),
+            "head": audit_log.head,
+            "verified": verified,
+            "problem": problem,
+        }
 
     # --- the model catalogue, and PLAN §7's documentation -----------------
 
-    @app.get("/models")
+    @app.get("/models", dependencies=[Depends(reads)])
     def list_models() -> dict:
         """Every template, and whether this deployment can run it.
 
@@ -186,7 +317,7 @@ def create_app(models: dict | None = None, *,
             for name, cls in resolved.items()
         ]}
 
-    @app.get("/models/{name}")
+    @app.get("/models/{name}", dependencies=[Depends(reads)])
     def describe_model(name: str) -> dict:
         cls = resolved.get(name)
         if cls is None:
@@ -215,7 +346,7 @@ def create_app(models: dict | None = None, *,
             ],
         }
 
-    @app.get("/models/{name}/example")
+    @app.get("/models/{name}/example", dependencies=[Depends(reads)])
     def model_example(name: str) -> dict:
         """A worked ``POST /runs`` body for this template.
 
@@ -235,7 +366,7 @@ def create_app(models: dict | None = None, *,
             )
         return found
 
-    @app.post("/models/{name}/graph")
+    @app.post("/models/{name}/graph", dependencies=[Depends(runs)])
     def model_graph(name: str, request_body: dict,
                     trace_length: int = Query(default=3, ge=1, le=120),
                     check_settled: bool = Query(default=True)) -> dict:
@@ -307,7 +438,8 @@ def create_app(models: dict | None = None, *,
             "mermaid": graph.to_mermaid(),
         }
 
-    @app.get("/models/{name}/documentation", response_class=Response)
+    @app.get("/models/{name}/documentation", response_class=Response,
+              dependencies=[Depends(reads)])
     def model_documentation(name: str) -> Response:
         """RFC-030's generated Markdown, served as Markdown."""
         cls = resolved.get(name)
@@ -316,9 +448,100 @@ def create_app(models: dict | None = None, *,
         return Response(document(cls).to_markdown(),
                         media_type="text/markdown; charset=utf-8")
 
+    # --- assumption approval (RFC-044) ------------------------------------
+
+    def _approval_store() -> "ApprovalRegistry":
+        if approval_log is None:
+            raise HTTPException(
+                404, "this deployment records no approvals"
+            )
+        return approval_log
+
+    def _save_approvals() -> None:
+        if approvals_path is not None:
+            approval_log.to_json(approvals_path)
+
+    @app.post("/assumptions/digest", dependencies=[Depends(reads)])
+    def assumption_digest(spec: dict) -> dict:
+        """The digest an approval would bind to, for a given basis.
+
+        The route that makes the workflow usable: a submitter refused for
+        want of an approval needs a string to hand somebody, and an approver
+        needs to be able to compute it from the basis they are looking at
+        rather than from the run that was refused.
+        """
+        try:
+            assumptions = build_assumptions(spec)
+        except InvalidRequestError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        digest = assumptions_digest(assumptions)
+        approvers = (approval_log.approvers(digest)
+                     if approval_log is not None else ())
+        return {"assumptions_digest": digest, "approvers": list(approvers),
+                "approved": bool(approvers)}
+
+    @app.get("/approvals", dependencies=[Depends(reads)])
+    def list_approvals() -> dict:
+        log = _approval_store()
+        digests = []
+        for digest in dict.fromkeys(e.assumptions_digest for e in log):
+            digests.append({"assumptions_digest": digest,
+                            "approvers": list(log.approvers(digest)),
+                            "entries": len(log.history(digest))})
+        return {"approvals": digests, "require_approval": require_approval}
+
+    @app.get("/approvals/{digest}", dependencies=[Depends(reads)])
+    def approval_status(digest: str) -> dict:
+        log = _approval_store()
+        return {
+            "assumptions_digest": digest,
+            "approvers": list(log.approvers(digest)),
+            "approved": log.is_approved(digest),
+            "history": [entry.to_dict() for entry in log.history(digest)],
+        }
+
+    @app.post("/approvals/{digest}", status_code=201,
+              dependencies=[Depends(approves)])
+    def approve(digest: str, request: Request, body: dict | None = None
+                ) -> dict:
+        """Sign for a content digest.
+
+        The approver is the authenticated principal and cannot be supplied
+        in the body: an approval whose signatory is a request field is an
+        approval anyone can forge.
+        """
+        log = _approval_store()
+        who = principal_of(request)
+        if who is None:
+            raise HTTPException(
+                403, "approving needs an authenticated principal"
+            )
+        entry = log.approve(digest, who.name, (body or {}).get("note", ""))
+        _save_approvals()
+        _record(request, "assumptions.approve", digest, note=entry.note)
+        return entry.to_dict()
+
+    @app.delete("/approvals/{digest}", dependencies=[Depends(approves)])
+    def revoke(digest: str, request: Request) -> dict:
+        """Withdraw your own approval. Somebody else's is not yours to take."""
+        log = _approval_store()
+        who = principal_of(request)
+        if who is None:
+            raise HTTPException(
+                403, "revoking needs an authenticated principal"
+            )
+        if who.name not in log.approvers(digest):
+            raise HTTPException(
+                404, f"{who.name} has no active approval of {digest}"
+            )
+        entry = log.revoke(digest, who.name)
+        _save_approvals()
+        _record(request, "assumptions.revoke", digest)
+        return entry.to_dict()
+
     # --- runs -------------------------------------------------------------
 
-    @app.post("/runs", status_code=202)
+    @app.post("/runs", status_code=202, dependencies=[Depends(runs)])
     async def submit(request: Request) -> dict:
         try:
             payload = await request.json()
@@ -328,15 +551,39 @@ def create_app(models: dict | None = None, *,
             # Validate before queueing, so a bad request is a 4xx rather
             # than a run that fails a second later for a reason the client
             # has to poll to discover.
-            (build or builder(resolved))(payload)
+            built = (build or builder(resolved))(payload)
         except UnknownModelError as exc:
             raise HTTPException(404, str(exc)) from exc
         except InvalidRequestError as exc:
             raise HTTPException(422, str(exc)) from exc
+        approved_by = None
+        if require_approval:
+            # RFC-044: the digest checked here is the one the run registry
+            # will record, so what was approved and what runs are the same
+            # string or this refuses.
+            submitter = principal_of(request)
+            try:
+                check_approved(built["assumptions"],
+                               submitter.name if submitter else "",
+                               approval_log)
+            except ApprovalRequired as exc:
+                raise HTTPException(403, str(exc)) from exc
+            approved_by = [
+                name for name in approval_log.approvers(
+                    assumptions_digest(built["assumptions"]))
+                if not submitter or name != submitter.name
+            ]
         run = store.submit(payload)
-        return run.summary()
+        summary = run.summary()
+        if approved_by is not None:
+            summary["approved_by"] = approved_by
+        _record(request, "run.submit", run.run_id,
+                model=payload.get("model"),
+                assumptions_digest=assumptions_digest(built["assumptions"]),
+                approved_by=approved_by)
+        return summary
 
-    @app.get("/runs")
+    @app.get("/runs", dependencies=[Depends(reads)])
     def list_runs(state: str | None = Query(default=None)) -> dict:
         try:
             wanted = RunState(state) if state else None
@@ -346,14 +593,15 @@ def create_app(models: dict | None = None, *,
                      f"{[s.value for s in RunState]}") from exc
         return {"runs": [run.summary() for run in store.list(wanted)]}
 
-    @app.get("/runs/{run_id}")
+    @app.get("/runs/{run_id}", dependencies=[Depends(reads)])
     def get_run(run_id: str) -> dict:
         run = store.get(run_id)
         if run is None:
             raise HTTPException(404, f"unknown run {run_id!r}")
         return run.summary()
 
-    @app.get("/runs/{run_id}/results", response_class=response_class)
+    @app.get("/runs/{run_id}/results", response_class=response_class,
+             dependencies=[Depends(reads)])
     def get_results(run_id: str,
                     aggregate: bool = Query(default=False)):
         """The run's numbers.
@@ -409,7 +657,8 @@ def create_app(models: dict | None = None, *,
 
     # --- reporting overlays -----------------------------------------------
 
-    @app.post("/runs/{run_id}/reports/ifrs17", response_class=response_class)
+    @app.post("/runs/{run_id}/reports/ifrs17", response_class=response_class,
+              dependencies=[Depends(runs)])
     def ifrs17_report(run_id: str, spec: dict):
         """Measure a completed run's block as one IFRS 17 group.
 
@@ -445,7 +694,7 @@ def create_app(models: dict | None = None, *,
 
     # --- the event stream -------------------------------------------------
 
-    @app.get("/events")
+    @app.get("/events", dependencies=[Depends(reads)])
     async def events(request: Request,
                      timeout: float | None = Query(default=None, gt=0)
                      ) -> StreamingResponse:

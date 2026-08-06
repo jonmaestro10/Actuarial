@@ -23,6 +23,11 @@ wall-clock time. Excluding them is a claim, so both are tested — different
 chunk sizes must produce the same ``run_id`` *and* the same
 ``results_digest``.
 
+:class:`ArtifactRecord` extends the same discipline to things *derived* from
+runs — the parity report of RFC-033 first. Same pair, same assertion: the
+inputs digest to an identifier, the output digests to a content hash, and a
+second derivation that disagrees is refused rather than filed alongside.
+
 What it cannot capture is recorded rather than papered over. ``source_digest``
 sees a model class and its bases, not the module-level helpers a formula may
 call, so ``RunRecord`` carries a ``code_version`` field for the git commit
@@ -281,3 +286,113 @@ class RunRegistry:
 
 class NonDeterministicRunError(RuntimeError):
     """The same inputs produced different results."""
+
+
+@dataclass(frozen=True)
+class ArtifactRecord:
+    """A derived artifact, addressed by what it was derived from.
+
+    A run is not the only thing a serious deployment has to be able to point
+    at later. A reconciliation (RFC-033), an approval, an evidence pack —
+    each is produced *from* registered digests and each is worth exactly as
+    much as its provenance. So they are recorded the same way runs are:
+    ``artifact_id`` digests the inputs, ``content_digest`` digests what came
+    out, and the pair is the assertion.
+
+    ``inputs`` carries the digests it binds — for a parity report, the
+    engine's ``results_digest`` and the external file's content digest — so
+    the record names the exact things compared rather than a file path that
+    can be repointed.
+    """
+
+    artifact_id: str
+    kind: str
+    content_digest: str
+    inputs: dict
+    label: str | None = None
+    #: The artifact's own verdict, where it has one (a parity report does).
+    ok: bool | None = None
+    engine_version: str | None = None
+    code_version: str | None = None
+    created_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+
+    def __post_init__(self):
+        if self.engine_version is None:
+            from engine import __version__
+
+            object.__setattr__(self, "engine_version", __version__)
+
+    def matches(self, other: "ArtifactRecord") -> bool:
+        """Same derivation, same artifact."""
+        return (
+            self.artifact_id == other.artifact_id
+            and self.content_digest == other.content_digest
+        )
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, record: dict) -> "ArtifactRecord":
+        return cls(**dict(record))
+
+
+class ArtifactRegistry:
+    """An append-only log of derived artifacts.
+
+    The same shape as :class:`RunRegistry`, and for the same reason: a second
+    record with the same ``artifact_id`` and a different ``content_digest``
+    means the derivation is not reproducible, which is a defect no amount of
+    re-reading the artifact would reveal.
+    """
+
+    def __init__(self, records: Iterable[ArtifactRecord] = ()):
+        self._records: list[ArtifactRecord] = list(records)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __iter__(self):
+        return iter(self._records)
+
+    @property
+    def records(self) -> list[ArtifactRecord]:
+        return list(self._records)
+
+    def add(self, record: ArtifactRecord) -> ArtifactRecord:
+        for existing in self._records:
+            if existing.artifact_id != record.artifact_id:
+                continue
+            if existing.content_digest != record.content_digest:
+                raise ArtifactConflictError(
+                    f"{record.kind} artifact {record.artifact_id} was "
+                    f"recorded as {existing.content_digest} and has now "
+                    f"produced {record.content_digest}"
+                )
+            return existing
+        self._records.append(record)
+        return record
+
+    def find(self, artifact_id: str) -> ArtifactRecord | None:
+        for record in self._records:
+            if record.artifact_id == artifact_id:
+                return record
+        return None
+
+    def of_kind(self, kind: str) -> list[ArtifactRecord]:
+        return [record for record in self._records if record.kind == kind]
+
+    def to_json(self, path) -> None:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump([r.to_dict() for r in self._records], handle, indent=2)
+
+    @classmethod
+    def from_json(cls, path) -> "ArtifactRegistry":
+        with open(path, encoding="utf-8") as handle:
+            return cls(ArtifactRecord.from_dict(row) for row in json.load(handle))
+
+
+class ArtifactConflictError(RuntimeError):
+    """The same derivation produced a different artifact."""
