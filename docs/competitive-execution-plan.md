@@ -653,17 +653,28 @@ and backward one-at-a-time effects are both reported, since their gap is a
 clause's interaction with the rest and the case worth surfacing is the clause
 that is inert alone and material in company.
 
-**And it closed the open question it was pulled forward for, in the
+**It answered half of the open question it was pulled forward for, in the
 negative.** VM-20 Appendix 1.F was read: it does not give 16 scenarios, it
 gives 16 descriptions of shocks to the **prescribed economic scenario
 generator**, every one a function of the valuation-date yield curve and of
 that generator's own state variables and standard errors. There is no table
 to carry as a dated set; carrying them means implementing the generator,
 which is a different and much larger item. Recorded in
-`docs/sources/vm20-appendix-1f-scenarios.md` so it is not asked a fourth
-time. `engine/report/vm22.stochastic_exclusion_test` is unchanged and was
-already the right shape — it takes the baseline and the adverse set as
-inputs.
+`docs/sources/vm20-appendix-1f-scenarios.md`.
+`engine/report/vm22.stochastic_exclusion_test` is unchanged and was already
+the right shape — it takes the baseline and the adverse set as inputs.
+
+**The other half stays open, and is the buildable one.** The question named
+the prescribed *assumption sets* as well as the scenarios, and those are the
+opposite answer: VM-22 §6.C prescribes eleven numeric tables and a
+closed-form mortality basis, all dated and all exactly the shape
+`DELEGATED_2015`/`DELEGATED_2026` already has. See
+`docs/sources/vm22-section-6-prescribed-assumptions.md`. Two constraints for
+whoever builds it: the NAIC's own square brackets around `[1.025]` and
+`[2.5%]` mark figures still under discussion, so the dated-set pattern needs
+a way to say *provisional*; and §3.C makes the standard projection amount
+disclosure-only for year-end 2026, which is why it sequences behind reserve
+arithmetic.
 
 ### F3 — Exact-decimal audit mode (RFC-051) — effort M
 PLAN §3.4's unbuilt promise: the interpreted executor over
@@ -819,13 +830,15 @@ one reason: the RFC-032 request schema cannot express an assumption object.
 That is now the largest single gap in the pack's coverage and it is a schema
 item, not a library one.
 
-The dated-set gap that C1 and C2 both left on the record is now **answered
-rather than open**: F2 is built (RFC-050), and VM-20 Appendix 1.F was read
-and does not contain scenario data at all — it prescribes shocks to a
-generator, so carrying it means building the generator. See
-`docs/sources/vm20-appendix-1f-scenarios.md`. What remains genuinely open
-from C1 and C2 is VM-22's Standard Projection Amount, which §3.C makes
-disclosure-only for 2026. B1 (§4) remains unstarted and carries a
+The dated-set gap that C1 and C2 both left on the record is now **half
+answered and half scoped**. F2 is built (RFC-050). VM-20 Appendix 1.F was
+read and does not contain scenario data at all — it prescribes shocks to a
+generator, so carrying it means building the generator. But the prescribed
+**assumption sets** are carryable dated data: VM-22 §6.C holds eleven
+numeric tables and a closed-form mortality basis, and building them is the
+next real dated-set item. See
+`docs/sources/vm22-section-6-prescribed-assumptions.md`. It sits inside the
+Standard Projection Amount, which §3.C makes disclosure-only for 2026. B1 (§4) remains unstarted and carries a
 written assessment of why. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4
 (RFC-036) — milestone M1 — F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044,
 RFC-045, RFC-046) — milestone M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) —

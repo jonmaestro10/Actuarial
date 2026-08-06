@@ -93,12 +93,16 @@ cell out, as B at 0.25. "The amendment changed Article 164(3)" is true and
 reads as though the whole row moved; the diff says which cell did. That is
 the smallest possible illustration of why the report exists.
 
-## The question this was pulled forward to answer, and the answer
+## The question this was pulled forward to answer, and its two halves
 
 VM-22's remediation left one open question three times over: the 16
-prescribed economic scenarios of VM-20 Appendix 1.F and the prescribed
-assumption sets are not carried, and they look like "dated regulatory data",
-which is this item's business.
+prescribed economic scenarios of VM-20 Appendix 1.F **and the prescribed
+assumption sets** are not carried, and they look like "dated regulatory
+data", which is this item's business.
+
+Those are two halves with two different answers, and an earlier draft of this
+RFC closed the whole question on the strength of the first. The correction
+is below.
 
 **Appendix 1.F was then read, and they are not dated data.** It does not
 give sixteen scenarios; it gives sixteen *descriptions of shocks to a
@@ -121,9 +125,26 @@ and it is the thing VM-22's section-check already marked out of scope at §8,
 correctly and for a reason it had not yet articulated. `docs/sources/`
 records this so the question is not asked a fourth time.
 
-What VM-22 *can* use from this module is the shape rather than the data: its
-`VM22Basis` is already dated, and when the 2027 Valuation Manual amends it,
-the diff is this.
+**The prescribed assumption sets are the opposite answer, and the question
+stays open on that half.** VM-22 §6.C prescribes eleven numeric tables —
+base maintenance expenses, partial withdrawals qualified and non-qualified,
+three sets of base lapse rates, and five sets of *F<sub>x</sub>* mortality
+factors — plus a closed-form mortality basis over the 2012 IAM Basic table
+and Projection Scale G2. Every one of them is dated, numeric, and exactly the
+shape `DELEGATED_2015`/`DELEGATED_2026` already has. They are carryable; the
+reason they are not carried is priority, not possibility.
+
+Two things a dated set over §6.C would have to handle, both recorded in
+`docs/sources/vm22-section-6-prescribed-assumptions.md`: the NAIC's own
+square brackets around `[1.025]` and `[2.5%]` mark figures still under
+discussion, so a set carrying them needs a way to say **provisional** that
+this module's pattern does not yet have; and §3.C makes the whole standard
+projection amount disclosure-only for year-end 2026, which is a good reason
+to sequence it behind reserve arithmetic and not a reason to call it closed.
+
+What VM-22 *can* use from this module today is the shape rather than the
+data: its `VM22Basis` is already dated, and when the 2027 Valuation Manual
+amends it, the diff is this.
 
 ## Acceptance
 

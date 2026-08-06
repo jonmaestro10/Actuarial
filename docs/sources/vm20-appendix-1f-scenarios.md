@@ -72,6 +72,11 @@ reason recorded against it was not, and this file supplies the reason.
   the right shape for quantities a prescribed generator produces.
   `VM22_2026`'s `text` field already says the prescribed scenarios are not
   carried.
-- The open question raised after C1, C2 and VM-22's remediation — "pull F2
-  forward to carry the prescribed scenarios" — is **closed**: F2 is built
-  (RFC-050) and it is not where these live.
+- The open question raised after C1, C2 and VM-22's remediation had **two
+  halves**, and this file answers only the first. The 16 scenarios are not
+  carryable data. The **prescribed assumption sets** are a different answer
+  entirely — VM-22 §6.C holds eleven numeric tables and a closed-form
+  mortality formula, all dated, all exactly the shape a dated set carries.
+  See [`vm22-section-6-prescribed-assumptions.md`](vm22-section-6-prescribed-assumptions.md).
+  RFC-050 recorded the whole question as closed on the strength of this half
+  alone, which was wrong and is corrected there.
