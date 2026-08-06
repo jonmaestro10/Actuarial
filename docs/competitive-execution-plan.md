@@ -66,7 +66,7 @@ what any incumbent ships rather than merely reaching parity.
 | Incumbent migration tooling | 🟡 M1 shipped: parity core (A1, RFC-033), Prophet readers (A2, RFC-034), scaffold (A4, RFC-036); MoSes readers (A3) on pilot demand | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
 | Compiled kernels | ❌ | Numba forward-loop kernels | Compiled executor joins the **bitwise** equivalence class — incumbents compile but never prove equivalence | B1 |
 | Cross-machine scale-out | 🟡 one machine | Multi-machine dispatch | Bitwise-identical results regardless of grid topology, verified by the registry | B2 |
-| Governance: RBAC, approvals | ❌ | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
+| Governance: RBAC, approvals | 🟡 token auth + four roles shipped (D1, RFC-043); approvals (D2) outstanding | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
 | Production run operations | ❌ | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
 | Results warehouse | ❌ | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
 | Excel integration | ❌ | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet | E2 |
@@ -355,7 +355,7 @@ Landscape §5.3. The run registry already provides the audit substrate; this
 workstream adds the human-workflow layer. All of it lives behind the `[api]`
 extra — the core stays a library.
 
-### D1 — AuthN and roles (RFC-043) — effort M
+### D1 — AuthN and roles (RFC-043) — effort M — **shipped**
 `engine/api/auth.py`: token-based authentication (hashed tokens in a config
 file; no new runtime dependency), four roles — *viewer* (read runs/results),
 *runner* (submit), *approver* (D2), *admin* (principals). Every existing
@@ -599,6 +599,6 @@ order unless there is a concrete reason not to.
 *Next action for the implementing agent: B1 (§4) is unstarted and carries a
 written assessment of why — read it before picking the item up, and expect an
 array-expression compiler rather than a wrapper. Everything else on §10's
-path is open; D1 (§6) is the next item with no unmet dependency. Shipped so
-far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 — and F1
-(RFC-049).*
+path is open; D2 (§6) is the next item in sequence. Shipped so far: A1
+(RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 — F1 (RFC-049) and D1
+(RFC-043).*

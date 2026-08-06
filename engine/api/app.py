@@ -68,13 +68,16 @@ from typing import Any, Callable
 import numpy as np
 
 try:
-    from fastapi import FastAPI, HTTPException, Query, Request, Response
+    from fastapi import (
+        Depends, FastAPI, HTTPException, Query, Request, Response,
+    )
     from fastapi.responses import JSONResponse, StreamingResponse
 except ImportError as exc:  # pragma: no cover - exercised by the extra
     raise ImportError(
         "the REST API needs FastAPI: pip install -e '.[api]'"
     ) from exc
 
+from engine.api.auth import Principals, Role, principal_of, require
 from engine.api.catalogue import (
     InvalidRequestError, UnknownModelError, build_run, builder, catalogue,
 )
@@ -125,7 +128,8 @@ def create_app(models: dict | None = None, *,
                max_workers: int = 1,
                on_event: Callable[[dict], None] | None = None,
                allow_nan: bool = False,
-               ui: bool = True) -> "FastAPI":
+               ui: bool = True,
+               principals: Any = None) -> "FastAPI":
     """Build the application.
 
     ``models`` restricts the catalogue; ``build`` replaces the whole
@@ -140,8 +144,18 @@ def create_app(models: dict | None = None, *,
     one argument: a deployment that wants only the machine surface, or that
     does not want an HTML page on an origin it shares with something else,
     says ``ui=False`` and gets a 404 there.
+
+    ``principals`` turns on RFC-043's authentication: a
+    :class:`~engine.api.auth.Principals`, a path to a principals file, or a
+    mapping in the same shape. ``None`` — the default — leaves the API
+    exactly as it was, which is the right default for a library and the
+    wrong one for a deployment. ``GET /health`` says which mode it is in.
     """
     resolved = catalogue() if models is None else dict(models)
+    identities = Principals.resolve(principals)
+    reads = require(Role.VIEWER)
+    runs = require(Role.RUNNER)
+    administers = require(Role.ADMIN)
     store = RunStore(build or builder(resolved), max_workers=max_workers,
                      on_event=on_event)
     response_class = LenientJSONResponse if allow_nan else JSONResponse
@@ -160,15 +174,45 @@ def create_app(models: dict | None = None, *,
     )
     app.state.store = store
     app.state.models = resolved
+    app.state.principals = identities
 
     @app.get("/health")
     def health() -> dict:
+        """Liveness, and how much of it a stranger is told.
+
+        Deliberately the one route with no role requirement: a load
+        balancer has no token and an unreachable health check is an outage.
+        With authentication on it answers the liveness question and stops —
+        the model and run counts are inventory, and inventory is not
+        something an unauthenticated caller needs.
+        """
+        if identities is not None:
+            return {"status": "ok", "engine_version": ENGINE_VERSION,
+                    "auth": "required"}
         return {"status": "ok", "engine_version": ENGINE_VERSION,
+                "auth": "disabled",
                 "models": len(resolved), "runs": len(store)}
+
+    @app.get("/principals", dependencies=[Depends(administers)])
+    def list_principals(request: Request) -> dict:
+        """Who can do what — names and roles, never tokens.
+
+        There is no route to *change* this. The principals file is
+        configuration and arrives through the deployment's own change
+        process; an API that could rewrite its own access control is one bug
+        away from granting itself the roles it likes.
+        """
+        if identities is None:
+            raise HTTPException(
+                404, "this deployment has no principals configured"
+            )
+        you = principal_of(request)
+        return {"principals": identities.summary(),
+                "you": you.summary() if you else None}
 
     # --- the model catalogue, and PLAN §7's documentation -----------------
 
-    @app.get("/models")
+    @app.get("/models", dependencies=[Depends(reads)])
     def list_models() -> dict:
         """Every template, and whether this deployment can run it.
 
@@ -186,7 +230,7 @@ def create_app(models: dict | None = None, *,
             for name, cls in resolved.items()
         ]}
 
-    @app.get("/models/{name}")
+    @app.get("/models/{name}", dependencies=[Depends(reads)])
     def describe_model(name: str) -> dict:
         cls = resolved.get(name)
         if cls is None:
@@ -215,7 +259,7 @@ def create_app(models: dict | None = None, *,
             ],
         }
 
-    @app.get("/models/{name}/example")
+    @app.get("/models/{name}/example", dependencies=[Depends(reads)])
     def model_example(name: str) -> dict:
         """A worked ``POST /runs`` body for this template.
 
@@ -235,7 +279,7 @@ def create_app(models: dict | None = None, *,
             )
         return found
 
-    @app.post("/models/{name}/graph")
+    @app.post("/models/{name}/graph", dependencies=[Depends(runs)])
     def model_graph(name: str, request_body: dict,
                     trace_length: int = Query(default=3, ge=1, le=120),
                     check_settled: bool = Query(default=True)) -> dict:
@@ -307,7 +351,8 @@ def create_app(models: dict | None = None, *,
             "mermaid": graph.to_mermaid(),
         }
 
-    @app.get("/models/{name}/documentation", response_class=Response)
+    @app.get("/models/{name}/documentation", response_class=Response,
+              dependencies=[Depends(reads)])
     def model_documentation(name: str) -> Response:
         """RFC-030's generated Markdown, served as Markdown."""
         cls = resolved.get(name)
@@ -318,7 +363,7 @@ def create_app(models: dict | None = None, *,
 
     # --- runs -------------------------------------------------------------
 
-    @app.post("/runs", status_code=202)
+    @app.post("/runs", status_code=202, dependencies=[Depends(runs)])
     async def submit(request: Request) -> dict:
         try:
             payload = await request.json()
@@ -336,7 +381,7 @@ def create_app(models: dict | None = None, *,
         run = store.submit(payload)
         return run.summary()
 
-    @app.get("/runs")
+    @app.get("/runs", dependencies=[Depends(reads)])
     def list_runs(state: str | None = Query(default=None)) -> dict:
         try:
             wanted = RunState(state) if state else None
@@ -346,14 +391,15 @@ def create_app(models: dict | None = None, *,
                      f"{[s.value for s in RunState]}") from exc
         return {"runs": [run.summary() for run in store.list(wanted)]}
 
-    @app.get("/runs/{run_id}")
+    @app.get("/runs/{run_id}", dependencies=[Depends(reads)])
     def get_run(run_id: str) -> dict:
         run = store.get(run_id)
         if run is None:
             raise HTTPException(404, f"unknown run {run_id!r}")
         return run.summary()
 
-    @app.get("/runs/{run_id}/results", response_class=response_class)
+    @app.get("/runs/{run_id}/results", response_class=response_class,
+             dependencies=[Depends(reads)])
     def get_results(run_id: str,
                     aggregate: bool = Query(default=False)):
         """The run's numbers.
@@ -409,7 +455,8 @@ def create_app(models: dict | None = None, *,
 
     # --- reporting overlays -----------------------------------------------
 
-    @app.post("/runs/{run_id}/reports/ifrs17", response_class=response_class)
+    @app.post("/runs/{run_id}/reports/ifrs17", response_class=response_class,
+              dependencies=[Depends(runs)])
     def ifrs17_report(run_id: str, spec: dict):
         """Measure a completed run's block as one IFRS 17 group.
 
@@ -445,7 +492,7 @@ def create_app(models: dict | None = None, *,
 
     # --- the event stream -------------------------------------------------
 
-    @app.get("/events")
+    @app.get("/events", dependencies=[Depends(reads)])
     async def events(request: Request,
                      timeout: float | None = Query(default=None, gt=0)
                      ) -> StreamingResponse:
