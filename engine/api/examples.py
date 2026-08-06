@@ -24,7 +24,7 @@ cannot rot into a lie while the template moves under it.
 
 Four templates have no example, and they all want the same thing
 ----------------------------------------------------------------
-The catalogue offers seventeen and thirteen of them are here. It was eight
+The catalogue offers eighteen and fourteen of them are here. It was eight
 of sixteen a few commits ago, and the ones that joined were kept out by the
 **request schema** rather than by anything about the templates:
 
@@ -56,7 +56,7 @@ instead of standing in for several.
 :data:`UNAVAILABLE` records that, per template, so ``GET /models`` can say
 which of the sixteen a caller can actually run here and why the rest are
 not. A catalogue that lists a model it cannot run and does not say so is
-worse than one that lists thirteen.
+worse than one that lists fourteen.
 
 The way to run the other four is the same as it has always been: pass your
 own ``build`` to :func:`engine.api.app.create_app`, which is where a
@@ -309,6 +309,30 @@ EXAMPLES: dict = {
                 {"id": "C1", "age_at_entry": 40, "loan_principal": 200_000.0,
                  "loan_rate": 0.06, "loan_term_years": 20,
                  "single_premium": 5_000.0, "init_pols": 1_000.0},
+            ],
+        },
+    },
+    "GeneralInsurance": {
+        "note": "A five-year general insurance cohort — £1m written, "
+                "earned evenly, at a 95% combined ratio: 62% attritional "
+                "claims, a 5% catastrophe load kept separate from them, "
+                "and 28% expenses.",
+        "request": {
+            "model": "GeneralInsurance",
+            "proj_len": 6,
+            "outputs": ["written_premium", "premium_earned",
+                        "unearned_premium", "attritional_claims", "cat_load",
+                        "claims", "expenses", "underwriting_result", "v"],
+            "assumptions": {"mortality": MORTALITY, "interest": 0.03},
+            "modelpoints": [
+                {"id": "G1", "written_premium": 1_000_000.0,
+                 "policy_term_years": 5, "expected_loss_ratio": 0.62,
+                 "cat_load_ratio": 0.05, "expense_ratio": 0.28,
+                 "init_pols": 1.0, "earning_pattern": "uniform"},
+                {"id": "G2", "written_premium": 250_000.0,
+                 "policy_term_years": 3, "expected_loss_ratio": 0.70,
+                 "cat_load_ratio": 0.02, "expense_ratio": 0.25,
+                 "init_pols": 1.0, "earning_pattern": "front"},
             ],
         },
     },

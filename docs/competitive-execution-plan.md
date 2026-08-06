@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,264
+   naive implementation otherwise. The suite (`pytest`, currently 2,281
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -467,7 +467,7 @@ and it is the multi-state counterpart of VM-22's reduce-then-aggregate. Both
 honest workarounds are documented with their costs; neither is chosen, and
 elimination periods are out for the same reason.
 
-### C5 — General insurance beyond the chain-ladder LIC (RFC-054) — effort L — **first half done**
+### C5 — General insurance beyond the chain-ladder LIC (RFC-054) — effort L — **done**
 The landscape doc names the market this repo doesn't address (Igloo, ResQ,
 Tyche); the chain-ladder LIC (`engine/report/incurred_claims.py`) is the
 seed. Two halves:
@@ -509,7 +509,15 @@ periods added in quadrature by 20%, because they share their development
 factors. `quadrature_total` computes the wrong figure on purpose, the same
 posture as `vm22.floor_outside_reserve`.
 
-**Second half not started:** `engine/library/general_insurance.py`.
+**Outcome, second half.** Shipped. `engine/library/general_insurance.py`
+carries the liability for remaining coverage: written premium earning over
+the cover period, the unearned premium reserve as a **residual** rather than
+a second recursion, and the catastrophe load kept out of the attritional loss
+ratio — rolling it in changes nothing about the expected cashflow, which is
+why it is tempting, and destroys the only thing distinguishing two costs with
+the same mean. Annual steps and scalar assumptions put it in §1.2's per-policy
+**bitwise** class, so unlike C3 and C4 it owes the executor-equivalence check
+and gets one, asserted with `np.array_equal`.
 
 **Accept:** `tests/test_gi_reserving.py` reproduces published Mack/ODP
 results; `tests/test_general_insurance.py` golden-tests the template and
@@ -870,12 +878,12 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: **C5's second half** — the
-premium-liability template `engine/library/general_insurance.py`, which
-pairs with the PAA overlay already in `engine/report/paa.py`. C5's first
-half (reserve variability, RFC-054) is done and reproduces Mack's Table 3
-exactly. Or the remaining §6.C tables (RFC-067), each of which needs reading
-against the primary text before it is worth having — `engine/library/long_term_care.py` on the
+*Next action for the implementing agent: C6 (§10, Takaful, RFC-055) is the
+next unstarted C-item. Also open: the four remaining §6.C tables (RFC-067) —
+**Table 6.5 fails one of its own three worked examples** under a reading
+that reproduces the other two exactly, which needs somebody to decide whether
+the reading or the Guidance Note is wrong; and the three structured-settlement
+*F<sub>x</sub>* sets, which cross a contract-year band with sex — `engine/library/long_term_care.py` on the
 multi-state engine, with `engine/library/income_protection.py` as the
 pattern. Two things C3 leaves on the record. First, the executor
 classification note below has now been exercised and it holds: `PensionBuyout`
@@ -898,9 +906,12 @@ carryable half, and `engine/report/vm22_prescribed.py` now carries Tables
 `Provisional` is the mechanism RFC-050 said the dated-set pattern lacked:
 the NAIC's own square brackets around `[1.025]` and `[2.5%]` mark figures
 still under discussion, and the flag is *derived* from the values rather
-than listed beside them. Five of the eleven tables are now
-carried; the remaining six each cross a second dimension and are refused
-rather than approximated. The standard projection amount itself is still
+than listed beside them. Seven of the eleven tables are now
+carried. Table 6.5 is refused for a **specific** reason: it fails one of its
+own three worked examples under a reading that reproduces the other two
+exactly, so either the reading is wrong where those two cannot discriminate
+or the Guidance Note has an error. The three structured-settlement sets need
+a read of their own. The standard projection amount itself is still
 unbuilt — §3.C makes it disclosure-only for 2026, which is why the
 assumptions land before the calculation. B1 (§4) remains unstarted and carries a
 written assessment of why. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4
