@@ -91,6 +91,8 @@ const state = {
   graph: null,
   report: null,
   events: null,      // EventSource
+  runs: [],          // RFC-048: the runs list, as last filtered
+  drill: null,       // RFC-048: one variable, optionally one model point
 };
 
 // ── charts ──────────────────────────────────────────────────────────────
@@ -270,6 +272,42 @@ async function boot() {
     || state.models.find((m) => m.example);
   if (first) selectModel(first.name);
   listenForEvents();
+
+  await applyCitation();
+}
+
+/* RFC-048: put the page into the state a link cites.
+ *
+ * Called on load and again on `hashchange`, because pasting a citation into
+ * a tab that is already open is a same-document navigation — the browser
+ * changes the URL and reloads nothing. A citation that only worked in a
+ * fresh tab would be a citation that fails exactly when a reviewer uses it
+ * during a review. `writeHash` uses replaceState, which fires no
+ * hashchange, so this cannot feed itself. */
+async function applyCitation() {
+  const cited = readHash();
+  if (cited.q) $("runs-q").value = cited.q;
+  if (cited.state) $("runs-state").value = cited.state;
+  if (cited.left) { $("diff-left-id").value = cited.left; await loadDiffSide("left"); }
+  if (cited.right) { $("diff-right-id").value = cited.right; await loadDiffSide("right"); }
+  if (cited.run && (!state.run || state.run.run_id !== cited.run)) {
+    try { await openRun(cited.run); } catch (error) {
+      showError($("runs-error"), error);
+    }
+  }
+  if (cited.variable) {
+    const picker = $("drill-variable");
+    if ([...picker.options].some((o) => o.value === cited.variable)) {
+      picker.value = cited.variable;
+      $("drill-modelpoint").value = cited.modelpoint || "";
+      await drill();
+    }
+  }
+  if (cited.tab) {
+    showTab(cited.tab);
+    if (cited.tab === "runs") await loadRuns();
+    if (cited.tab === "evidence") { await loadEvidence(); await loadArtifacts(); }
+  }
 }
 
 function listenForEvents() {
@@ -499,6 +537,10 @@ async function loadResults(runId) {
     + "covers the per-model-point arrays, which is what the registry fingerprinted — "
     + "drop the aggregate flag to fetch those.";
   pill($("request-state"), "succeeded", "good");
+  // RFC-048: the seriatim drill-down is the demonstration, not an extra, so
+  // it is populated the moment there is a run to drill into.
+  fillDrillPickers(payload);
+  await drill();
 }
 
 // ── the dependency graph ────────────────────────────────────────────────
@@ -760,17 +802,386 @@ function renderReport(report) {
     report.periods + 1);
 }
 
+// ── RFC-048: the URL is a citation ──────────────────────────────────────
+
+/* Every view's state lives in the hash, so a screen pastes into a review
+ * comment and reproduces. That is worth more here than on most sites: a run
+ * identifier is a fingerprint of the inputs, so the link cannot rot into
+ * showing different numbers the way a link to run #4173 can. Pasting one is
+ * closer to citing a page than to sharing a session. */
+
+function readHash() {
+  const out = {};
+  for (const [k, v] of new URLSearchParams(location.hash.replace(/^#/, ""))) {
+    out[k] = v;
+  }
+  return out;
+}
+
+function writeHash(patch) {
+  const params = new URLSearchParams(location.hash.replace(/^#/, ""));
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null || v === undefined || v === "") params.delete(k);
+    else params.set(k, v);
+  }
+  const next = "#" + params.toString();
+  if (next !== location.hash) history.replaceState(null, "", next);
+}
+
+/* A digest, shown the way this repo quotes one: first twelve characters,
+ * the whole thing on hover, and clicking copies it — because the next
+ * thing anyone does with a digest is paste it somewhere. */
+function digestChip(value, label) {
+  if (!value) return el("span", { class: "muted", text: "—" });
+  return el("code", {
+    class: "digest", title: `${label || "digest"} ${value} — click to copy`,
+    onclick: () => navigator.clipboard && navigator.clipboard.writeText(value),
+    text: value.slice(0, 12),
+  });
+}
+
+function showTab(name) {
+  for (const other of document.querySelectorAll("nav.tabs button")) {
+    const on = other.dataset.tab === name;
+    other.setAttribute("aria-selected", String(on));
+    $(`tab-${other.dataset.tab}`).hidden = !on;
+  }
+  writeHash({ tab: name });
+}
+
+// ── RFC-048: the runs list ──────────────────────────────────────────────
+
+async function loadRuns() {
+  const params = new URLSearchParams();
+  const q = $("runs-q").value.trim();
+  const wanted = $("runs-state").value;
+  if (q) params.set("q", q);
+  if (wanted) params.set("state", wanted);
+  writeHash({ q: q || null, state: wanted || null });
+  showError($("runs-error"), null);
+  let payload;
+  try {
+    payload = await api("/runs" + (params.toString() ? `?${params}` : ""));
+  } catch (error) {
+    showError($("runs-error"), error);
+    pill($("runs-state-pill"), "failed", "bad");
+    return;
+  }
+  state.runs = payload.runs;
+  pill($("runs-state-pill"),
+    `${payload.n_matched} run${payload.n_matched === 1 ? "" : "s"}`
+    + (payload.truncated ? " (truncated)" : ""),
+    payload.n_matched ? "good" : "");
+
+  const table = $("runs-table");
+  clear(table);
+  table.appendChild(el("tr", {},
+    ...["fingerprint", "model", "state", "executor", "assumptions", "results", ""]
+      .map((h) => el("th", { text: h }))));
+  if (!payload.runs.length) {
+    table.appendChild(el("tr", {}, el("td", {
+      colspan: 7, class: "muted empty",
+      text: q || wanted
+        ? "No run matches. The search is a prefix on a digest and a substring on a model name."
+        : "No runs yet — submit one on the Run tab.",
+    })));
+    return;
+  }
+  for (const run of payload.runs) {
+    table.appendChild(el("tr", {},
+      el("td", {}, digestChip(run.run_id, "run")),
+      el("td", { text: run.model || "—" }),
+      el("td", {}, el("span", {
+        class: "pill " + (run.state === "succeeded" ? "good"
+          : run.state === "failed" ? "bad" : ""),
+        text: run.state,
+      })),
+      el("td", { class: "small muted", text: run.executor || "—" }),
+      el("td", {}, digestChip(run.assumptions_digest, "assumptions")),
+      el("td", {}, digestChip(run.results_digest, "results")),
+      el("td", {},
+        el("button", {
+          class: "ghost small", type: "button",
+          disabled: run.state !== "succeeded",
+          onclick: () => openRun(run.run_id),
+          text: "Explore",
+        }),
+        el("button", {
+          class: "ghost small", type: "button",
+          onclick: () => { $("diff-left-id").value = run.run_id; loadDiffSide("left"); },
+          text: "◀ diff",
+        }),
+        el("button", {
+          class: "ghost small", type: "button",
+          onclick: () => { $("diff-right-id").value = run.run_id; loadDiffSide("right"); },
+          text: "diff ▶",
+        }))));
+  }
+}
+
+async function openRun(runId) {
+  writeHash({ run: runId });
+  state.run = await api(`/runs/${runId}`);
+  renderRunFacts();
+  await loadResults(runId);
+  showTab("results");
+}
+
+// ── RFC-048: seriatim drill-down ────────────────────────────────────────
+
+/* Landscape §7.3.5: policy-level drill-down is the output feature every
+ * vendor leads with — Prophet's .rpt variable groups, AXIS's seriatim
+ * output, SLOPE's drill-to-model-point. The engine here computes per policy
+ * anyway, so this is a selector over what the run already holds rather than
+ * a second calculation, and the response says `partial` so a policy's
+ * column is never checked against the digest that covers the block. */
+
+function fillDrillPickers(payload) {
+  const variables = $("drill-variable");
+  const points = $("drill-modelpoint");
+  const chosen = readHash();
+  clear(variables);
+  clear(points);
+  for (const name of payload.outputs) {
+    variables.appendChild(el("option", { value: name, text: name }));
+  }
+  points.appendChild(el("option", { value: "", text: "whole block (aggregate)" }));
+  for (const id of payload.modelpoints || []) {
+    points.appendChild(el("option", { value: id, text: id }));
+  }
+  if (chosen.variable && payload.outputs.includes(chosen.variable)) {
+    variables.value = chosen.variable;
+  }
+  if (chosen.modelpoint && (payload.modelpoints || []).includes(chosen.modelpoint)) {
+    points.value = chosen.modelpoint;
+  }
+  $("drill-card").hidden = false;
+}
+
+async function drill() {
+  if (!state.run) return;
+  const variable = $("drill-variable").value;
+  const modelpoint = $("drill-modelpoint").value;
+  if (!variable) return;
+  writeHash({ variable, modelpoint: modelpoint || null });
+  showError($("drill-error"), null);
+  const params = new URLSearchParams({ variable });
+  if (modelpoint) params.set("modelpoint", modelpoint);
+  else params.set("aggregate", "true");
+  let payload;
+  try {
+    payload = await api(`/runs/${state.run.run_id}/results?${params}`);
+  } catch (error) {
+    showError($("drill-error"), error);
+    return;
+  }
+  state.drill = payload;
+  pill($("drill-pill"), modelpoint ? `model point ${modelpoint}` : "whole block",
+    modelpoint ? "good" : "");
+  lineChart($("drill-chart"), $("drill-legend"), $("drill-readout"),
+    [{ name: variable, values: payload.results[variable] }]);
+}
+
+// ── RFC-048: the assumption diff ────────────────────────────────────────
+
+/* An assumptions spec, formatted for a human — mortality table on one
+ * line, for prettyRequest's reason: ninety rates pretty-printed bury the
+ * three fields anybody came to look at. */
+function prettyAssumptions(spec) {
+  return prettyRequest({ assumptions: spec })
+    .replace(/^\{\n  "assumptions": /, "")
+    .replace(/\n\}$/, "")
+    .replace(/\n  /g, "\n");
+}
+
+async function loadDiffSide(side) {
+  const runId = $(`diff-${side}-id`).value.trim();
+  if (!runId) return;
+  showError($("diff-error"), null);
+  try {
+    const run = await api(`/runs/${runId}`);
+    $(`diff-${side}`).value = prettyAssumptions(run.request.assumptions);
+    writeHash({ [side]: runId });
+  } catch (error) {
+    showError($("diff-error"), error);
+  }
+}
+
+async function runDiff() {
+  showError($("diff-error"), null);
+  let left, right;
+  try {
+    left = JSON.parse($("diff-left").value);
+    right = JSON.parse($("diff-right").value);
+  } catch (error) {
+    showError($("diff-error"), new Error(`not JSON: ${error.message}`));
+    return;
+  }
+  let diff;
+  try {
+    diff = await postJSON("/assumptions/diff", { left, right });
+  } catch (error) {
+    showError($("diff-error"), error);
+    pill($("diff-pill"), "failed", "bad");
+    return;
+  }
+  renderDiff(diff);
+}
+
+function renderDiff(diff) {
+  $("diff-out").hidden = false;
+  pill($("diff-pill"), diff.identical ? "identical" : `${diff.n_changes} changed`,
+    diff.identical ? "good" : "warn");
+
+  const banner = $("diff-banner");
+  clear(banner);
+  banner.appendChild(el("div", { class: diff.identical ? "ok" : "warn" },
+    diff.identical
+      ? "The same basis. Both sides digest to " + diff.left_digest
+        + " — so an approval of one is an approval of the other, by construction."
+      : `${diff.n_changes} component${diff.n_changes === 1 ? "" : "s"} moved. `
+        + `${diff.left_digest} → ${diff.right_digest}. Any approval of the left `
+        + "does not carry to the right, however small the change."));
+  if (diff.unlocated) {
+    banner.appendChild(el("div", { class: "err" },
+      "The digests differ and no component could be blamed — the walk is "
+      + "bounded and the difference is below its horizon. Report this."));
+  }
+  if (diff.n_summarised) {
+    banner.appendChild(el("p", { class: "small muted" },
+      `${diff.n_summarised} change${diff.n_summarised === 1 ? " is" : "s are"} `
+      + "located to a component whose inside was not walked — a table of rates, "
+      + "say. The component is named; the individual rate is not."));
+  }
+
+  const table = $("diff-table");
+  clear(table);
+  table.appendChild(el("tr", {},
+    ...["component", "kind", "left", "right", ""].map((h) => el("th", { text: h }))));
+  for (const change of diff.changes) {
+    table.appendChild(el("tr", {},
+      el("td", {}, el("code", { text: change.path })),
+      el("td", { class: "small muted", text: change.kind }),
+      el("td", {}, change.left === null || change.left === undefined
+        ? digestChip(change.left_digest, "left") : String(change.left)),
+      el("td", {}, change.right === null || change.right === undefined
+        ? digestChip(change.right_digest, "right") : String(change.right)),
+      el("td", { class: "small muted" },
+        el("span", { class: "pill " + (change.status === "changed" ? "" : "warn"),
+          text: change.status }),
+        change.summarised ? " summarised" : "")));
+  }
+}
+
+// ── RFC-048: the evidence pack and the artifacts ────────────────────────
+
+async function loadEvidence() {
+  const facts = $("evidence-facts");
+  const table = $("evidence-table");
+  clear(facts);
+  clear(table);
+  showError($("evidence-error"), null);
+  let pack;
+  try {
+    pack = await api("/evidence");
+  } catch (error) {
+    // A deployment with no pack is the normal case, not a fault: the pack
+    // is built by CI. The message from the API says how to build one.
+    $("evidence-error").appendChild(el("div", { class: "warn", text: error.message }));
+    return;
+  }
+  const rows = [
+    ["pack digest", digestChip(pack.pack_digest, "pack")],
+    ["code version", digestChip(pack.code_version, "commit")],
+    ["complete", pack.complete ? "yes — every section reported"
+      : "no — a section could not be collected"],
+    ["machine specific", pack.machine_specific
+      ? "yes: it carries a benchmark, so it does not rebuild elsewhere"
+      : "no: it rebuilds to the same digest on any machine"],
+  ];
+  for (const [key, value] of rows) {
+    facts.appendChild(el("dt", { text: key }));
+    facts.appendChild(el("dd", {}, typeof value === "string"
+      ? document.createTextNode(value) : value));
+  }
+  table.appendChild(el("tr", {},
+    ...["section", "digest", "reported", ""].map((h) => el("th", { text: h }))));
+  for (const section of pack.sections) {
+    table.appendChild(el("tr", {},
+      el("td", { text: section.name }),
+      el("td", {}, digestChip(section.digest, section.name)),
+      el("td", {}, el("span", {
+        class: "pill " + (section.available ? "good" : "bad"),
+        text: section.available ? "yes" : "no",
+      })),
+      el("td", {}, el("button", {
+        class: "ghost small", type: "button", text: "Open",
+        onclick: () => openEvidenceSection(section.name),
+      }))));
+  }
+}
+
+async function openEvidenceSection(name) {
+  const host = $("evidence-section");
+  clear(host);
+  const payload = await api(`/evidence/${name}`);
+  host.appendChild(el("h4", { text: name }));
+  host.appendChild(el("pre", { class: "log",
+    text: JSON.stringify(payload.content, null, 2) }));
+}
+
+async function loadArtifacts() {
+  const table = $("artifacts-table");
+  clear(table);
+  const payload = await api("/artifacts");
+  table.appendChild(el("tr", {},
+    ...["artifact", "kind", "verdict", "label", "content"]
+      .map((h) => el("th", { text: h }))));
+  if (!payload.n_artifacts) {
+    table.appendChild(el("tr", {}, el("td", {
+      colspan: 5, class: "muted empty",
+      text: "None on record. This deployment has registered no reconciliation, "
+        + "workbook or pack — which is a statement about the deployment, not "
+        + "about whether reconciliations are possible.",
+    })));
+    return;
+  }
+  for (const record of payload.artifacts) {
+    table.appendChild(el("tr", {},
+      el("td", {}, digestChip(record.artifact_id, "artifact")),
+      el("td", { text: record.kind }),
+      el("td", {}, record.ok === null || record.ok === undefined
+        ? el("span", { class: "muted", text: "—" })
+        : el("span", { class: "pill " + (record.ok ? "good" : "bad"),
+            text: record.ok ? "parity" : "differences" })),
+      el("td", { class: "small", text: record.label || "—" }),
+      el("td", {}, digestChip(record.content_digest, "content"))));
+  }
+}
+
 // ── wiring ──────────────────────────────────────────────────────────────
 
 for (const tab of document.querySelectorAll("nav.tabs button")) {
   tab.addEventListener("click", () => {
-    for (const other of document.querySelectorAll("nav.tabs button")) {
-      const on = other === tab;
-      other.setAttribute("aria-selected", String(on));
-      $(`tab-${other.dataset.tab}`).hidden = !on;
+    showTab(tab.dataset.tab);
+    if (tab.dataset.tab === "runs") loadRuns();
+    if (tab.dataset.tab === "evidence") {
+      loadEvidence();
+      loadArtifacts().catch((error) => showError($("evidence-error"), error));
     }
   });
 }
+
+$("runs-refresh").addEventListener("click", () => loadRuns());
+$("runs-q").addEventListener("change", () => loadRuns());
+$("runs-state").addEventListener("change", () => loadRuns());
+$("drill-variable").addEventListener("change", () => drill());
+$("drill-modelpoint").addEventListener("change", () => drill());
+$("diff-run").addEventListener("click", () => runDiff());
+$("diff-left-id").addEventListener("change", () => loadDiffSide("left"));
+$("diff-right-id").addEventListener("change", () => loadDiffSide("right"));
+window.addEventListener("hashchange", () => applyCitation().catch(
+  (error) => showError($("runs-error"), error)));
 
 $("submit").addEventListener("click", submit);
 $("resubmit").addEventListener("click", () => resubmitReordered().catch(

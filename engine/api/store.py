@@ -98,6 +98,11 @@ class Run:
         }
         if self.record is not None:
             out["results_digest"] = self.record.results_digest
+            # RFC-048: the runs list is where a reviewer picks two runs and
+            # asks what changed between them, and the answer to that
+            # question is keyed by this digest.
+            out["assumptions_digest"] = self.record.assumptions_digest
+            out["modelpoints_digest"] = self.record.modelpoints_digest
             out["engine_version"] = self.record.engine_version
             out["executor"] = self.record.executor
             out["code_version"] = self.record.code_version

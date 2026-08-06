@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 1,968
+   naive implementation otherwise. The suite (`pytest`, currently 1,997
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -88,7 +88,7 @@ what any incumbent ships rather than merely reaching parity.
 | Production run operations | 🟡 digest-chained audit log + declarative run calendar shipped (D3, RFC-045) | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
 | Results warehouse | ✅ star schema in partitioned Parquet with the run fingerprint on every fact row (E1, RFC-046) | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
 | Excel integration | 🟡 audit workbook writer shipped (E2, RFC-047); ❌ live add-in (E4) | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet — and state, in the workbook, the precision the format costs, which no vendor's does | E2 |
-| Production UI | 🟡 demo only | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have | E3 |
+| Production UI | ✅ runs list, seriatim drill-down, semantic assumption diff, artifact and evidence views shipped (E3, RFC-048) | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have — plus a diff that names the component that moved, and URLs that are citations because the run id is a content digest | E3 |
 | VM-22 | ❌ | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit | C1 |
 | US statutory formulaic reserves + AAT | ❌ | CRVM/net-premium + asset adequacy runner | Same | C2 |
 | Pensions / longevity as products | ❌ | Buy-in/buy-out, longevity swap templates | Same | C3 |
@@ -439,7 +439,7 @@ a parity report for another run, a snapshot of another basis, a detail
 block wider than the Excel grid and two sheet names colliding at Excel's
 31-character limit are all refused rather than written.
 
-### E3 — Production UI (RFC-048) — effort L
+### E3 — Production UI (RFC-048) — effort L — **shipped**
 Grow `engine/api/ui` from demo to product: a runs list with filter/search
 over the registry; a results explorer (aggregate → variable → model-point
 drill-down); an assumption diff screen (two snapshot digests → semantic
@@ -447,20 +447,29 @@ per-table diff, not a text diff); parity-report and evidence-pack views.
 Same architecture rule as RFC-032: everything on the page is a call to the
 documented REST API.
 
-**Two notes from E2, so E3 starts from what is already true.** (i) That
-architecture rule means most of this item is *API* rather than page: the
-runs list, the results drill-down and the IFRS 17 overlay have routes
-(`engine/api/app.py`), but the assumption diff, the artifact/parity listing
-and the evidence pack have none — writing those routes, with their tests,
-is the first half of E3 and should land before a line of JavaScript.
-(ii) The semantic assumption diff has its substrate already: RFC-047's
-`assumption_rows` flattens an assumption set into `(path, kind, value,
-digest)` rows whose root digest *is* the run's `assumptions_digest`, so a
-per-component diff is a join over two row sets rather than a new walker. It
-currently sits in `engine/excel/workbook.py` behind the `[excel]` extra and
-imports nothing from openpyxl; E3 should lift it into NumPy-only core and
-have both the workbook and the diff route call it, rather than growing a
-second flattener that can disagree with the first.
+**Shipped (RFC-048), and it was mostly API.** Six new routes — the
+filtered runs list, the single run with its request, the
+variable/model-point drill-down, `POST /assumptions/diff`, `/artifacts` and
+`/evidence` — plus four screens on them. The flattener moved into NumPy-only
+`engine/core/snapshot.py`, so the workbook's snapshot sheet and the diff
+route share one walker and cannot disagree about what a basis contains.
+
+Three things worth carrying forward. **The diff is a join over subtree
+digests**, so an unchanged mortality basis contributes nothing and a changed
+rate is reported at `dynamic_lapse.base` — with the verdict taken from the
+root digests rather than from the change list, so a bounded walk that finds
+nothing still answers "they differ, and I cannot say where". **A selection
+is not the run**: the drill-down response carries `partial`, because the
+digest covers the whole block and a client checking one policy's column
+against it would blame the engine. **The URL is a citation** — every view's
+state is in the hash, applied on `hashchange` as well as on load, and a run
+identifier is a content digest, so a pasted link cannot rot into different
+numbers. Landscape §7.3 shaped the scope: the field's platform UI is a
+*run-operations* UI (§7.3.1), the real results UX is the customer's own BI
+tool over E1's warehouse rather than a charting product built here
+(§7.3.2), and seriatim drill-down is what every vendor leads with, so it
+populates the moment there is a run rather than waiting to be found
+(§7.3.5).
 
 ### E4 — The live Excel add-in (RFC-056) — effort M
 The tool actuaries will never give up, made a first-class client of the API
@@ -646,12 +655,15 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: E3 (§7, the production UI) is the
-next item in sequence — its dependencies D1 (auth) and E1 (warehouse) are
-both shipped, and RFC-032's architecture rule holds: everything on the page
-is a call to the documented REST API. B1 (§4) remains unstarted and carries
-a written assessment of why — read it before picking the item up, and expect
-an array-expression compiler rather than a wrapper. Shipped so far: A1
-(RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 — F1 (RFC-049), D1–D3
-+ E1 (RFC-043, RFC-044, RFC-045, RFC-046) — milestone M3 — and E2
-(RFC-047), the first third of M4.*
+*Next action for the implementing agent: E4 (§7, the live Excel add-in,
+RFC-056) is the next item in sequence and closes milestone M4 — both its
+dependencies are shipped, E2 for the stamping and formatting code it
+reuses and D1 for the token auth it authenticates with; note that its
+acceptance criterion mocks xlwings at the boundary, so it needs no Excel to
+be tested and does need a documented manual smoke procedure. B1 (§4)
+remains unstarted and carries a written assessment of why — read it before
+picking the item up, and expect an array-expression compiler rather than a
+wrapper. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) —
+milestone M1 — F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045,
+RFC-046) — milestone M3 — and E2 (RFC-047) and E3 (RFC-048), two thirds of
+M4.*

@@ -92,6 +92,8 @@ from engine.core.approvals import (
 )
 from engine.core.audit import AuditLog
 from engine.core.modeldoc import document, graph_is_settled, modelpoint_fields
+from engine.core.registry import ArtifactRegistry
+from engine.core.snapshot import diff_snapshots
 from engine import __version__ as ENGINE_VERSION
 
 
@@ -138,7 +140,9 @@ def create_app(models: dict | None = None, *,
                principals: Any = None,
                approvals: Any = None,
                require_approval: bool = False,
-               audit: Any = None) -> "FastAPI":
+               audit: Any = None,
+               artifacts: Any = None,
+               evidence: Any = None) -> "FastAPI":
     """Build the application.
 
     ``models`` restricts the catalogue; ``build`` replaces the whole
@@ -165,6 +169,14 @@ def create_app(models: dict | None = None, *,
     the API performs is recorded in it; reads are not, because a log that
     records everything is a log nobody reads.
 
+    ``artifacts`` is RFC-003's :class:`~engine.core.registry.ArtifactRegistry`
+    — the parity reports (RFC-033), workbooks (RFC-047) and packs derived
+    from runs. An empty one is created when none is given, so ``GET
+    /artifacts`` answers with a list rather than a 404 on a deployment that
+    has recorded none. ``evidence`` points at a *built* RFC-049 evidence
+    pack directory; ``GET /evidence`` serves it and refuses to build one
+    per request, because collecting a pack runs the test suite.
+
     ``approvals`` is RFC-044's approval log — an
     :class:`~engine.core.approvals.ApprovalRegistry` or a path to one — and
     ``require_approval`` turns on **approved mode**, where a run whose
@@ -189,6 +201,13 @@ def create_app(models: dict | None = None, *,
             )
         if approval_log is None:
             approval_log = ApprovalRegistry()
+    if isinstance(artifacts, ArtifactRegistry) or artifacts is None:
+        artifact_log = artifacts if artifacts is not None else ArtifactRegistry()
+    else:
+        artifact_path = Path(artifacts)
+        artifact_log = (ArtifactRegistry.from_json(artifact_path)
+                        if artifact_path.is_file() else ArtifactRegistry())
+    evidence_root = Path(evidence) if evidence is not None else None
     audit_path = None
     if isinstance(audit, AuditLog) or audit is None:
         audit_log = audit
@@ -239,6 +258,8 @@ def create_app(models: dict | None = None, *,
     app.state.principals = identities
     app.state.approvals = approval_log
     app.state.audit = audit_log
+    app.state.artifacts = artifact_log
+    app.state.evidence = evidence_root
 
     @app.get("/health")
     def health() -> dict:
@@ -480,6 +501,161 @@ def create_app(models: dict | None = None, *,
         return {"assumptions_digest": digest, "approvers": list(approvers),
                 "approved": bool(approvers)}
 
+    @app.post("/assumptions/diff", dependencies=[Depends(reads)])
+    def assumption_diff(body: dict) -> dict:
+        """What changed between two assumption sets, by component.
+
+        RFC-048. ``POST {"left": <assumptions spec>, "right": <spec>}``,
+        the same spec shape a run request carries, and the answer is a
+        per-component list rather than a text diff: a reordered mapping is
+        not a change, and a changed rate is located at
+        ``dynamic_lapse.base`` rather than at a line number.
+
+        The verdict — ``identical`` — is taken from the two digests rather
+        than from the change list, so it is the same bit RFC-044's approval
+        check uses. The list explains the verdict; it does not decide it.
+        """
+        for side in ("left", "right"):
+            if side not in body:
+                raise HTTPException(
+                    422, f"a diff needs {side!r}: an assumptions spec, the "
+                         f"same shape a run request carries"
+                )
+        try:
+            left = build_assumptions(body["left"])
+            right = build_assumptions(body["right"])
+        except InvalidRequestError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except (TypeError, ValueError, KeyError) as exc:
+            raise HTTPException(422, f"assumptions not buildable: {exc}") from exc
+        return diff_snapshots(left, right).to_dict()
+
+    @app.get("/artifacts", dependencies=[Depends(reads)])
+    def list_artifacts(kind: str | None = Query(default=None)) -> dict:
+        """Derived artifacts on record: parity reports, workbooks, packs.
+
+        Always answers, with an empty list on a deployment that has
+        registered none — the same choice RFC-049's evidence pack makes for
+        a section with nothing to report. A 404 here would read as "this
+        server does not do reconciliations", which is a different and
+        wrong statement.
+        """
+        rows = [record.to_dict() for record in artifact_log]
+        # Every kind on record, not only the kinds that survived the
+        # filter: a page that offered "workbook" as a filter option only
+        # once a workbook matched the current filter would hide the thing
+        # somebody was looking for.
+        kinds = sorted({row["kind"] for row in rows})
+        if kind:
+            rows = [row for row in rows if row["kind"] == kind]
+        return {"artifacts": rows, "n_artifacts": len(rows), "kinds": kinds}
+
+    @app.get("/artifacts/{artifact_id}", dependencies=[Depends(reads)])
+    def get_artifact(artifact_id: str) -> dict:
+        found = artifact_log.find(artifact_id)
+        if found is None:
+            raise HTTPException(404, f"unknown artifact {artifact_id!r}")
+        return found.to_dict()
+
+    def _resolve_pack() -> Path:
+        """The pack directory behind ``evidence=``.
+
+        ``scripts/evidence_pack.py --out <dir>`` writes ``<dir>/<pack
+        digest>/``, so a deployment naturally points at the parent. Both
+        are accepted. What is *not* accepted is a parent holding two packs:
+        picking one would mean the page reports a pack nobody chose, and
+        which one it picked would depend on the filesystem.
+        """
+        if evidence_root is None:
+            raise HTTPException(
+                404,
+                "no evidence pack is configured for this deployment. Build "
+                "one with `python scripts/evidence_pack.py --out <dir>` and "
+                "start the app with evidence=<dir>; it is deliberately not "
+                "built per request, because collecting it runs the test "
+                "suite."
+            )
+        if (evidence_root / "manifest.json").is_file():
+            return evidence_root
+        packs = sorted(child for child in evidence_root.glob("*")
+                       if (child / "manifest.json").is_file())
+        if len(packs) == 1:
+            return packs[0]
+        if not packs:
+            raise HTTPException(
+                404, f"{evidence_root} holds no evidence pack: no "
+                     f"manifest.json in it or in any directory under it"
+            )
+        raise HTTPException(
+            409, f"{evidence_root} holds {len(packs)} packs "
+                 f"({', '.join(p.name for p in packs)}); point `evidence` at "
+                 f"the one this deployment stands behind"
+        )
+
+    def _read_pack_json(path: Path) -> dict:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                500, f"evidence pack unreadable at {path.name}: {exc}"
+            ) from exc
+
+    @app.get("/evidence", dependencies=[Depends(reads)])
+    def get_evidence() -> dict:
+        """RFC-049's validation evidence pack, as built.
+
+        Served from a pack directory the deployment points at, and **not**
+        built on demand: the pack collects the test inventory by running
+        pytest and the equivalence attestation by running templates under
+        both executors, which is a CI job rather than a request. A page
+        that rebuilt it per view would be a page that reported whatever the
+        server had time for.
+
+        With no pack configured this is a 404 that says how to make one,
+        rather than a thinner pack computed on the spot — an evidence pack
+        that quietly reports less than the real one is the failure mode
+        RFC-049 exists to prevent.
+        """
+        pack = _resolve_pack()
+        manifest = _read_pack_json(pack / "manifest.json")
+        sections = []
+        for name, digest in sorted(manifest.get("sections", {}).items()):
+            content = _read_pack_json(pack / f"{name}.json")
+            sections.append({
+                "name": name, "digest": digest,
+                # RFC-049's rule: a section with nothing to report is still
+                # available. False here means the pack is incomplete.
+                "available": bool(content.get("available", True)),
+            })
+        return {
+            "path": str(pack),
+            "pack_digest": manifest.get("pack_digest"),
+            "code_version": manifest.get("code_version"),
+            "machine_specific": manifest.get("machine_specific"),
+            "environment_in_digest": manifest.get("environment_in_digest"),
+            "complete": all(entry["available"] for entry in sections),
+            "sections": sections,
+        }
+
+    @app.get("/evidence/{section}", dependencies=[Depends(reads)])
+    def get_evidence_section(section: str) -> dict:
+        """One section of the pack, in full.
+
+        Separate from the summary because the test inventory alone is every
+        test function in the suite by name; a client that wanted the
+        headline should not have to download two thousand strings to get
+        it.
+        """
+        pack = _resolve_pack()
+        manifest = _read_pack_json(pack / "manifest.json")
+        if section not in manifest.get("sections", {}):
+            raise HTTPException(
+                404, f"the pack has no section {section!r}; it has "
+                     f"{sorted(manifest.get('sections', {}))}"
+            )
+        return {"name": section, "digest": manifest["sections"][section],
+                "content": _read_pack_json(pack / f"{section}.json")}
+
     @app.get("/approvals", dependencies=[Depends(reads)])
     def list_approvals() -> dict:
         log = _approval_store()
@@ -584,26 +760,69 @@ def create_app(models: dict | None = None, *,
         return summary
 
     @app.get("/runs", dependencies=[Depends(reads)])
-    def list_runs(state: str | None = Query(default=None)) -> dict:
+    def list_runs(state: str | None = Query(default=None),
+                  model: str | None = Query(default=None),
+                  q: str | None = Query(default=None),
+                  limit: int = Query(default=200, ge=1, le=10_000)) -> dict:
+        """The runs list, filtered.
+
+        RFC-048. ``q`` searches the four things a run is actually looked up
+        by — its fingerprint, its model, and its results and assumption
+        digests — by **prefix on the digests and substring on the model**.
+        Prefix rather than substring on a digest is deliberate: a digest is
+        quoted by its first characters everywhere in this repo, and a
+        substring match would let a search for one run find another whose
+        digest merely contains those characters in the middle.
+
+        ``n_matched`` is reported alongside a truncated page, so a client
+        that hit ``limit`` knows it did.
+        """
         try:
             wanted = RunState(state) if state else None
         except ValueError as exc:
             raise HTTPException(
                 422, f"state must be one of "
                      f"{[s.value for s in RunState]}") from exc
-        return {"runs": [run.summary() for run in store.list(wanted)]}
+        rows = [run.summary() for run in store.list(wanted)]
+        if model:
+            rows = [row for row in rows
+                    if model.lower() in str(row.get("model") or "").lower()]
+        if q:
+            needle = q.strip().lower()
+            digests = ("run_id", "results_digest", "assumptions_digest",
+                       "modelpoints_digest")
+
+            def hit(row: dict) -> bool:
+                if needle in str(row.get("model") or "").lower():
+                    return True
+                return any(str(row.get(key) or "").lower().startswith(needle)
+                           for key in digests)
+
+            rows = [row for row in rows if hit(row)]
+        return {"runs": rows[:limit], "n_matched": len(rows),
+                "truncated": len(rows) > limit}
 
     @app.get("/runs/{run_id}", dependencies=[Depends(reads)])
     def get_run(run_id: str) -> dict:
+        """One run, with the request that produced it.
+
+        The list omits the request and this includes it, which is the whole
+        difference between the two routes. RFC-048's assumption-diff screen
+        needs the *assumptions* of two runs to compare them, and a client
+        that had to keep its own copy of what it submitted would be a
+        client that can only diff its own runs.
+        """
         run = store.get(run_id)
         if run is None:
             raise HTTPException(404, f"unknown run {run_id!r}")
-        return run.summary()
+        return {**run.summary(), "request": run.request}
 
     @app.get("/runs/{run_id}/results", response_class=response_class,
              dependencies=[Depends(reads)])
     def get_results(run_id: str,
-                    aggregate: bool = Query(default=False)):
+                    aggregate: bool = Query(default=False),
+                    variable: str | None = Query(default=None),
+                    modelpoint: str | None = Query(default=None)):
         """The run's numbers.
 
         ``aggregate`` sums each series across the block and is not a
@@ -618,6 +837,15 @@ def create_app(models: dict | None = None, *,
         per-model-point arrays, because that is what the registry
         fingerprinted. ``aggregated`` says which of the two is in the body,
         so a client cannot check the wrong thing against it.
+
+        RFC-048 adds the two axes a results explorer drills along:
+        ``variable`` (a comma-separated subset) and ``modelpoint`` (one
+        policy's column). They narrow what is sent and nothing else — the
+        numbers are the run's either way — but a production block is a
+        hundred thousand policies wide, and a screen that could only ask
+        for all of them is a screen nobody can open. ``partial`` says the
+        body is a selection, so a client cannot check a subset against a
+        digest that covers the whole.
         """
         run = store.get(run_id)
         if run is None:
@@ -629,6 +857,31 @@ def create_app(models: dict | None = None, *,
             # yet, which is a different thing from a run that never was.
             raise HTTPException(409, f"run {run_id} is {run.state.value}")
         arrays = run.arrays or {}
+        if variable:
+            wanted_names = [name.strip() for name in variable.split(",")
+                            if name.strip()]
+            missing = [name for name in wanted_names if name not in arrays]
+            if missing:
+                raise HTTPException(
+                    422, f"run {run_id} carries no variable(s) {missing}; it "
+                         f"carries {sorted(arrays)}"
+                )
+            arrays = {name: arrays[name] for name in wanted_names}
+        mp_ids = [str(mp_id) for mp_id in
+                  (run.result.mp_ids if run.result is not None else ())]
+        if modelpoint is not None:
+            if aggregate:
+                raise HTTPException(
+                    422, "aggregate=true sums across model points, so there "
+                         "is no model point to select within it"
+                )
+            if modelpoint not in mp_ids:
+                raise HTTPException(
+                    404, f"run {run_id} has no model point {modelpoint!r}"
+                )
+            column = mp_ids.index(modelpoint)
+            arrays = {name: np.asarray(values)[:, column]
+                      for name, values in arrays.items()}
         if aggregate and run.result is not None:
             arrays = {name: np.asarray(run.result.aggregate(name))
                       for name in arrays}
@@ -647,6 +900,11 @@ def create_app(models: dict | None = None, *,
             "run_id": run_id,
             "results_digest": run.record.results_digest if run.record else None,
             "aggregated": bool(aggregate),
+            "modelpoint": modelpoint,
+            "modelpoints": mp_ids,
+            # The digest covers the whole run; this body may not. Saying so
+            # is what stops a client checking a selection against it.
+            "partial": bool(variable) or modelpoint is not None,
             "outputs": list(arrays),
             "results": _jsonable(arrays),
         }
