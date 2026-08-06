@@ -68,7 +68,7 @@ what any incumbent ships rather than merely reaching parity.
 | Cross-machine scale-out | 🟡 one machine | Multi-machine dispatch | Bitwise-identical results regardless of grid topology, verified by the registry | B2 |
 | Governance: RBAC, approvals | 🟡 token auth + four roles (D1, RFC-043) and digest-bound 4-eyes approval (D2, RFC-044) shipped | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
 | Production run operations | 🟡 digest-chained audit log + declarative run calendar shipped (D3, RFC-045) | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
-| Results warehouse | ❌ | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
+| Results warehouse | ✅ star schema in partitioned Parquet with the run fingerprint on every fact row (E1, RFC-046) | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
 | Excel integration | ❌ | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet | E2 |
 | Production UI | 🟡 demo only | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have | E3 |
 | VM-22 | ❌ | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit | C1 |
@@ -379,8 +379,9 @@ production run calendar: scheduled runs defined declaratively (cron
 expression + frozen request fingerprint) executed by a worker script, not
 by core.
 
-**Milestone M3 — "deployable":** D1–D3 + E1. An insurer's model-risk
-function can point at RBAC, 4-eyes, an audit log, and the registry.
+**Milestone M3 — "deployable":** D1–D3 + E1 — **shipped** (RFC-043,
+RFC-044, RFC-045, RFC-046). An insurer's model-risk function can point at
+RBAC, 4-eyes, an audit log, and the registry.
 
 ---
 
@@ -388,7 +389,7 @@ function can point at RBAC, 4-eyes, an audit log, and the registry.
 
 Landscape §5.4 and §6.5.
 
-### E1 — Results warehouse (RFC-046) — effort M
+### E1 — Results warehouse (RFC-046) — effort M — **shipped**
 `engine/data/warehouse.py`: a star schema in partitioned Parquet —
 `fact_cashflow(run_fingerprint, modelpoint_id, scenario, t, variable, value)`
 with dimension tables for runs (fingerprint, model, assumption digests,
@@ -599,7 +600,7 @@ order unless there is a concrete reason not to.
 *Next action for the implementing agent: B1 (§4) is unstarted and carries a
 written assessment of why — read it before picking the item up, and expect an
 array-expression compiler rather than a wrapper. Everything else on §10's
-path is open; E1 (§7, the results warehouse) is the next item in sequence
-and the last one M3 waits on. Shipped so far: A1 (RFC-033), A2 (RFC-034),
-A4 (RFC-036) — milestone M1 — F1 (RFC-049), D1 (RFC-043), D2 (RFC-044) and
-D3 (RFC-045).*
+path is open; E2 (§7, the Excel workbook) is the next item in sequence.
+Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 —
+F1 (RFC-049), and D1–D3 + E1 (RFC-043, RFC-044, RFC-045, RFC-046) —
+milestone M3.*

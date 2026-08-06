@@ -181,7 +181,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 | Experience analysis / AvE | 🟡 | 🟡 | 🟡 | ✅ incl. Shapley attribution (order-independent, adds up) — ahead of the field |
 | Reproducibility / run registry | 🟡 run logs | 🟡 Unify | 🟡 | ✅ content-addressed question+answer digests, cross-process verified |
 | Model documentation / lineage | ✅ formula browser | 🟡 | 🟡 manual is the doc | ✅ generated Markdown + dependency graph with time offsets; docstring coverage measured and asserted (80.3% floor) |
-| API-first integration | ❌ file drops | 🟡 | 🟡 | ✅ Python SDK + REST (202/fingerprint/event stream), Parquet I/O |
+| API-first integration | ❌ file drops | 🟡 | 🟡 | ✅ Python SDK + REST (202/fingerprint/event stream), Parquet I/O, and a star-schema results warehouse whose every fact row carries the run fingerprint (RFC-046) |
 | Production UI (runs, results explorer, assumption diffing) | ✅ | ✅ | ✅ | 🟡 demo UI only |
 | Governance: RBAC, approval workflows, multi-user | ✅ | ✅ Unify | ✅ | 🟡 token authentication and four roles on every route (RFC-043), off by default so the library is unchanged, plus 4-eyes assumption approval bound to the content digest rather than to a label (RFC-044) — an approval that cannot silently drift, which no incumbent's label-based workflow offers — and a digest-chained audit log plus a declarative run calendar whose entries freeze the request fingerprint (RFC-045) |
 | Excel integration | ✅ | ✅ | ✅ | ❌ |
