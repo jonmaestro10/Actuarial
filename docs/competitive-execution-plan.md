@@ -1005,6 +1005,78 @@ evidence pack, workbook) are produced into a content-addressed directory.
 
 ---
 
+## 9a. Workstream H — The documentation a buyer expects
+
+The landscape doc's §5.6 point about trust assets applies to documentation as
+directly as to support organisations: an incumbent arrives with an
+installation guide, an architecture description, a user manual and a training
+course, and a repository that arrives with an execution plan and 72 RFCs is
+not obviously the same kind of artefact — however much better the RFCs are.
+
+The RFCs are a *design record*, which is the right thing for them to be and
+the wrong thing to hand a new developer or an evaluating actuary. They are
+chronological, they argue with each other on purpose, and finding out how the
+engine works from them means reading seventy documents in order. What is
+missing is the orthogonal cut: how it is put together *now*, how to run it,
+and how to use it.
+
+Four items, each self-contained. None depends on any B, C, E, F or G item, so
+they can be taken whenever a session suits them — and H1 is worth doing before
+the next long piece of work rather than after.
+
+### H1 — `CLAUDE.md`, the working agreement in the repo — effort S
+The conventions an agent or a new developer needs *before* touching
+anything, currently spread across §1 of this plan, the RFC house style, and
+tribal knowledge that only exists in session prompts: the dependency
+discipline (§1.4), the bitwise invariant (§1.2), the golden-test rule
+(§1.3), the docstring floor, the "assert the refusals as well as the grants"
+convention, the `tests/` layout rules (not a package; never import across
+modules), the evidence-pack verification steps, and the commit-message
+voice. **Build:** `CLAUDE.md` at the repo root.
+
+**Accept:** a test asserts the file names every checked convention it claims
+to cover — the same derivation-over-restatement rule the prescribed-assumption
+provenance string earned, applied to a document that will otherwise drift the
+moment §1 changes.
+
+### H2 — Technology architecture — effort M
+**Build:** `docs/architecture.md`. The layer map (`engine/core`, `data`,
+`library`, `report`, `api`, `migrate`, `parity`) with the dependency rules
+that hold between them and *why*; the three executors and the classes §1.2
+splits them into; the `@var` graph and its evaluation model; where dated
+regulatory data lives and how a dated set is fingerprinted; the run registry,
+approvals and audit chain; and the deployment surfaces (REST, Excel add-in,
+warehouse). With diagrams that are generated from the code where they can be
+— an architecture diagram maintained by hand is a diagram that is wrong.
+
+**Accept:** the layer-dependency claims are asserted by an import-graph test,
+so the document cannot describe a boundary the code has stopped keeping.
+
+### H3 — Developer README — effort S
+The current `README.md` is 969 lines and is doing three jobs at once. Split
+the developer half out: install, the extras and what each is for, running the
+suite (including the `[compile]` extra's separate CI job), the benchmark
+family, how to add a template, how to add a dated regulatory set, how to add
+a finding to the catalogue, and the pre-push verification sequence.
+**Build:** `docs/developing.md`, with `README.md` reduced to the front door.
+
+**Accept:** every command the document quotes is executed in CI, so a stale
+instruction fails the build rather than a new developer's afternoon.
+
+### H4 — User guide — effort M
+For the actuary rather than the developer. **Build:** `docs/user-guide.md`:
+the model catalogue and what each template is for, assumption objects and
+bases, running a valuation through the API and through Excel, reading a run
+record and an evidence pack, the approval workflow, and — the section no
+incumbent ships — **what the engine refuses to do and why**, drawn from the
+findings catalogue (F4) and the prescribed-assumption refusals.
+
+**Accept:** every worked example in the guide is one of the specimens the
+evidence pack already runs, so the guide cannot show an example that does not
+work.
+
+---
+
 ## 10. Sequencing
 
 Priority order (from landscape §6, refined by dependency):
@@ -1048,9 +1120,11 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: **B1 (§4, compiled kernels) is the
-next item**, it is the largest thing left, and F8 (RFC-072) has just removed
-the unknown that kept it unstarted through six RFCs — **read that assessment
+*Next action for the implementing agent: **B1 (§4, compiled kernels), then
+B2 and B3** — the whole speed workstream, taken in order because B3 gates on
+B1 and B2 shares its executor contract. B1 is the largest thing left, and F8
+(RFC-072) has just removed the unknown that kept it unstarted through six
+RFCs — **read that assessment
 before designing anything**, because the kernel's contents are now determined
 by IEEE-754 rather than open: correctly-rounded operations only, everything
 else hoisted into a NumPy-computed slab, `fastmath` off, no reduction at any
@@ -1171,6 +1245,13 @@ and the flag is *derived* from the values rather than listed beside them.
 The standard projection amount itself is still unbuilt — §3.C makes it
 disclosure-only for 2026, which is why the assumptions land before the
 calculation.
+
+**Workstream H (documentation) is new and unstarted.** H1 (`CLAUDE.md`), H2
+(architecture), H3 (developer README), H4 (user guide). None gates on
+anything, and H1 is worth taking before the next long piece of work rather
+than after — the conventions an agent needs before touching the repo
+currently live in §1 of this plan and in session prompts, which is not where
+a new developer looks.
 
 Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 —
 F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045, RFC-046) — milestone
