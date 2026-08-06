@@ -29,14 +29,14 @@ reserve too *small*.
 | 3.E | DR for groups passing the Single Scenario Test | **out of scope** | the DR is an input to `ReservingGroup`; §7.E's test is not implemented |
 | **3.F.1** | **Reserving Categories may not be aggregated** | **refused** ← *new* | see below |
 | **3.F.2** | payout + accumulation may combine on two criteria | **refused unless attested** ← *new* | `combined_payout_accumulation=True` |
-| 3.F.3 | DR groups shall not aggregate with non-DR groups | **gap** | groups are separate objects, but nothing enforces the rule across them |
+| 3.F.3 | DR groups shall not aggregate with non-DR groups | **implemented** | V2: `ModelSegment.carries_dr`, refused in `check_segments_aggregable` |
 | 3.F.4 | a category may be one model segment | **implemented** | the single-group case |
-| 3.F.5.a.ii | combine PVs across segments, **then** take the greatest | **known deviation** | `Σ max` vs `max Σ`; pinned |
+| 3.F.5.a.ii | combine PVs across segments, **then** take the greatest | **implemented** | V2: `ModelSegment` + `segment_scenario_reserves` |
 | 4.A | project accumulated deficiencies | **implemented** | RFC-016's roll |
 | 4.B.1.a | scenario reserve = starting assets − PIMR + greatest PV | **implemented** | PIMR added this pass |
-| 4.B.1.a note | the greatest PV **can be negative** | **known deviation** | RFC-016 floors at zero; pinned |
+| 4.B.1.a note | the greatest PV **can be negative** | **implemented** | V1: `floor_at_zero=False` for VM-22, `True` for VM-20/21 |
 | 4.B.1 | scenario reserve ≥ aggregate cash surrender value | **implemented** | floor inside the CTE; corrected |
-| **4.B.1** | **longevity reinsurance: ≥ 2% of next-12-months scheduled benefits** | **gap** ← *new* | see below |
+| **4.B.1** | **longevity reinsurance: ≥ 2% of next-12-months scheduled benefits** | **implemented** | V2: `ModelSegment.floor()` |
 | 4.B.2 | NAER discounting | **out of scope** | earned rates are an input |
 | 4.C–4.E | hedging, index credits, 20% hedge margin, two-CTE70 blend | **out of scope** | no hedge modelling; the blend is documented, not built |
 | 4 (length) | project until no obligations remain | **out of scope** | the caller sets the horizon |
@@ -111,10 +111,7 @@ Remaining open against the sections the module *does* implement:
 | item | direction | effort |
 |---|---|---|
 | §4.B.1 longevity 2% floor | understates for that category | small |
-| §3.F.5.a.ii `max Σ` ordering | overstates | medium — needs deficiency paths |
-| §4.B.1.a unfloored greatest PV | overstates | small, but touches shared code |
 | §3.B/§5 pre- and post-ceded | not comparable | medium |
-| §3.F.3 DR/non-DR aggregation | understates if violated | small |
 | §13 allocation to contracts | n/a | medium |
 
 Nothing else in the five arithmetic sections disagrees with the module.

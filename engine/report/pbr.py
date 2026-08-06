@@ -157,21 +157,35 @@ def path_discount_factors(earned_rates) -> np.ndarray:
 
 
 def greatest_present_value_of_accumulated_deficiency(
-        net_cashflows, earned_rates, starting_assets=0.0) -> np.ndarray:
+        net_cashflows, earned_rates, starting_assets=0.0, *,
+        floor_at_zero: bool = True) -> np.ndarray:
     """The GPVAD for each scenario.
 
     The largest present value, over every date in the projection, of the
-    amount by which accumulated assets have gone negative. Floored at zero:
-    a scenario that never goes underwater needs no reserve, and a *surplus*
-    is not a negative reserve.
+    amount by which accumulated assets have gone negative.
 
     The **maximum** is the point. A path that dips underwater in year 12 and
     recovers by year 30 still needed the money in year 12; a terminal
     measure would report nothing at all for it.
+
+    ``floor_at_zero`` decides what a scenario that never goes underwater
+    contributes, and **the chapters disagree**. Floored — the default, and
+    what VM-20 and VM-21 are read as requiring here — a surplus is not a
+    negative reserve and such a scenario contributes nothing. Unfloored,
+    it contributes its surplus as a negative number, which is what VM-22
+    says in terms: §4.B.1.a carries the guidance note "The greatest present
+    value of accumulated deficiencies **can be negative**."
+
+    The flag exists rather than a change of behaviour because this function
+    serves three chapters and only one of them has been read against its
+    text. Removing the floor outright would revalue the other two on the
+    strength of VM-22's wording, which is the error the VM-22 remediation
+    plan exists to stop repeating.
     """
     surplus = accumulated_surplus(net_cashflows, earned_rates, starting_assets)
     discounted_deficiency = -surplus * path_discount_factors(earned_rates)
-    return np.maximum(discounted_deficiency.max(axis=0), 0.0)
+    greatest = discounted_deficiency.max(axis=0)
+    return np.maximum(greatest, 0.0) if floor_at_zero else greatest
 
 
 def deficiency_dates(net_cashflows, earned_rates, starting_assets=0.0
@@ -188,16 +202,21 @@ def deficiency_dates(net_cashflows, earned_rates, starting_assets=0.0
     return discounted_deficiency.argmax(axis=0)
 
 
-def scenario_reserves(net_cashflows, earned_rates, starting_assets=0.0
-                      ) -> np.ndarray:
+def scenario_reserves(net_cashflows, earned_rates, starting_assets=0.0, *,
+                      floor_at_zero: bool = True) -> np.ndarray:
     """Starting assets plus the GPVAD, per scenario.
 
     The quantity the stochastic reserve is a tail expectation *of*. With no
     starting assets it is the GPVAD itself, which is the common
     simplification and the shape a greenfield valuation takes.
+
+    ``floor_at_zero`` is passed through — see
+    :func:`greatest_present_value_of_accumulated_deficiency`, where the
+    chapters disagree about it.
     """
     return starting_assets + greatest_present_value_of_accumulated_deficiency(
-        net_cashflows, earned_rates, starting_assets
+        net_cashflows, earned_rates, starting_assets,
+        floor_at_zero=floor_at_zero,
     )
 
 
