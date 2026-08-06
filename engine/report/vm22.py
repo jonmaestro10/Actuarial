@@ -381,7 +381,9 @@ class Contract:
     def from_cashflows(cls, id: str, net_cashflows, earned_rates, *,
                        starting_assets: float = 0.0,
                        cash_surrender_value: float = 0.0,
-                       pimr: float = 0.0) -> "Contract":
+                       pimr: float = 0.0,
+                       floor_at_zero: bool = False,
+                       category: str | None = None) -> "Contract":
         """Build from the projection, via RFC-016's scenario reserves.
 
         §4.B.1.a: "The starting asset amount, **less the allocated amount
@@ -391,12 +393,21 @@ class Contract:
         projection produces, so it is an argument; it defaults to zero,
         which is the right default for a block that has none and the wrong
         one for a block that does.
+
+        ``floor_at_zero`` defaults to **False** here and to ``True`` in
+        :mod:`engine.report.pbr`, and that is the one place VM-22 and the
+        other principle-based chapters part company: §4.B.1.a's guidance
+        note says "The greatest present value of accumulated deficiencies
+        **can be negative**", so a scenario that never goes underwater
+        reserves *less* than its starting assets rather than exactly them.
         """
         return cls(id=id,
                    scenario_reserve=scenario_reserves(
-                       net_cashflows, earned_rates, starting_assets)
+                       net_cashflows, earned_rates, starting_assets,
+                       floor_at_zero=floor_at_zero)
                    - float(pimr),
-                   cash_surrender_value=cash_surrender_value)
+                   cash_surrender_value=cash_surrender_value,
+                   category=category)
 
     def __fingerprint__(self):
         return {"id": self.id, "scenario_reserve": self.scenario_reserve,

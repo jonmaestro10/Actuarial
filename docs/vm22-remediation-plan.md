@@ -10,7 +10,7 @@ commit per item, tests asserting refusals as well as grants.*
 
 | item | § | direction of the error | effort | depends on |
 |---|---|---|---|---|
-| **V1** unfloored greatest present value | 4.B.1.a note | overstates | S | — |
+| ~~**V1** unfloored greatest present value~~ | 4.B.1.a note | overstates | S | **done** |
 | **V2** model segments, aggregation order, category floors | 3.F.5.a.ii, 4.B.1, 3.F.3 | overstates (order), understates (floor) | M | — |
 | **V3** the ceded basis | 3.B, 5 | not comparable | M | V2 (segments are what get two bases) |
 | **V4** allocation to contracts | 13 | n/a | M | V2 |
@@ -21,7 +21,7 @@ things around. V2 next because V3 and V4 both need its abstraction.
 
 ---
 
-## V1 — the greatest present value can be negative
+## V1 — the greatest present value can be negative — **done**
 
 **The text.** §4.B.1.a, guidance note: "The greatest present value of
 accumulated deficiencies **can be negative**."
@@ -51,6 +51,13 @@ quietly stop mattering.
 **Risk.** Low. The one thing to watch is that a negative greatest present
 value can drag an aggregate scenario reserve below the cash surrender
 value — which is precisely why §4.B.1's floor exists and is applied after.
+
+**Outcome.** Shipped. `floor_at_zero` is keyword-only on both shared
+functions, defaulting `True`; `Contract.from_cashflows` defaults it
+`False`. The measured difference on a funded block that never goes
+underwater is the whole surplus: 500 of starting assets reserves 500
+floored and **0** unfloored. VM-20 and VM-21 are bit-for-bit unmoved, which
+is asserted rather than assumed.
 
 ---
 

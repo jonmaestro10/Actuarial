@@ -546,34 +546,55 @@ def test_the_greatest_present_value_is_reduced_before_it_is_aggregated():
     assert prescribed == 100.0
 
 
-def test_the_greatest_present_value_is_floored_at_zero_and_the_text_is_not():
-    """**A known deviation from §4.B.1.a's guidance note**, pinned.
+def test_the_greatest_present_value_is_not_floored_for_vm22():
+    """**V1, fixed.** §4.B.1.a's guidance note: "The greatest present value
+    of accumulated deficiencies **can be negative**."
 
-    RFC-016 floors the greatest present value of accumulated deficiency at
-    zero — "a *surplus* is not a negative reserve" — and VM-22 says the
-    opposite in terms: "The greatest present value of accumulated
-    deficiencies can be negative."
+    RFC-016 floors it, on the reasoning that a surplus is not a negative
+    reserve, and that is how VM-20 and VM-21 are read here. VM-22 says the
+    opposite in terms, so `Contract.from_cashflows` takes the unfloored
+    path by default and the shared function keeps the floor for the other
+    two chapters.
 
-    The floor lives in `engine.report.pbr`, which VM-20 and VM-21 share, so
-    removing it there would revalue two other chapters on the strength of a
-    third's text. VM-22 needs its own unfloored path. Until it has one,
-    this records that a well-funded scenario reserves its starting assets
-    here and less than that under the chapter.
+    A block holding 500 of assets that only ever receives money needs
+    nothing: floored it reserves its starting assets exactly, unfloored it
+    reserves zero, and the difference is the whole surplus.
     """
     from engine.report.pbr import (
         greatest_present_value_of_accumulated_deficiency as gpvad,
     )
 
     rates = np.full((3, 1), 0.0)
-    # Never underwater: every accumulated surplus is positive.
-    net = np.array([[100.0], [100.0], [100.0]])
-    assert gpvad(net, rates, 0.0)[0] == 0.0        # floored
-    contract = Contract.from_cashflows("A", net, rates, starting_assets=500.0)
-    assert contract.scenario_reserve[0] == 500.0   # = starting assets exactly
+    net = np.array([[100.0], [100.0], [100.0]])      # never underwater
 
-    # Under the guidance note it would be starting assets *plus a negative*
-    # number, i.e. strictly less. Recorded, not asserted against the engine.
-    assert contract.scenario_reserve[0] >= 500.0
+    # With no starting assets the surplus at t=0 is zero, so the unfloored
+    # greatest present value is -0.0 and the floor changes nothing. It is
+    # the *funded* block where the two part company.
+    assert gpvad(net, rates, 0.0)[0] == 0.0
+    assert gpvad(net, rates, 500.0)[0] == 0.0                      # floored
+    assert gpvad(net, rates, 500.0, floor_at_zero=False)[0] == -500.0
+
+    vm22 = Contract.from_cashflows("A", net, rates, starting_assets=500.0)
+    assert vm22.scenario_reserve[0] == 0.0
+
+    floored = Contract.from_cashflows("A", net, rates, starting_assets=500.0,
+                                      floor_at_zero=True)
+    assert floored.scenario_reserve[0] == 500.0
+    assert vm22.scenario_reserve[0] < floored.scenario_reserve[0]
+
+
+def test_the_other_chapters_keep_the_floor_by_default():
+    """The reason this is a flag and not a change of behaviour: the
+    function serves three chapters and only one has been read against its
+    own text. VM-20 and VM-21 are bit-for-bit unmoved."""
+    from engine.report.pbr import scenario_reserves as pbr_scenario_reserves
+
+    rates = np.full((3, 2), 0.0)
+    net = np.array([[100.0, -400.0], [100.0, 50.0], [100.0, 50.0]])
+    default = pbr_scenario_reserves(net, rates, 200.0)
+    explicit = pbr_scenario_reserves(net, rates, 200.0, floor_at_zero=True)
+    assert np.array_equal(default, explicit)
+    assert default[0] == 200.0        # the well-funded scenario stays put
 
 
 # --------------------------------------------------------------------------
