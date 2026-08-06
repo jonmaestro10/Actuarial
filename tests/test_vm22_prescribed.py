@@ -24,12 +24,19 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+import engine.report.vm22_prescribed as module
 from engine.report.vm22_prescribed import (
     ACCOUNT_VALUE_EXPENSE_RATE,
     BASE_MAINTENANCE_EXPENSE,
     EXPENSE_BASE_YEAR,
     FX_CATEGORIES,
     FX_CATEGORIES_CARRIED,
+    FX_MAX_AGE,
+    FX_MIN_AGE,
+    FX_RATE_UP_SPLIT,
+    FX_STANDARD_CONTRACT_YEARS,
+    FX_STRUCTURED_MIN_AGE,
+    FX_SUBSTANDARD_CONTRACT_YEARS,
     LAPSE_TABLES_CARRIED,
     TABLES_CARRIED,
     TABLES_NOT_CARRIED,
@@ -40,8 +47,10 @@ from engine.report.vm22_prescribed import (
     base_lapse_rate,
     fx_factor,
     maintenance_expense,
+    mortality_basis,
     partial_withdrawal_rate,
     prescribed_mortality_rate,
+    projection_offset,
 )
 
 
@@ -257,18 +266,29 @@ def test_a_guaranteed_living_benefit_never_raises_the_factor():
         assert np.any(with_glb < without - 1e-12), sex
 
 
-def test_a_category_whose_table_is_not_carried_is_refused():
+def test_a_category_whose_table_is_not_carried_is_refused(monkeypatch):
     """**The refusal that matters.** §6.C.8 gives a different factor set per
-    Reserving Category and only the Accumulation one is transcribed. Serving
-    it for a payout annuity would be a plausible number from the wrong
-    section, which nothing downstream would question — and that is exactly
-    how this chapter produced eight errors before anyone read it."""
-    assert set(FX_CATEGORIES_CARRIED) < set(FX_CATEGORIES)
+    Reserving Category, and serving one category's table for another would
+    be a plausible number from the wrong section, which nothing downstream
+    would question — exactly how this chapter produced eight errors before
+    anyone read it.
 
-    for absent in set(FX_CATEGORIES) - set(FX_CATEGORIES_CARRIED):
+    RFC-071 carried the last of the four, so ``set(FX_CATEGORIES) -
+    set(FX_CATEGORIES_CARRIED)`` is now **empty** and a loop over it asserts
+    nothing. A loop that has quietly stopped running is a passing test that
+    guards nothing, so the mechanism is exercised directly: the carried set
+    is narrowed for the duration and the refusal has to still fire. §6.C.8
+    can grow a category — it grew three between the 2023 exposure draft and
+    this edition — and this is what will catch it."""
+    assert set(FX_CATEGORIES_CARRIED) == set(FX_CATEGORIES)
+
+    monkeypatch.setattr(module, "FX_CATEGORIES_CARRIED", ("accumulation",))
+    for absent in set(FX_CATEGORIES) - {"accumulation"}:
         with pytest.raises(PrescribedError, match="not transcribed here"):
-            fx_factor(70, "F", category=absent)
-    # And a category the section does not have at all is a different error.
+            fx_factor(70, "F", category=absent, contract_year=1,
+                      rate_up_years=5)
+    # And a category the section does not have at all is a different error,
+    # which the narrowing must not turn into the first one.
     with pytest.raises(PrescribedError, match="no factor set"):
         fx_factor(70, "F", category="longevity_reinsurance")
 
@@ -306,13 +326,13 @@ def test_the_mortality_formula_projects_then_adjusts():
 
 
 def test_the_prescribed_data_that_belongs_to_vm_m_stays_an_argument():
-    """The 2012 IAM Basic table and Projection Scale G2 live in VM-M. This
-    module inventing them would be the same error as inventing the
-    prescribed scenarios — so they arrive as arguments, exactly as
-    `stochastic_exclusion_test` takes its."""
-    import engine.report.vm22_prescribed as module
-
-    for absent in ("IAM_2012", "SCALE_G2", "iam_basic_table"):
+    """The 2012 IAM Basic table, the 1983 IAM Table 'a' and Projection Scale
+    G2 all live in VM-M. This module inventing them would be the same error
+    as inventing the prescribed scenarios — so they arrive as arguments,
+    exactly as `stochastic_exclusion_test` takes its. What *is* this
+    chapter's is which of them a category calls for, and that is carried:
+    see :func:`mortality_basis`."""
+    for absent in ("IAM_2012", "IAM_1983", "SCALE_G2", "iam_basic_table"):
         assert not hasattr(module, absent), (
             f"{absent} exists now — if VM-M's tables have been carried, "
             f"wire them here and delete this test"
@@ -345,8 +365,12 @@ def test_the_dated_set_says_what_it_carries_and_what_it_does_not():
     every run record citing this set, which is the reason a stale coverage
     claim here is worse than a stale one in a docstring."""
     text = VM22_PRESCRIBED_2026.text
-    assert len(TABLES_CARRIED) == 7 and len(TABLES_NOT_CARRIED) == 4
+    assert len(TABLES_CARRIED) == 10 and len(TABLES_NOT_CARRIED) == 1
     assert not set(TABLES_CARRIED) & set(TABLES_NOT_CARRIED)
+    # Down to the verb: "the other 1 (Table 6.5) is recorded", because the
+    # count reached one and a derived sentence that reads wrong is a
+    # sentence a reader stops trusting.
+    assert "the other 1 (Table 6.5) is recorded" in text
     for table in TABLES_CARRIED + TABLES_NOT_CARRIED:
         assert f"Table {table}" in text, table
     assert f"{len(TABLES_CARRIED)} of 11" in text
@@ -366,8 +390,9 @@ def test_what_the_set_says_it_carries_is_what_it_carries():
     with pytest.raises(PrescribedError):
         base_lapse_rate(0, 65, table="fixed")
     assert "6.7" in TABLES_CARRIED and "6.8" in TABLES_CARRIED
-    for absent in ("6.9", "6.10", "6.11"):
-        assert absent in TABLES_NOT_CARRIED
+    for carried in ("6.9", "6.10", "6.11"):        # RFC-071
+        assert carried in TABLES_CARRIED
+    assert set(FX_CATEGORIES_CARRIED) == set(FX_CATEGORIES)
 
 
 # --------------------------------------------------------------------------
@@ -405,13 +430,364 @@ def test_the_two_carried_factor_sets_are_different_tables():
     150% for a female at 50 — so a single wrong lookup shows up here."""
     assert fx_factor(50, "F") != pytest.approx(
         fx_factor(50, "F", category="payout_annuity"))
-    assert set(FX_CATEGORIES_CARRIED) == {"accumulation", "payout_annuity"}
-    still_absent = set(FX_CATEGORIES) - set(FX_CATEGORIES_CARRIED)
-    assert still_absent == {"structured_settlement_standard",
-                            "structured_settlement_substandard"}
-    for absent in still_absent:
-        with pytest.raises(PrescribedError, match="not transcribed here"):
-            fx_factor(70, "F", category=absent)
+    assert set(FX_CATEGORIES_CARRIED) == {
+        "accumulation", "payout_annuity",
+        "structured_settlement_standard",
+        "structured_settlement_substandard"}
+    # And all four are different tables, not one served four ways. A female
+    # at 70 reads 114%, 97.2%, 119% and 82% across them.
+    seventy = [
+        float(fx_factor(70, "F")),
+        float(fx_factor(70, "F", category="payout_annuity")),
+        float(fx_factor(70, "F", category="structured_settlement_standard",
+                        contract_year=1)),
+        float(fx_factor(70, "F", category="structured_settlement_substandard",
+                        contract_year=1, rate_up_years=5)),
+    ]
+    assert seventy == pytest.approx([1.14, 0.972, 1.19, 0.82])
+    assert len(set(seventy)) == 4
+
+
+# --------------------------------------------------------------------------
+# §6.C.8.iii — Tables 6.9, 6.10 and 6.11, and the axis that is not the same
+# twice (RFC-071)
+# --------------------------------------------------------------------------
+
+STANDARD = "structured_settlement_standard"
+SUBSTANDARD = "structured_settlement_substandard"
+
+
+def test_the_structured_settlement_factors_are_the_ones_the_tables_state():
+    """Spot values read from the primary text, one per table and per band.
+
+    Table 6.9's first row is 300% in contract years 1-10 and 365%/375% at
+    ≥11; Table 6.10's is 55% in every band; Table 6.11's is 55%, 55%, 70%/75%
+    and 70%. The oldest rows are where the three separate: 6.10 reaches 105
+    from **above** (101.7% at 104) and 6.11 from **below** (96.7%), and both
+    are 100% at the cap."""
+    assert fx_factor(2, "F", category=STANDARD, contract_year=1) \
+        == pytest.approx(3.00)
+    assert fx_factor(2, "M", category=STANDARD, contract_year=11) \
+        == pytest.approx(3.75)
+    assert fx_factor(30, "M", category=STANDARD, contract_year=11) \
+        == pytest.approx(4.60)
+    assert fx_factor(62, "F", category=STANDARD, contract_year=7) \
+        == pytest.approx(1.70)
+
+    assert fx_factor(2, "F", category=SUBSTANDARD, contract_year=31,
+                     rate_up_years=5) == pytest.approx(0.55)
+    assert fx_factor(62, "M", category=SUBSTANDARD, contract_year=31,
+                     rate_up_years=20) == pytest.approx(2.00)
+    assert fx_factor(104, "F", category=SUBSTANDARD, contract_year=1,
+                     rate_up_years=1) == pytest.approx(1.017)
+
+    assert fx_factor(2, "M", category=SUBSTANDARD, contract_year=21,
+                     rate_up_years=21) == pytest.approx(0.75)
+    assert fx_factor(62, "M", category=SUBSTANDARD, contract_year=31,
+                     rate_up_years=40) == pytest.approx(1.80)
+    assert fx_factor(104, "F", category=SUBSTANDARD, contract_year=1,
+                     rate_up_years=21) == pytest.approx(0.967)
+
+
+def test_the_contract_year_bands_are_not_the_same_bands_twice():
+    """**The hazard this whole item exists for.** Table 6.9 bands contract
+    years 1-5 / 6-10 / ≥11; Tables 6.10 and 6.11 band them 1-10 / 11-20 /
+    21-30 / ≥31. Three bands against four — and the two boundaries they
+    share, 1 and 11, are the trap rather than the reassurance: contract year
+    11 opens the *third* band of Table 6.9 and the *second* of Tables 6.10
+    and 6.11. A band index computed against the wrong list is therefore in
+    range, lands a column or two off, and reads a real cell of a real table.
+
+    The gap is computed on purpose rather than described. A female aged 62
+    in contract year 11 takes **225%** from Table 6.9. Read with the
+    substandard banding, contract year 11 is band two rather than band three
+    and the same lookup returns **170%** — a 24% understatement of the
+    prescribed mortality, from a number that looks entirely ordinary."""
+    assert FX_STANDARD_CONTRACT_YEARS == (1, 6, 11)
+    assert FX_SUBSTANDARD_CONTRACT_YEARS == (1, 11, 21, 31)
+    assert set(FX_STANDARD_CONTRACT_YEARS) \
+        & set(FX_SUBSTANDARD_CONTRACT_YEARS) == {1, 11}
+    assert FX_STANDARD_CONTRACT_YEARS.index(11) == 2
+    assert FX_SUBSTANDARD_CONTRACT_YEARS.index(11) == 1
+
+    right = fx_factor(62, "F", category=STANDARD, contract_year=11)
+    assert right == pytest.approx(2.25)
+
+    # The wrong reading, computed: band index against the other list.
+    wrong_band = int(np.searchsorted(
+        np.asarray(FX_SUBSTANDARD_CONTRACT_YEARS), 11, side="right")) - 1
+    row = [r for r in module._FX_SS_STANDARD if r[0] == 62][0]
+    wrong = row[1 + 2 * wrong_band]
+    assert wrong == pytest.approx(1.70)
+    assert wrong / right == pytest.approx(0.756, abs=0.001)
+
+    # And each table steps where its own header says it does, nowhere else.
+    for year, expected in ((5, 1.55), (6, 1.70), (10, 1.70), (11, 2.25)):
+        assert fx_factor(62, "F", category=STANDARD,
+                         contract_year=year) == pytest.approx(expected)
+    for year, expected in ((10, 0.90), (11, 1.35), (20, 1.35), (21, 1.75),
+                           (30, 1.75), (31, 1.95)):
+        assert fx_factor(62, "F", category=SUBSTANDARD, contract_year=year,
+                         rate_up_years=5) == pytest.approx(expected)
+
+
+def test_the_structured_tables_reach_ages_the_annuity_tables_never_do():
+    """**Structured settlements cover children**, so Tables 6.9 to 6.11 floor
+    at attained age **2** where Tables 6.7 and 6.8 floor at 50. Reusing
+    ``FX_MIN_AGE`` here would clamp a five-year-old claimant to the age-50
+    row and return 198% where the table says 318% — a plausible number, in
+    the direction that understates the reserve."""
+    assert FX_STRUCTURED_MIN_AGE == 2 and FX_MIN_AGE == 50
+
+    assert fx_factor(5, "F", category=STANDARD, contract_year=1) \
+        == pytest.approx(3.18)
+    assert fx_factor(50, "F", category=STANDARD, contract_year=1) \
+        == pytest.approx(1.98)
+    # Below the floor takes the floor row, as "<=2" states.
+    assert fx_factor(0, "F", category=STANDARD, contract_year=1) \
+        == fx_factor(2, "F", category=STANDARD, contract_year=1)
+
+    # The cap is shared, and is the tables' own ">=105" of 100%.
+    for age in (FX_MAX_AGE, 110, 130):
+        assert fx_factor(age, "M", category=STANDARD,
+                         contract_year=1) == pytest.approx(1.0)
+        assert fx_factor(age, "M", category=SUBSTANDARD, contract_year=1,
+                         rate_up_years=25) == pytest.approx(1.0)
+
+
+def test_the_substandard_factors_are_lower_and_that_is_the_ced_not_a_slip():
+    """**The finding that would have been "fixed" the wrong way.** A
+    substandard life is impaired, so the obvious expectation is a *higher*
+    mortality factor than a standard one. Table 6.10 is 55% where Table 6.9
+    is 300%, and stays strictly below it to attained age 86.
+
+    §6.C.8.iii says why, and the reason is that the two multiply different
+    rates: substandard mortality "reflect[s] the inclusion of the 'Constant
+    Extra Death' (CED) methodology described in Actuarial Guideline IX-A.
+    The CED shall be applied prior to the application of multiplicative Fx
+    factor." The impairment is already in the rate before *F*\\ :sub:`x`
+    touches it, so the factor is a correction to a loaded rate rather than
+    the loading itself. Comparing the two sets as if they were the same
+    quantity is the error, and it is the kind that gets a transcription
+    "corrected" until it agrees with the intuition."""
+    ages = np.arange(2, 106)
+    standard = fx_factor(ages, "F", category=STANDARD, contract_year=1)
+    substandard = fx_factor(ages, "F", category=SUBSTANDARD, contract_year=1,
+                            rate_up_years=5)
+    assert np.all(substandard[ages <= 86] < standard[ages <= 86])
+    assert standard.max() == pytest.approx(3.75)     # age 32
+    assert substandard[ages <= 86].max() == pytest.approx(1.08)   # age 86
+
+    # The ordering reverses at the very top and the reversal is small: both
+    # tables run down to 100% at 105, and Table 6.10 comes at it from above
+    # (101.7% at 104) while Table 6.9 has been flat at 100% since 102.
+    assert np.all(substandard[(ages >= 87) & (ages <= 97)]
+                  == standard[(ages >= 87) & (ages <= 97)])
+    assert np.all(substandard[(ages >= 98) & (ages <= 104)]
+                  > standard[(ages >= 98) & (ages <= 104)])
+    assert substandard[-1] == standard[-1] == pytest.approx(1.0)
+
+    # Table 6.9 never dips below 100%; both substandard tables spend most of
+    # their range below it. That asymmetry is the same fact seen twice.
+    every_standard = np.stack([
+        fx_factor(np.arange(2, 106), sex, category=STANDARD,
+                  contract_year=year)
+        for sex in ("F", "M") for year in FX_STANDARD_CONTRACT_YEARS])
+    assert every_standard.min() == pytest.approx(1.0)
+    assert substandard.min() == pytest.approx(0.55)
+
+
+def test_table_6_11_is_not_monotone_across_its_contract_year_bands():
+    """Every other column set rises with the contract-year band — longer on
+    the books, higher factor. **Table 6.11's male columns do not**, at five
+    cells and only there: at attained ages 2 to 6 the ≥31 band sits *below*
+    the 21-30 band (75% against 70% at age 2, converging to 79%/78% at 6).
+    At age 7 and above the male and female columns are identical throughout
+    the table and the reversal disappears.
+
+    Asserted because a test written to the expected shape would have failed
+    against the real table, and the tempting fix would have been to sort the
+    data until it agreed — which is how a transcription becomes a model."""
+    reversals = []
+    for age in range(2, 106):
+        by_band = [fx_factor(age, "M", category=SUBSTANDARD,
+                             contract_year=year, rate_up_years=21)
+                   for year in FX_SUBSTANDARD_CONTRACT_YEARS]
+        for lower, upper in zip(by_band, by_band[1:]):
+            if upper < lower - 1e-12:
+                reversals.append(age)
+    assert reversals == [2, 3, 4, 5, 6]
+
+    assert fx_factor(2, "M", category=SUBSTANDARD, contract_year=21,
+                     rate_up_years=21) == pytest.approx(0.75)
+    assert fx_factor(2, "M", category=SUBSTANDARD, contract_year=31,
+                     rate_up_years=21) == pytest.approx(0.70)
+
+    # The female column at the same cells rises, so this is not a banding
+    # bug in the lookup: it is one sex, five ages, one table.
+    assert fx_factor(2, "F", category=SUBSTANDARD, contract_year=21,
+                     rate_up_years=21) == fx_factor(
+        2, "F", category=SUBSTANDARD, contract_year=31, rate_up_years=21)
+    for age in range(2, 106):
+        by_band = [fx_factor(age, "F", category=SUBSTANDARD,
+                             contract_year=year, rate_up_years=21)
+                   for year in FX_SUBSTANDARD_CONTRACT_YEARS]
+        assert all(u >= l - 1e-12 for l, u in zip(by_band, by_band[1:])), age
+
+
+def test_the_rate_up_picks_the_table_rather_than_the_caller():
+    """§6.C.8.iii: "The factors for Substandard lives differ by the extent of
+    the age rate-up", Table 6.10 for 1 to 20 years and Table 6.11 for 21 or
+    more. The caller supplies the rate-up, which is a fact about the
+    contract; the table number is derived from it, which is a fact about the
+    text. Naming the tables in the API instead would move the boundary to
+    the call site, where it would be restated and eventually drift.
+
+    The split is asserted at the boundary itself, because that is the only
+    place an off-by-one shows: rate-ups of 20 and 21 years read different
+    tables and different numbers at the same age and contract year."""
+    assert FX_RATE_UP_SPLIT == 21
+    twenty = fx_factor(50, "F", category=SUBSTANDARD, contract_year=1,
+                       rate_up_years=20)
+    twenty_one = fx_factor(50, "F", category=SUBSTANDARD, contract_year=1,
+                           rate_up_years=21)
+    assert twenty == pytest.approx(0.78)      # Table 6.10
+    assert twenty_one == pytest.approx(0.88)  # Table 6.11
+    assert fx_factor(50, "F", category=SUBSTANDARD, contract_year=1,
+                     rate_up_years=1) == twenty
+    assert fx_factor(50, "F", category=SUBSTANDARD, contract_year=1,
+                     rate_up_years=60) == twenty_one
+
+
+def test_the_second_dimension_is_required_where_it_exists_and_refused_where_it_does_not():
+    """**Both directions, because both are wrong in the same way.** Omitting
+    the contract year for a structured settlement would have to default to a
+    band, and there is no band to default to; supplying one for Table 6.7 or
+    6.8 would let a caller believe a banding had been applied when those
+    tables have no such axis. Either would return a number.
+
+    Same for the rate-up: required for a substandard life, because Tables
+    6.10 and 6.11 disagree at nearly every cell, and refused for a standard
+    one, because a life with an age rate-up is not standard."""
+    with pytest.raises(PrescribedError, match="contract_year is required"):
+        fx_factor(50, "F", category=STANDARD)
+    with pytest.raises(PrescribedError, match="contract_year is required"):
+        fx_factor(50, "F", category=SUBSTANDARD, rate_up_years=5)
+    with pytest.raises(PrescribedError, match="no contract-year band"):
+        fx_factor(50, "F", contract_year=3)
+    with pytest.raises(PrescribedError, match="no contract-year band"):
+        fx_factor(50, "F", category="payout_annuity", contract_year=3)
+
+    with pytest.raises(PrescribedError, match="rate_up_years is required"):
+        fx_factor(50, "F", category=SUBSTANDARD, contract_year=1)
+    with pytest.raises(PrescribedError, match="no rate-up dimension"):
+        fx_factor(50, "F", category=STANDARD, contract_year=1,
+                  rate_up_years=5)
+    with pytest.raises(PrescribedError, match="no rate-up dimension"):
+        fx_factor(50, "F", rate_up_years=5)
+
+    # A rate-up of zero is a standard life, not a substandard one at the
+    # bottom of Table 6.10 — the table starts at 1.
+    with pytest.raises(PrescribedError, match="is not substandard"):
+        fx_factor(50, "F", category=SUBSTANDARD, contract_year=1,
+                  rate_up_years=0)
+    # Contract years count from 1; a 0 would read the first band as if it
+    # were a year of cover.
+    with pytest.raises(PrescribedError, match="contract year is 1 in the"):
+        fx_factor(50, "F", category=STANDARD, contract_year=0)
+    # One lookup cannot straddle two tables.
+    with pytest.raises(PrescribedError, match="therefore scalar"):
+        fx_factor(50, "F", category=SUBSTANDARD, contract_year=1,
+                  rate_up_years=np.array([5, 25]))
+
+
+def test_a_structured_settlement_has_no_guaranteed_living_benefit_split():
+    """§6.C.8.iii gives six and eight columns, none of them a rider split. A
+    structured settlement is a stream of payments under a claim settlement
+    and has no guaranteed living benefit to buy — so the request would be
+    answered from Table 6.7, which is the wrong-section failure again."""
+    for category, extra in ((STANDARD, {}),
+                            (SUBSTANDARD, {"rate_up_years": 5})):
+        with pytest.raises(PrescribedError, match="not split by guaranteed"):
+            fx_factor(50, "F", category=category, contract_year=1,
+                      guaranteed_living_benefit=True, **extra)
+
+
+def test_the_structured_lookup_broadcasts_and_keeps_its_contract():
+    """Shape, dtype and value asserted **separately** — the standing rule
+    RFC-069 and RFC-070 earned, where three bugs produced equal numbers with
+    an unequal contract and every one would have passed a value-only
+    comparison.
+
+    The case that matters is a scalar age with a vector of contract years,
+    which is the natural projection: one claimant, every future year. A
+    lookup that broadcast in the wrong order would take the first column for
+    all of them and be right for the first five entries."""
+    years = np.arange(1, 15)
+    got = fx_factor(62, "F", category=STANDARD, contract_year=years)
+    assert got.shape == years.shape
+    assert got.dtype == np.float64
+    assert got[:5] == pytest.approx(1.55)
+    assert got[5:10] == pytest.approx(1.70)
+    assert got[10:] == pytest.approx(2.25)
+
+    # Vector age against vector contract year, elementwise.
+    ages = np.array([2, 50, 62])
+    both = fx_factor(ages, "F", category=STANDARD,
+                     contract_year=np.array([1, 6, 11]))
+    assert both.shape == ages.shape and both.dtype == np.float64
+    assert both == pytest.approx([3.00, 2.00, 2.25])
+
+    # A scalar in gives a scalar-shaped result, as the other tables do.
+    scalar = fx_factor(62, "F", category=STANDARD, contract_year=1)
+    assert np.ndim(scalar) == 0
+    assert np.ndim(fx_factor(62, "F")) == 0
+
+
+def test_the_structured_settlement_base_table_is_not_the_2012_iam():
+    """**The difference the arithmetic cannot see.** §6.C.8.i and .ii project
+    the 2012 IAM Basic Mortality Table from 2012; §6.C.8.iii projects the
+    **1983 IAM Table 'a'** (VM-M §1.M) from **2011**. Different table,
+    different base year, and ``q (1 − G2)^n × F`` returns an ordinary-looking
+    number either way.
+
+    So the pairing is data — :data:`FX_MORTALITY_BASIS` — and the offset is
+    derived from it rather than written at the call site. At a 2026
+    valuation ``n`` is 14 for an accumulation contract and **15** for a
+    structured settlement; taking the accumulation one applies a year too
+    little improvement, which overstates mortality and understates an
+    annuity reserve."""
+    accumulation = mortality_basis("accumulation")
+    structured = mortality_basis(STANDARD)
+    assert accumulation.base_year == 2012
+    assert accumulation.table == "2012 IAM Basic Mortality Table"
+    assert structured.base_year == 2011
+    assert structured.table == "1983 IAM Table 'a'"
+    assert structured.vm_m_section == "VM-M §1.M"
+    assert mortality_basis(SUBSTANDARD) == structured
+    assert mortality_basis("payout_annuity") == accumulation
+
+    assert projection_offset(2026) == 14
+    assert projection_offset(2026, category=STANDARD) == 15
+
+    # The gap, computed rather than described: one improvement year.
+    q, g2, fx = 0.02, 0.01, 3.0
+    right = prescribed_mortality_rate(
+        q, g2, fx, projection_offset(2026, category=STANDARD))
+    wrong = prescribed_mortality_rate(q, g2, fx, projection_offset(2026))
+    assert wrong / right == pytest.approx(1.0 / (1.0 - g2))
+    assert wrong > right
+
+    # A year before the base is refused rather than run backwards.
+    with pytest.raises(PrescribedError, match="before 2011"):
+        projection_offset(2010, category=STANDARD)
+    assert projection_offset(2011, category=STANDARD) == 0
+    with pytest.raises(PrescribedError, match="before 2012"):
+        projection_offset(2011)
+
+    # And the categories §6.C.8 gives no Fx at all are refused by name.
+    with pytest.raises(PrescribedError, match="1994 GAM"):
+        mortality_basis("longevity_reinsurance")
 
 
 def test_the_withdrawal_bands_are_steps_and_are_not_interpolated():
