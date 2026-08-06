@@ -32,7 +32,7 @@ from engine.migrate import (
     scaffold_from_results,
     suggest,
 )
-from engine.migrate.scaffold import identifier, library_variables
+from engine.migrate.scaffold import WEAK, identifier, library_variables
 from engine.parity import Tolerance, TolerancePolicy, diff
 
 FIXTURES = Path(__file__).parent / "fixtures" / "prophet"
@@ -134,11 +134,30 @@ def test_an_alias_beats_string_similarity(fixture_scaffold):
 
 
 def test_a_name_the_library_has_nothing_for_is_listed_not_matched():
-    made_up = scaffold(["HOUSE_CODE_XQ", "POLS_IF"])
+    """The sentinel has to stay alien, and the library keeps growing.
+
+    This test used to pin ``HOUSE_CODE_XQ``, which matched nothing until
+    ``LongTermCare`` arrived with a ``home_care`` variable — at which point
+    the stub scored 0.526 against a ``WEAK`` threshold of 0.5 and the
+    "matches nothing" case quietly stopped being one. The machinery was
+    right; the name had simply stopped being unmatched.
+
+    So the margin is now asserted rather than assumed. A future template
+    that drags this score toward the threshold fails *here*, saying the
+    sentinel needs replacing, instead of silently turning this into a test
+    about weak matches.
+    """
+    alien = "XQJ_ZKVW"
+    made_up = scaffold([alien, "POLS_IF"])
     by_name = {s.external: s for s in made_up.suggestions}
-    assert by_name["HOUSE_CODE_XQ"].suggested is None
-    assert by_name["HOUSE_CODE_XQ"].confidence == "none"
-    assert made_up.unmapped == ("HOUSE_CODE_XQ",)
+    assert by_name[alien].suggested is None
+    assert by_name[alien].confidence == "none"
+    assert by_name[alien].score < WEAK - 0.15, (
+        f"{alien} now scores {by_name[alien].score:.3f} against a WEAK "
+        f"threshold of {WEAK}; the library has grown a variable it "
+        f"resembles, so this test needs a name that is still alien"
+    )
+    assert made_up.unmapped == (alien,)
     assert "no suggestion" in made_up.to_markdown()
     assert "Nothing in the library resembles this name" in made_up.source
 

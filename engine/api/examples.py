@@ -24,9 +24,9 @@ cannot rot into a lie while the template moves under it.
 
 Four templates have no example, and they all want the same thing
 ----------------------------------------------------------------
-The catalogue offers sixteen and twelve of them are here. It was eight two
-commits ago, and the four that joined were kept out by the **request
-schema** rather than by anything about the templates:
+The catalogue offers seventeen and thirteen of them are here. It was eight
+of sixteen a few commits ago, and the ones that joined were kept out by the
+**request schema** rather than by anything about the templates:
 
 * ``PayoutAnnuity``, ``PensionBuyout`` and ``LongevitySwap`` need a
   :class:`~engine.data.basis.ValuationBasis` (``LongevitySwap`` needs two,
@@ -37,7 +37,9 @@ schema** rather than by anything about the templates:
 * ``IncomeProtection`` needs a
   :class:`~engine.data.multistate.TransitionMatrix`, which is an object-valued
   *field* rather than a whole basis, and is now carried as
-  ``assumptions.transitions``.
+  ``assumptions.transitions``. ``LongTermCare`` arrived **after** that was
+  built and had a worked example from its first commit, which is what the
+  sequencing was for.
 
 That mattered beyond the demonstration. The evidence pack's specimen set
 walks ``EXAMPLES``, so a template with no example is invisible to it, and
@@ -54,7 +56,7 @@ instead of standing in for several.
 :data:`UNAVAILABLE` records that, per template, so ``GET /models`` can say
 which of the sixteen a caller can actually run here and why the rest are
 not. A catalogue that lists a model it cannot run and does not say so is
-worse than one that lists twelve.
+worse than one that lists thirteen.
 
 The way to run the other four is the same as it has always been: pass your
 own ``build`` to :func:`engine.api.app.create_app`, which is where a
@@ -339,6 +341,47 @@ EXAMPLES: dict = {
                 {"id": "IP2", "age_at_entry": 45, "term_years": 15,
                  "annual_premium": 950.0, "annual_benefit": 18_000.0,
                  "init_pols": 400.0},
+            ],
+        },
+    },
+    "LongTermCare": {
+        "note": "A block of long-term care issued at 60 on a twenty-year "
+                "premium-paying term, with 5% compound inflation "
+                "protection. Home care pays half the facility maximum and "
+                "is drawn at 70% utilization; facility care draws all of "
+                "it, because facility costs generally exceed the cap.",
+        "request": {
+            "model": "LongTermCare",
+            "proj_len": 40,
+            "outputs": ["active", "home_care", "facility_care", "dead",
+                        "premiums", "benefits", "benefit_maximum",
+                        "incidence", "progression", "v"],
+            "assumptions": {
+                "interest": 0.03,
+                "mortality": MORTALITY,
+                "transitions": {
+                    "states": {"names": ["active", "home_care",
+                                         "facility_care", "dead"],
+                               "absorbing": ["dead"]},
+                    "matrix": [[0.950, 0.030, 0.010, 0.010],
+                               [0.080, 0.750, 0.120, 0.050],
+                               [0.020, 0.030, 0.850, 0.100],
+                               [0.000, 0.000, 0.000, 1.000]],
+                },
+            },
+            "modelpoints": [
+                {"id": "L1", "age_at_entry": 60, "premium_years": 20,
+                 "annual_premium": 2_400.0,
+                 "annual_benefit_maximum": 60_000.0, "init_pols": 1_000.0,
+                 "home_care_percent": 0.5, "home_care_utilization": 0.7,
+                 "facility_utilization": 1.0, "inflation_rate": 0.05,
+                 "inflation_mode": "compound"},
+                {"id": "L2", "age_at_entry": 70, "premium_years": 10,
+                 "annual_premium": 4_800.0,
+                 "annual_benefit_maximum": 90_000.0, "init_pols": 250.0,
+                 "home_care_percent": 1.0, "home_care_utilization": 0.6,
+                 "facility_utilization": 1.0, "inflation_rate": 0.0,
+                 "inflation_mode": "none"},
             ],
         },
     },

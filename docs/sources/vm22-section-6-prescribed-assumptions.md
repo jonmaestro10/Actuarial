@@ -81,15 +81,33 @@ none of this is a reserve floor at year-end 2026, and that is a real reason
 to sequence it behind reserve arithmetic. It is *not* a reason to call the
 question closed, and conflating the two is the error this file corrects.
 
-## Nothing here is asserted
+## Two of the eleven are now carried
 
-`tests/test_published_sources.py` asserts nothing against this file, because
-nothing in the repository implements §6. The tables are recorded with their
-identifiers and shapes so that whoever builds it starts from the text rather
-than from a paraphrase — the discipline that produced eight findings in this
-chapter already.
+`engine/report/vm22_prescribed.py` (RFC-067) carries **Table 6.1** and
+**Table 6.7**, both transcribed from the primary text above and checked
+against it, together with §6.C.2's expense rule and §6.C.8.i's mortality
+formula. `tests/test_vm22_prescribed.py` asserts the values against the text
+rather than against the module's own constants.
 
-Transcribing eleven tables into the repository *without* the calculation that
-consumes them would be worse than not: a file of prescribed factors nothing
-reads is data with no test holding it to anything, which is the state every
-stale assumption set starts in.
+Both bracketed figures are carried as `Provisional`, which is the mechanism
+this file's earlier note said the dated-set pattern lacked.
+
+**The other nine are still recorded and not carried**, and `fx_factor`
+refuses a category whose table is absent rather than serving the one that is
+present. The reason is transcription risk, not effort: each table needs
+reading against the primary text before it is worth having, and a
+mis-transcribed prescribed factor is worse than an absent one because it
+looks authoritative.
+
+One thing the transcription found. **Table 6.7 is not monotone.** Every
+column troughs in the early-to-mid sixties and the male columns drop below
+100% — a male at 62 takes 95% of the 2012 IAM Basic rate without a
+guaranteed living benefit and 78% with one. Below 100% means the prescribed
+basis expects those lives to die more slowly than the base table, which is
+the conservative direction for a benefit that pays while they are alive. A
+test written to the obvious shape — high at young ages, grading to 100% —
+fails against the real table, and it did.
+
+The standard projection amount itself is still unbuilt: §3.C makes it
+disclosure-only for year-end 2026, which is why the assumptions land before
+the calculation.
