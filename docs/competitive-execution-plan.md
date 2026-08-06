@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 1,326
+   naive implementation otherwise. The suite (`pytest`, currently 1,968
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -87,7 +87,7 @@ what any incumbent ships rather than merely reaching parity.
 | Governance: RBAC, approvals | 🟡 token auth + four roles (D1, RFC-043) and digest-bound 4-eyes approval (D2, RFC-044) shipped | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
 | Production run operations | 🟡 digest-chained audit log + declarative run calendar shipped (D3, RFC-045) | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
 | Results warehouse | ✅ star schema in partitioned Parquet with the run fingerprint on every fact row (E1, RFC-046) | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
-| Excel integration | ❌ | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet | E2 |
+| Excel integration | 🟡 audit workbook writer shipped (E2, RFC-047); ❌ live add-in (E4) | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet — and state, in the workbook, the precision the format costs, which no vendor's does | E2 |
 | Production UI | 🟡 demo only | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have | E3 |
 | VM-22 | ❌ | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit | C1 |
 | US statutory formulaic reserves + AAT | ❌ | CRVM/net-premium + asset adequacy runner | Same | C2 |
@@ -419,12 +419,25 @@ consumption path. The beyond-parity move: every fact row carries the run
 fingerprint, so any number in any downstream dashboard traces to a
 registered, reproducible run.
 
-### E2 — The Excel surface (RFC-047) — effort M
+### E2 — The Excel surface (RFC-047) — effort M — **shipped**
 `engine/excel/workbook.py` behind a `[excel]` extra (openpyxl): a workbook
 writer — run summary, per-variable aggregates, assumption snapshot sheet,
 parity-report sheet (A1) — with the run fingerprint and assumption digests
 stamped on every sheet. The workbook is what audit files actually contain;
 it ships before the live add-in (E4) for that reason.
+
+**Shipped with a finding (RFC-047).** A spreadsheet cannot carry a float64:
+openpyxl serialises 16 significant digits where a round-trip needs 17,
+Excel itself parses 15, and non-finite values are written as *empty cells*
+— a blank in a claims column that reads as zero. So non-finite values are
+written as text and counted, the precision limit is stated on the summary
+sheet rather than left to be discovered, `as_written()` is public so a
+caller can tell a serialisation artefact from a wrong number, and the
+bit-exact record stays E1's Parquet, which the workbook points at. The
+snapshot sheet digests per row, so a basis that differs differs in a *row*;
+a parity report for another run, a snapshot of another basis, a detail
+block wider than the Excel grid and two sheet names colliding at Excel's
+31-character limit are all refused rather than written.
 
 ### E3 — Production UI (RFC-048) — effort L
 Grow `engine/api/ui` from demo to product: a runs list with filter/search
@@ -433,6 +446,21 @@ drill-down); an assumption diff screen (two snapshot digests → semantic
 per-table diff, not a text diff); parity-report and evidence-pack views.
 Same architecture rule as RFC-032: everything on the page is a call to the
 documented REST API.
+
+**Two notes from E2, so E3 starts from what is already true.** (i) That
+architecture rule means most of this item is *API* rather than page: the
+runs list, the results drill-down and the IFRS 17 overlay have routes
+(`engine/api/app.py`), but the assumption diff, the artifact/parity listing
+and the evidence pack have none — writing those routes, with their tests,
+is the first half of E3 and should land before a line of JavaScript.
+(ii) The semantic assumption diff has its substrate already: RFC-047's
+`assumption_rows` flattens an assumption set into `(path, kind, value,
+digest)` rows whose root digest *is* the run's `assumptions_digest`, so a
+per-component diff is a join over two row sets rather than a new walker. It
+currently sits in `engine/excel/workbook.py` behind the `[excel]` extra and
+imports nothing from openpyxl; E3 should lift it into NumPy-only core and
+have both the workbook and the diff route call it, rather than growing a
+second flattener that can disagree with the first.
 
 ### E4 — The live Excel add-in (RFC-056) — effort M
 The tool actuaries will never give up, made a first-class client of the API
@@ -618,10 +646,12 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: B1 (§4) is unstarted and carries a
-written assessment of why — read it before picking the item up, and expect an
-array-expression compiler rather than a wrapper. Everything else on §10's
-path is open; E2 (§7, the Excel workbook) is the next item in sequence.
-Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 —
-F1 (RFC-049), and D1–D3 + E1 (RFC-043, RFC-044, RFC-045, RFC-046) —
-milestone M3.*
+*Next action for the implementing agent: E3 (§7, the production UI) is the
+next item in sequence — its dependencies D1 (auth) and E1 (warehouse) are
+both shipped, and RFC-032's architecture rule holds: everything on the page
+is a call to the documented REST API. B1 (§4) remains unstarted and carries
+a written assessment of why — read it before picking the item up, and expect
+an array-expression compiler rather than a wrapper. Shipped so far: A1
+(RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 — F1 (RFC-049), D1–D3
++ E1 (RFC-043, RFC-044, RFC-045, RFC-046) — milestone M3 — and E2
+(RFC-047), the first third of M4.*

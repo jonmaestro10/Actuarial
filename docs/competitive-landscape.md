@@ -172,7 +172,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 |---|---|---|---|---|
 | Modelling paradigm | Declarative vars, proprietary IDE | Procedural, compiled | Configured, closed code | ✅ Declarative `@var` graph in plain Python, procedural escape hatch |
 | Models in version control / CI | ❌ binary formats | 🟡 partial | ❌ n/a | ✅ git-native, CI on every commit |
-| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 1,326 tests, closed forms, bitwise dual-executor equivalence, parity harness |
+| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 1,968 tests, closed forms, bitwise dual-executor equivalence, parity harness |
 | Vectorised execution across policies × scenarios | ❌ largely per-policy | ❌ | 🟡 | ✅ core design; ~40× interpreter, 100k×60y in seconds |
 | Compiled kernels / GPU | ✅ compiled C | ✅ C++ | ✅ | ❌ planned (graph + forward loop in place, "nothing is compiled yet") |
 | Grid / cross-machine scale-out | ✅ Enterprise grid | ✅ | ✅ GridLink | 🟡 multi-core sharding with bitwise guarantee; no cross-machine dispatch |
@@ -191,7 +191,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 | API-first integration | ❌ file drops | 🟡 | 🟡 | ✅ Python SDK + REST (202/fingerprint/event stream), Parquet I/O, and a star-schema results warehouse whose every fact row carries the run fingerprint (RFC-046) |
 | Production UI (runs, results explorer, assumption diffing) | ✅ | ✅ | ✅ | 🟡 demo UI only |
 | Governance: RBAC, approval workflows, multi-user | ✅ | ✅ Unify | ✅ | 🟡 token authentication and four roles on every route (RFC-043), off by default so the library is unchanged, plus 4-eyes assumption approval bound to the content digest rather than to a label (RFC-044) — an approval that cannot silently drift, which no incumbent's label-based workflow offers — and a digest-chained audit log plus a declarative run calendar whose entries freeze the request fingerprint (RFC-045) |
-| Excel integration | ✅ | ✅ | ✅ | ❌ |
+| Excel integration | ✅ | ✅ | ✅ | ✅ audit workbook writer (RFC-047): run summary, aggregates, per-row-digested assumption snapshot and the parity report, with the run fingerprint and assumption digests stamped on **every** sheet because tabs get copied — plus the finding no vendor's workbook states, that a spreadsheet carries 16 significant digits and Excel parses 15, so non-finite values are written as text rather than the blank cells openpyxl produces and the exact record stays the run's Parquet; ❌ live add-in (E4) |
 | Incumbent migration tooling (readers + parity reports) | n/a | n/a | n/a | 🟡 parity core (RFC-033: reusable diff engine, Markdown report, registered against both content digests), Prophet MPF/results readers (RFC-034, dialect-driven, mapping report) and conversion scaffold (RFC-036); ❌ MoSes readers |
 | Licence / cost model | Heavy, per-core/grid | Heavy | Heavy | Open code; one runtime dependency (NumPy); optional extras |
 | Regulatory track record & support organisation | ✅ decades | ✅ | ✅ | ❌ none — but a machine-generated validation evidence pack (RFC-049): live test inventory, run-level executor-equivalence attestation, coverage, reconciliations on record, digest-identical rebuild asserted in CI |

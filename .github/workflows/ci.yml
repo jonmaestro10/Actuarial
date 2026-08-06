@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[test,data,api]"
+      - run: pip install -e ".[test,data,api,excel]"
       - run: pytest -q
       # RFC-049's acceptance: the evidence pack builds, and a rebuild from
       # the same source is byte-identical — the directory is named by the
