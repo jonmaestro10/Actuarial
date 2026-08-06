@@ -478,3 +478,98 @@ def test_the_prescribed_reserve_can_exceed_the_sum_of_standalone_ones():
     # The old claim — "seriatim is never smaller" — was true of the natural
     # misreading and is false of the text.
     assert gap.seriatim >= gap.floor_outside
+
+
+# --------------------------------------------------------------------------
+# Known deviations from the text — pinned so they cannot be forgotten
+# --------------------------------------------------------------------------
+
+def test_the_pimr_is_subtracted_from_the_scenario_reserve():
+    """§4.B.1.a: "The starting asset amount, less the allocated amount of
+    PIMR, plus the greatest present value …". An allocated balance-sheet
+    amount rather than something a projection produces, so it is an
+    argument — and it defaults to zero, which is right for a block that has
+    none and wrong for a block that does."""
+    rates = np.full((4, 3), 0.03)
+    net = np.full((4, 3), -100.0)
+    without = Contract.from_cashflows("A", net, rates, starting_assets=500.0)
+    with_pimr = Contract.from_cashflows("A", net, rates, starting_assets=500.0,
+                                        pimr=40.0)
+    assert with_pimr.scenario_reserve == pytest.approx(
+        without.scenario_reserve - 40.0)
+
+
+def test_the_greatest_present_value_is_reduced_before_it_is_aggregated():
+    """**A known deviation from §3.F.5.a.ii**, pinned rather than hidden.
+
+    The text says "Combine the present values for each model segment and
+    take the greatest present value *in aggregate* for each scenario" —
+    aggregate first, reduce second. This module reduces first (RFC-016
+    maximises over dates per contract) and sums after, so it computes
+    ``Σ max`` where the text asks for ``max Σ``.
+
+    Since ``Σ max ≥ max Σ`` the deviation overstates, which is the
+    conservative direction — but it is still not what the chapter says, and
+    fixing it needs `Contract` to carry the deficiency path rather than the
+    reduced reserve. This test exists so that change cannot land silently
+    and so nobody mistakes the current behaviour for the prescribed one.
+    """
+    from engine.report.pbr import (
+        accumulated_surplus,
+        path_discount_factors,
+    )
+
+    # Two contracts whose worst dates differ, which is exactly when the two
+    # orderings part company.
+    rates = np.full((3, 1), 0.0)
+    a_net = np.array([[-100.0], [50.0], [50.0]])
+    b_net = np.array([[50.0], [-100.0], [50.0]])
+    a = Contract.from_cashflows("A", a_net, rates)
+    b = Contract.from_cashflows("B", b_net, rates)
+    ours = float(a.scenario_reserve[0] + b.scenario_reserve[0])
+
+    # What §3.F.5.a.ii asks for: sum the discounted deficiencies across
+    # segments, then take the greatest present value of the aggregate.
+    combined = None
+    for net in (a_net, b_net):
+        surplus = accumulated_surplus(net, rates, 0.0)
+        discounted = -surplus * path_discount_factors(rates)
+        combined = discounted if combined is None else combined + discounted
+    prescribed = float(max(combined.max(), 0.0))
+
+    assert ours > prescribed, "the deviation has gone — update the docs"
+    # A's worst date is period 1 (100) and B's is period 2 (50), so summing
+    # the reduced reserves gives 150. The aggregated path peaks at 100 in
+    # period 2, which is what §3.F.5.a.ii asks for. The module reports 150.
+    assert ours == 150.0
+    assert prescribed == 100.0
+
+
+def test_the_greatest_present_value_is_floored_at_zero_and_the_text_is_not():
+    """**A known deviation from §4.B.1.a's guidance note**, pinned.
+
+    RFC-016 floors the greatest present value of accumulated deficiency at
+    zero — "a *surplus* is not a negative reserve" — and VM-22 says the
+    opposite in terms: "The greatest present value of accumulated
+    deficiencies can be negative."
+
+    The floor lives in `engine.report.pbr`, which VM-20 and VM-21 share, so
+    removing it there would revalue two other chapters on the strength of a
+    third's text. VM-22 needs its own unfloored path. Until it has one,
+    this records that a well-funded scenario reserves its starting assets
+    here and less than that under the chapter.
+    """
+    from engine.report.pbr import (
+        greatest_present_value_of_accumulated_deficiency as gpvad,
+    )
+
+    rates = np.full((3, 1), 0.0)
+    # Never underwater: every accumulated surplus is positive.
+    net = np.array([[100.0], [100.0], [100.0]])
+    assert gpvad(net, rates, 0.0)[0] == 0.0        # floored
+    contract = Contract.from_cashflows("A", net, rates, starting_assets=500.0)
+    assert contract.scenario_reserve[0] == 500.0   # = starting assets exactly
+
+    # Under the guidance note it would be starting assets *plus a negative*
+    # number, i.e. strictly less. Recorded, not asserted against the engine.
+    assert contract.scenario_reserve[0] >= 500.0
