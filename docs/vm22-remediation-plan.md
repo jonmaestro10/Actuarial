@@ -137,20 +137,58 @@ in Section 5."
 
 **What is here.** One reserve. No ceded dimension anywhere in the module.
 
-**Build.** A segment carries both cashflow sets; `AggregateReserve` reports
-a pair rather than a scalar, and `to_dict` grows both. The interesting
-design question — and the reason this is its own item rather than a field
-on V2 — is whether the *exclusion tests* and the *floors* apply to the
-gross or the net basis, which §5 has to be read for before anything is
-built. **Do not start V3 without reading §5**; it is 177 characters in the
-extraction, which almost certainly means the extraction lost it and the
-real section has to be found in the PDF.
+### §5, now read (the plan said not to start without it)
 
-**Accept.** Both bases reported for every component; the RFC states which
-basis each floor and each test applies to, with the section reference.
+The earlier note that §5 was "177 characters in the extraction" was wrong —
+that was a cross-reference match, not the section. §5 is **8,853
+characters** and has been read. It changes this item's design in one
+important way and adds a term nobody would have guessed.
 
-**Risk.** Medium-high, because it doubles every output and touches the
-reserve's public shape.
+**The two bases are two projections, not a number and an adjustment.**
+§5.A.2.a: the post-ceded DR/SR are "determined reflecting the effects of
+reinsurance treaties … including, where appropriate, all projected
+reinsurance premiums or other costs and all reinsurance recoveries … using
+prudent estimate assumptions". §5.A.2.b: the pre-ceded DR/SR are determined
+"ignoring the effects of reinsurance ceded within the projections". So the
+module cannot derive one basis from the other for the stochastic and
+deterministic components — it needs **two sets of segments**, and the
+public shape becomes a pair.
+
+**The formulaic component is the exception**, and it *is* an adjustment.
+§5.A.1: "for the reserve amount valued using requirements in VM-A, VM-C,
+VM-M, and VM-V, the post-reinsurance ceded reserve is determined by
+subtracting the reinsurance reserve credit."
+
+**A term that has to be added, not netted.** §5.A.2.a.iv: where a treaty
+does not qualify for credit for reinsurance but treating it as if it did
+"would result in a reduction to the company's surplus, then the company
+shall increase the aggregate reserve by the absolute value of such
+reductions in surplus." That is an additive charge on the aggregate
+reserve, not a change to a projection.
+
+**Counterparty default margin, conditionally.** §5.A.2.a.iii: a margin for
+counterparty default is required only where "the company has knowledge that
+a counterparty is financially impaired", and is explicitly *not* required
+otherwise. An assumption input, not engine arithmetic — but worth recording
+because the natural instinct is to charge one always.
+
+**Build.**
+- `ModelSegment` gains no reinsurance field; instead the reserve takes two
+  segment sets, `gross` and `ceded`, and `AggregateReserve` reports a pair.
+- `ReservingGroup` for the formulaic method carries both, with post-ceded
+  derived by subtracting a stated reinsurance reserve credit.
+- A `non_qualifying_surplus_reduction` term added to the aggregate reserve
+  per §5.A.2.a.iv, refused as negative.
+- Starting assets on the ceded portion (§5.A.2.b.i–ii) are an **input**;
+  the module documents the acceptable approaches and computes none of them.
+
+**Accept.** Both bases reported for every component; the formulaic
+adjustment asserted against a stated credit; the §5.A.2.a.iv charge
+asserted to increase rather than net; a treaty-free block reports the same
+number on both bases, so the pair collapses where it should.
+
+**Risk.** Medium-high — it doubles every output and changes the reserve's
+public shape. Worth doing deliberately rather than at the end of a session.
 
 ---
 
