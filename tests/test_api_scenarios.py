@@ -9,11 +9,18 @@ The **identity** is not. A scenario set has two of them — the values, which
 :meth:`engine.data.scenarios.ScenarioSet.__fingerprint__` covers and the run
 record cites, and the request, which :meth:`engine.api.store.RunStore.identify`
 covers. For an explicit set those are the same question. For a generated one
-the request holds a *recipe*, and NumPy makes no promise that ``default_rng``
-gives the same stream in a future feature release. So the digest of the
-generated set the worked examples use is pinned below: a NumPy upgrade that
-moved the stream would otherwise revalue four templates and change nothing
-that any test looks at.
+the request holds a *recipe*, and a recipe is only as portable as the
+arithmetic behind it.
+
+RFC-068 guessed that the fragile part was NumPy's RNG stream. It is not: a
+seed pins the stream, and CI proved the point the other way round. Two
+machines on the **same NumPy 2.4.6 and the same Python** disagreed, because
+``ScenarioSet.lognormal`` ends in ``np.exp``, which dispatches over an array
+on the CPU's instruction set. So the worked examples carry literal values
+(:mod:`engine.api.specimen_scenarios`), the digest pinned below is over those
+literals, and a separate test asserts structurally that no example goes back
+to a generated set — because CI cannot catch a recurrence, building the pack
+twice on one runner where a seeded generator is perfectly stable.
 
 The **equivalence class** is RFC-068's third one. A template that reads
 ``self.scenarios`` cannot be handed ``None``, so it runs under the stochastic
