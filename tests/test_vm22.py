@@ -29,6 +29,7 @@ import pytest
 
 from engine.report.pbr import cte, scenario_reserves
 from engine.report.vm22 import (
+    LONGEVITY_FLOOR_RATE,
     METHODS,
     RESERVING_CATEGORIES,
     SERT_CAP,
@@ -37,12 +38,15 @@ from engine.report.vm22 import (
     AggregationGap,
     Contract,
     Exclusion,
+    ModelSegment,
     ReservingGroup,
     VM22Basis,
     VM22Error,
     aggregate_stochastic_reserve,
     aggregation_decomposition,
     floor_outside_reserve,
+    segment_scenario_reserves,
+    segment_stochastic_reserve,
     seriatim_reserve,
     stochastic_exclusion_test,
     stochastic_group,
@@ -663,3 +667,129 @@ def test_an_unknown_reserving_category_is_refused():
     assert set(RESERVING_CATEGORIES) == {"payout_annuity",
                                          "longevity_reinsurance",
                                          "accumulation"}
+
+
+# --------------------------------------------------------------------------
+# V2 — §3.F.5.a: combine, then take the greatest
+# --------------------------------------------------------------------------
+
+def segments_from(rows, **kw):
+    """Segments straight from discounted deficiency paths."""
+    return [ModelSegment(name=f"S{i}", deficiency_path=np.array(r, float),
+                         **kw)
+            for i, r in enumerate(rows)]
+
+
+def test_the_greatest_present_value_is_taken_after_combining():
+    """**V2, fixed.** §3.F.5.a.ii: "Combine the present values for each
+    model segment and take the greatest present value in aggregate for each
+    scenario."
+
+    Two segments each peaking at 100, on different dates — the case where
+    the two orders part company. Reducing first gives 100 + 100 = 200;
+    combining first gives a path that never exceeds 100. The chapter asks
+    for 100, and the difference is a whole segment's worth of reserve.
+    """
+    a = ModelSegment("A", [[100.0], [0.0], [0.0]])
+    b = ModelSegment("B", [[0.0], [100.0], [0.0]])
+    combined_first = segment_scenario_reserves([a, b])
+    assert combined_first[0] == 100.0
+
+    # Reducing first — what summing segment maxima would give.
+    reduced_first = sum(float(s.deficiency_path.max()) for s in (a, b))
+    assert reduced_first == 200.0
+    assert combined_first[0] < reduced_first
+
+
+def test_one_segment_agrees_with_the_contract_path():
+    """The change has to be invisible where the two orders coincide, or it
+    is not a reordering but a different calculation."""
+    rates = np.full((4, 1), 0.02)
+    net = np.array([[-100.0], [30.0], [-40.0], [60.0]])
+    segment = ModelSegment.from_cashflows("S", net, rates,
+                                          starting_assets=25.0)
+    contract = Contract.from_cashflows("C", net, rates, starting_assets=25.0)
+    assert segment_scenario_reserves([segment]) == pytest.approx(
+        contract.scenario_reserve, rel=0, abs=1e-12)
+
+
+def test_the_starting_assets_and_pimr_land_where_the_text_puts_them():
+    """§3.F.5.a.ii: "the sum of the initial assets of each model segment and
+    the greatest present value of the aggregated deficiencies, less the
+    aggregate PIMR"."""
+    a = ModelSegment("A", [[100.0]], starting_assets=500.0, pimr=40.0)
+    b = ModelSegment("B", [[-30.0]], starting_assets=200.0, pimr=10.0)
+    # assets 700, aggregated greatest 70, PIMR 50.
+    assert segment_scenario_reserves([a, b])[0] == 720.0
+
+
+def test_the_longevity_category_carries_its_own_floor():
+    """§4.B.1: "For the Longevity Reinsurance Reserving Category, the
+    scenario reserve for any given scenario shall not be less than 2% of
+    the scheduled longevity benefits payable … within the next 12 months."
+
+    Which floor applies is decided by the Reserving Category, which is what
+    makes the category a calculation input rather than a label."""
+    assert LONGEVITY_FLOOR_RATE == 0.02
+    lean = ModelSegment("L", [[10.0]], category="longevity_reinsurance",
+                        cash_surrender_value=5.0,
+                        longevity_benefits_12m=1_000.0)
+    assert lean.floor() == 20.0                      # 2% of 1,000 beats 5
+    assert segment_scenario_reserves([lean])[0] == 20.0
+
+    # The general floor still wins where it is larger.
+    rich = ModelSegment("L2", [[10.0]], category="longevity_reinsurance",
+                        cash_surrender_value=90.0,
+                        longevity_benefits_12m=1_000.0)
+    assert rich.floor() == 90.0
+
+
+def test_a_twelve_month_benefit_outside_the_longevity_category_is_refused():
+    """§4.B.1's floor belongs to one category. A segment carrying the input
+    without the category has either mislabelled itself or is about to get a
+    floor it is not entitled to."""
+    with pytest.raises(VM22Error, match="belongs to 'longevity_reinsurance'"):
+        ModelSegment("X", [[1.0]], category="accumulation",
+                     longevity_benefits_12m=100.0)
+
+
+def test_segments_obey_the_category_rules_too():
+    payout = ModelSegment("P", [[1.0]], category="payout_annuity")
+    accum = ModelSegment("A", [[1.0]], category="accumulation")
+    longevity = ModelSegment("L", [[1.0]], category="longevity_reinsurance")
+
+    with pytest.raises(VM22Error, match="§3.F.1 forbids"):
+        segment_scenario_reserves([payout, accum])
+    assert segment_scenario_reserves(
+        [payout, accum], combined_payout_accumulation=True) is not None
+    with pytest.raises(VM22Error, match="§3.F.1 forbids"):
+        segment_scenario_reserves([payout, longevity],
+                                  combined_payout_accumulation=True)
+
+
+def test_a_dr_segment_cannot_be_pooled_with_a_non_dr_segment():
+    """§3.F.3 — the rule `Contract` could not express, because a contract
+    never knew whether its group carried a DR."""
+    with_dr = ModelSegment("D", [[1.0]], carries_dr=True)
+    without = ModelSegment("N", [[1.0]], carries_dr=False)
+    with pytest.raises(VM22Error, match="§3.F.3"):
+        segment_scenario_reserves([with_dr, without])
+    assert segment_scenario_reserves([with_dr, with_dr]) is not None
+
+
+def test_the_segment_reserve_is_cte70_of_the_scenario_reserves():
+    rows = [[[0.0, 0.0, 100.0, 200.0]]]
+    segment = ModelSegment("S", rows[0])
+    got = segment_stochastic_reserve([segment], basis=HALF)
+    assert got == cte(segment_scenario_reserves([segment]), 0.5) == 150.0
+
+
+def test_segments_that_disagree_about_the_projection_are_refused():
+    with pytest.raises(VM22Error, match="different futures"):
+        segment_scenario_reserves([ModelSegment("A", [[1.0, 2.0]]),
+                                   ModelSegment("B", [[1.0]])])
+    with pytest.raises(VM22Error, match="projection length"):
+        segment_scenario_reserves([ModelSegment("A", [[1.0], [2.0]]),
+                                   ModelSegment("B", [[1.0]])])
+    with pytest.raises(VM22Error, match="at least one model segment"):
+        segment_scenario_reserves([])

@@ -11,7 +11,7 @@ commit per item, tests asserting refusals as well as grants.*
 | item | § | direction of the error | effort | depends on |
 |---|---|---|---|---|
 | ~~**V1** unfloored greatest present value~~ | 4.B.1.a note | overstates | S | **done** |
-| **V2** model segments, aggregation order, category floors | 3.F.5.a.ii, 4.B.1, 3.F.3 | overstates (order), understates (floor) | M | — |
+| ~~**V2** model segments, aggregation order, category floors~~ | 3.F.5.a.ii, 4.B.1, 3.F.3 | overstates (order), understates (floor) | M | **done** |
 | **V3** the ceded basis | 3.B, 5 | not comparable | M | V2 (segments are what get two bases) |
 | **V4** allocation to contracts | 13 | n/a | M | V2 |
 
@@ -61,7 +61,7 @@ is asserted rather than assumed.
 
 ---
 
-## V2 — model segments, and the order of the reduction
+## V2 — model segments, and the order of the reduction — **done**
 
 **The text.** §3.F.4–5. The reserve "may be determined in aggregate across
 various groups of contracts within each Reserving Category … as a single
@@ -116,6 +116,16 @@ visible only where it should be.
 **Risk.** Medium. It is an API change — `Contract`-based callers keep
 working, but the *correct* path becomes the segment one, and the RFC has to
 say plainly that a `Contract`-only aggregation is the overstating order.
+
+**Outcome.** Shipped. `ModelSegment` carries the discounted deficiency path
+and `segment_scenario_reserves` performs §3.F.5.a in the prescribed order —
+combine, take the greatest, add assets, subtract PIMR, floor, then CTE 70.
+Two segments each peaking at 100 on different dates reserve **100**
+combined-first against 200 reduced-first: a whole segment's worth. One
+segment reproduces the `Contract` figure to 1e-12, so the change is visible
+only where the orders genuinely differ. §4.B.1's longevity floor and
+§3.F.3's DR rule both landed on the segment, as predicted — they were
+blocked on the same abstraction.
 
 ---
 

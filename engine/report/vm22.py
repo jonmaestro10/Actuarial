@@ -119,7 +119,13 @@ from typing import Any, Iterable, Sequence
 
 import numpy as np
 
-from engine.report.pbr import CTE_LEVEL, cte, scenario_reserves
+from engine.report.pbr import (
+    CTE_LEVEL,
+    accumulated_surplus,
+    cte,
+    path_discount_factors,
+    scenario_reserves,
+)
 
 #: How a group of contracts is valued. §3.A adds one reserve per group.
 METHODS = ("stochastic", "deterministic", "formulaic")
@@ -134,6 +140,11 @@ RESERVING_CATEGORIES = ("payout_annuity", "longevity_reinsurance",
 
 #: The only pair §3.F.2 allows to be combined, and only on attestation.
 COMBINABLE = frozenset({"payout_annuity", "accumulation"})
+
+#: §4.B.1's second floor: for the longevity reinsurance category, the
+#: scenario reserve "shall not be less than 2% of the scheduled longevity
+#: benefits payable by the benefit provider within the next 12 months".
+LONGEVITY_FLOOR_RATE = 0.02
 
 #: How a component may be left out. A component absent for any other
 #: reason is a missing calculation.
@@ -478,6 +489,13 @@ def aggregate_stochastic_reserve(contracts: Sequence[Contract], *,
     §3.F.1's category rule is enforced first: pooling across Reserving
     Categories is what would make this number too small, so it is refused
     rather than reported.
+
+    **This is the overstating order.** :class:`Contract` carries a scenario
+    reserve whose greatest present value has already been taken, so summing
+    contracts computes ``Σ max`` where §3.F.5.a.ii asks for ``max Σ``. Use
+    :func:`segment_stochastic_reserve` over :class:`ModelSegment` for the
+    prescribed figure; this remains for the single-segment case, where the
+    two orders coincide, and for callers written before segments existed.
     """
     check_aggregable(
         contracts, combined_payout_accumulation=combined_payout_accumulation)
@@ -511,6 +529,203 @@ def seriatim_reserve(contracts: Sequence[Contract], *,
     return float(sum(max(c.cash_surrender_value,
                          cte(c.scenario_reserve, basis.cte_level))
                      for c in contracts))
+
+
+# --------------------------------------------------------------------------
+# Model segments — the unit §3.F.4-5 actually aggregates
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class ModelSegment:
+    """A model segment: a deficiency **path**, not a reduced reserve.
+
+    §3.F.4 lets a company treat a group of contracts within a Reserving
+    Category as "a single model segment", and §3.F.5.a says what to do when
+    there is more than one: project the accumulated deficiencies and take
+    their present value *for each segment*, then "**Combine the present
+    values** for each model segment and **take the greatest present value
+    in aggregate** for each scenario."
+
+    That order is why this class exists. :class:`Contract` carries a
+    scenario reserve with the greatest present value **already taken**, so
+    summing contracts computes ``Σ max`` where the chapter asks for
+    ``max Σ`` — and since a sum of maxima dominates a maximum of sums, it
+    overstates. Getting the order right needs the ``(t, scenario)`` path,
+    which is impossible to hold per contract on a real book and entirely
+    reasonable per segment, because a segment is already a pooled block.
+
+    That the memory objection dissolves the moment the module adopts the
+    chapter's own vocabulary is the argument for this abstraction, and it
+    is the same lesson as every other finding in VM-22: the structure the
+    text describes is load-bearing.
+
+    ``deficiency_path`` is the discounted accumulated deficiency, one row
+    per projection date and one column per scenario — negative where the
+    segment is in surplus, which §4.B.1.a's guidance note requires.
+    """
+
+    name: str
+    deficiency_path: np.ndarray
+    starting_assets: float = 0.0
+    pimr: float = 0.0
+    cash_surrender_value: float = 0.0
+    category: str | None = None
+    #: §4.B.1: for the longevity reinsurance category, the scenario reserve
+    #: may not fall below 2% of the scheduled longevity benefits payable
+    #: within the next twelve months. Zero elsewhere and unused.
+    longevity_benefits_12m: float = 0.0
+    #: §3.F.3: a segment carrying a DR may not be aggregated with one that
+    #: does not.
+    carries_dr: bool = False
+
+    def __post_init__(self):
+        object.__setattr__(self, "deficiency_path",
+                           np.atleast_2d(np.asarray(self.deficiency_path,
+                                                    dtype=np.float64)))
+        if self.deficiency_path.size == 0:
+            raise VM22Error(f"segment {self.name!r} has an empty path")
+        if self.category is not None \
+                and self.category not in RESERVING_CATEGORIES:
+            raise VM22Error(
+                f"segment {self.name!r} declares category "
+                f"{self.category!r}; §3.F.1 has {list(RESERVING_CATEGORIES)}"
+            )
+        if self.longevity_benefits_12m and \
+                self.category != "longevity_reinsurance":
+            raise VM22Error(
+                f"segment {self.name!r} carries a twelve-month longevity "
+                f"benefit but is category {self.category!r}; §4.B.1's 2% "
+                f"floor belongs to 'longevity_reinsurance'"
+            )
+
+    @property
+    def n_scenarios(self) -> int:
+        return int(self.deficiency_path.shape[1])
+
+    def floor(self) -> float:
+        """§4.B.1's floor for this segment, whichever applies.
+
+        The cash surrender value in general; for longevity reinsurance the
+        **greater** of that and 2% of the scheduled benefits payable within
+        the next twelve months. Which one applies is decided by the
+        Reserving Category, which is what makes the category a calculation
+        input rather than a label.
+        """
+        floor = float(self.cash_surrender_value)
+        if self.category == "longevity_reinsurance":
+            floor = max(floor, LONGEVITY_FLOOR_RATE
+                        * float(self.longevity_benefits_12m))
+        return floor
+
+    @classmethod
+    def from_cashflows(cls, name: str, net_cashflows, earned_rates, *,
+                       starting_assets: float = 0.0, **options
+                       ) -> "ModelSegment":
+        """Build the discounted deficiency path from a projection.
+
+        The same roll RFC-016 performs, stopped one step earlier: the
+        greatest present value is *not* taken here, because §3.F.5.a.ii
+        takes it after the segments are combined.
+        """
+        surplus = accumulated_surplus(net_cashflows, earned_rates,
+                                      starting_assets)
+        path = -surplus * path_discount_factors(earned_rates)
+        return cls(name=name, deficiency_path=path,
+                   starting_assets=starting_assets, **options)
+
+    def __fingerprint__(self):
+        return {"name": self.name, "deficiency_path": self.deficiency_path,
+                "starting_assets": self.starting_assets, "pimr": self.pimr,
+                "cash_surrender_value": self.cash_surrender_value,
+                "category": self.category,
+                "longevity_benefits_12m": self.longevity_benefits_12m,
+                "carries_dr": self.carries_dr}
+
+
+def segment_scenario_reserves(segments: Sequence[ModelSegment], *,
+                              combined_payout_accumulation: bool = False
+                              ) -> np.ndarray:
+    """§3.F.5.a: combine, **then** take the greatest present value.
+
+    One value per scenario:
+
+        sum of starting assets
+        + greatest present value of the **aggregated** deficiencies
+        − aggregate PIMR,   floored at the aggregate §4.B.1 floor.
+
+    The order is the whole point. Taking the greatest per segment and
+    adding after gives ``Σ max``, which dominates and therefore overstates.
+    """
+    if not segments:
+        raise VM22Error("a VM-22 reserve needs at least one model segment")
+    widths = {s.n_scenarios for s in segments}
+    if len(widths) != 1:
+        raise VM22Error(
+            f"segments disagree on scenario count: {sorted(widths)}. Adding "
+            f"them would be adding across different futures."
+        )
+    lengths = {s.deficiency_path.shape[0] for s in segments}
+    if len(lengths) != 1:
+        raise VM22Error(
+            f"segments disagree on projection length: {sorted(lengths)}"
+        )
+    check_segments_aggregable(
+        segments,
+        combined_payout_accumulation=combined_payout_accumulation)
+
+    combined = np.zeros_like(segments[0].deficiency_path)
+    for segment in segments:
+        combined = combined + segment.deficiency_path
+    greatest = combined.max(axis=0)          # unfloored, per §4.B.1.a's note
+    assets = float(sum(s.starting_assets for s in segments))
+    pimr = float(sum(s.pimr for s in segments))
+    floor = float(sum(s.floor() for s in segments))
+    return np.maximum(assets + greatest - pimr, floor)
+
+
+def check_segments_aggregable(segments: Sequence[ModelSegment], *,
+                              combined_payout_accumulation: bool = False
+                              ) -> None:
+    """§3.F.1 and §3.F.3, over segments rather than contracts.
+
+    §3.F.3 is the one :class:`Contract` could not express: "groups of
+    contracts for which the company calculates a DR … shall not be
+    aggregated with any groups of contracts that do not calculate a DR."
+    """
+    declared = {s.category for s in segments if s.category is not None}
+    if len(declared) > 1 and not (declared == COMBINABLE
+                                  and combined_payout_accumulation):
+        raise VM22Error(
+            f"§3.F.1 forbids aggregating Reserving Categories "
+            f"{sorted(declared)} when determining the SR or DR. Only "
+            f"{sorted(COMBINABLE)} may be combined, and only on §3.F.2's "
+            f"criteria — pass combined_payout_accumulation=True to attest "
+            f"them."
+        )
+    dr = {s.carries_dr for s in segments}
+    if len(dr) > 1:
+        raise VM22Error(
+            "§3.F.3: segments for which the company calculates a DR shall "
+            "not be aggregated with segments that do not. Reserve them "
+            "separately and add the results, per §3.A."
+        )
+
+
+def segment_stochastic_reserve(segments: Sequence[ModelSegment], *,
+                               basis: VM22Basis = VM22_2026,
+                               combined_payout_accumulation: bool = False
+                               ) -> float:
+    """§3.F.5.a.iii: CTE 70 of the aggregate scenario reserves.
+
+    The prescribed path end to end, and the one to use. Its
+    :class:`Contract` counterpart, :func:`aggregate_stochastic_reserve`,
+    reduces before it aggregates and therefore overstates — see that
+    function's own docstring.
+    """
+    return cte(segment_scenario_reserves(
+        segments,
+        combined_payout_accumulation=combined_payout_accumulation),
+        basis.cte_level)
 
 
 # --------------------------------------------------------------------------
