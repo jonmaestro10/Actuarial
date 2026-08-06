@@ -368,4 +368,13 @@ def test_the_evidence_pack_anchors_the_head():
                          audit_log=log).section("audit")
     assert section.content["head"] == log.head
     assert section.content["verified"] is True
+    assert section.content["anchored"] is True
     assert log.head in section.summary
+
+    from engine.report.evidence import audit_chain
+
+    unanchored = audit_chain(None)
+    # Nothing to anchor is not the same as a section that could not be
+    # built: a deployment with no audit log still gets a complete pack.
+    assert unanchored.content["available"] is True
+    assert unanchored.content["anchored"] is False

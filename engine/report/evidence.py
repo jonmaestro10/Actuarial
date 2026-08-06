@@ -356,10 +356,16 @@ def audit_chain(log=None) -> Section:
     can hold a later log against.
     """
     if log is None:
+        # "No log was supplied" is the same shape of answer as "no
+        # reconciliation is on record": the section was built, it looked,
+        # and there was nothing. Reporting it as *unavailable* would mark
+        # every pack from a deployment that keeps no audit log as
+        # incomplete, which is a different and untrue statement.
         return Section(
             "audit", "Audit chain",
-            "No audit log supplied; this pack anchors nothing.",
-            {"available": False},
+            "No audit log supplied; this pack anchors no chain.",
+            {"available": True, "anchored": False, "entries": 0,
+             "head": None},
         )
     try:
         verified, problem = log.verify(), None
@@ -369,7 +375,8 @@ def audit_chain(log=None) -> Section:
         "audit", "Audit chain",
         f"{len(log):,} entries, head `{log.head}`, chain "
         + ("verified." if verified else f"**BROKEN**: {problem}"),
-        {"available": True, "entries": len(log), "head": log.head,
+        {"available": True, "anchored": True, "entries": len(log),
+         "head": log.head,
          "verified": verified, "problem": problem,
          "actions": sorted({event.action for event in log})},
     )
