@@ -61,8 +61,9 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,402
-   tests) must pass on every commit.
+   naive implementation otherwise. The suite (`pytest`, currently 2,446
+   tests — 2,407 of them without the `[compile]` extra, whose 39 are
+   RFC-072's bitwise measurement) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
    is an optional extra in `pyproject.toml` (`[api]` fastapi, `[data]`
@@ -253,6 +254,46 @@ assumption lookups hoisted into precomputed slabs. Either is a project in
 its own right, and neither can be half-shipped without weakening §1.2. It
 was left unstarted rather than begun badly; F1 (whose dependency A1 was
 already met) was taken next, per §10's own note that B2 does not require B1.
+
+**The prior question, answered (RFC-072, F8).** That assessment took the
+translation problem as the first obstacle. It is the second. The first is
+whether compiled code returns the same *bits* NumPy does — because §1.2 asks
+for bitwise equality, and if the answer were no then no amount of DSL
+translation would produce an executor that could join the class. It was
+never measured. It is now, and the answer **determines the design rather
+than merely permitting it**:
+
+- **`+ − × ÷ sqrt`, comparison, `floor`/`ceil`/`rint`/`copysign`, `where`:
+  bitwise, by specification.** IEEE-754 §5 requires them correctly rounded,
+  so two conforming implementations cannot disagree. This is not a property
+  of Numba and will not move when the compiler is upgraded.
+- **`exp`, `log`, `log1p`, `expm1`, `power` — including `x ** 3` — and
+  `tan`: one ulp apart**, on ordinary finite data. §9.2 only *recommends*
+  correct rounding for these and no library provides it. `sin`, `cos`,
+  `arctan` happened to agree and are treated as unsafe anyway: agreement the
+  standard does not require is a coincidence of two versions, and it would
+  be withdrawn silently.
+- **Reductions are order-dependent with no safe length.** First disagreement
+  at **twelve** elements, and past that it depends on the values, not the
+  length — 63 disagrees, 64 agrees, 128 disagrees. So `pool_sum` is never
+  compiled, which puts every `@pool` body outside a kernel by arithmetic
+  rather than by policy.
+
+So the kernel may contain **only** correctly-rounded operations, and
+everything else is hoisted into a NumPy-computed slab. That is not a
+concession — it is the only arrangement under which §1.2 survives, and it is
+the same architecture this item already proposed for assumption lookups, now
+required rather than convenient. It also lands where the performance is: the
+library's transcendentals are overwhelmingly loop-invariant along the
+model-point axis (a discount factor, a period conversion) or table gathers,
+both wanting evaluation once per period; what is left in the recursion is
+multiplication and subtraction. A survival chain compiled as a scalar loop
+over a slab was measured **bitwise-identical and 2.7× faster** — a floor,
+since it fuses nothing.
+
+`engine/core/bitwise.py` carries the classification and refuses an
+unclassified op by name. B1's remaining work is the translation, and it now
+has a specification to translate *into*.
 
 **Accept:** every template in `engine/library/` bitwise-identical across
 interpreted / vectorized / compiled — read against §1.2's two classes, so
@@ -931,14 +972,22 @@ order unless there is a concrete reason not to.
 ---
 
 *Next action for the implementing agent: **B1 (§4, compiled kernels) is the
-next item**, and it is now the largest thing left. Milestone M5 is reached —
-C1–C6 are all shipped, each with its sharp-edge finding documented, the
-catalogue's nineteen templates all have a worked example for the first time
-since RFC-032, and the evidence pack's equivalence section is fully attested.
-F7 (RFC-071) closed the last §6.C item that was an implementation task, so
-what remains on that thread is one letter to the NAIC. Three things are open,
-plus the standing rules the last four RFCs earned — and **two of those rules
-belong in B1's acceptance criteria**, not merely in its RFC.
+next item**, it is the largest thing left, and F8 (RFC-072) has just removed
+the unknown that kept it unstarted through six RFCs — **read that assessment
+before designing anything**, because the kernel's contents are now determined
+by IEEE-754 rather than open: correctly-rounded operations only, everything
+else hoisted into a NumPy-computed slab, `fastmath` off, no reduction at any
+length. What remains is the DSL translation, unchanged in size but with a
+specification to translate into.
+
+Milestone M5 is reached — C1–C6 are all shipped, each with its sharp-edge
+finding documented, the catalogue's nineteen templates all have a worked
+example for the first time since RFC-032, and the evidence pack's
+equivalence section is fully attested. F7 (RFC-071) closed the last §6.C item
+that was an implementation task, so what remains on that thread is one letter
+to the NAIC. Three things are open, plus the standing rules the last five
+RFCs earned — and **two of those rules belong in B1's acceptance criteria**,
+not merely in its RFC.
 
 **1. The evidence pack's equivalence section is clean — keep it that way.**
 This entry used to name the open work; there is none. RFC-068 read the
@@ -987,11 +1036,21 @@ it. The evidence is complete in `docs/sources/vm22-table-6-5-reading.md` and
 question — *"under your intended rule, when does column B's printed 2.0%
 after-expiry block ever apply?"* **Do not re-investigate it.** File the APF.
 
-**3. B1 (§4) is still unstarted** and carries a written assessment of why.
-When it lands, note that RFC-070's rule applies to it directly: a compiled
-executor joining the bitwise class needs the class boundary enforced by a
-mechanism, and its equality checks want shape and dtype asserted alongside
-value — all three of F5/F6's bugs would have passed a value-only check.
+**3. B1 (§4) is still unstarted**, but it is no longer blocked on an
+unknown. F8 (RFC-072) measured the thing its design turns on and the answer
+is a specification: a kernel may contain **only** IEEE-754-correctly-rounded
+operations, everything else hoisted into a NumPy-computed slab, `fastmath`
+off, and no reduction at any length — which puts every `@pool` body outside a
+kernel by arithmetic rather than by policy. `engine/core/bitwise.py` carries
+the classification and refuses an unclassified op by name. What is left is
+the DSL translation, unchanged in size.
+
+Two standing rules belong in its **acceptance criteria** rather than its RFC.
+RFC-070's: a compiled executor joining the bitwise class needs the class
+boundary enforced by a mechanism, not asserted in a docstring. And
+RFC-069/070's: its equality checks want shape and dtype asserted alongside
+value — all three of F5/F6's bugs would have passed a value-only check, and
+so would a kernel that returned the right numbers in the wrong dtype.
 
 Three notes the last two runs put on the record and this one closes or
 extends.
@@ -1042,8 +1101,8 @@ M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) — milestone M4 — C1–C6
 (RFC-039, RFC-040, RFC-041, RFC-042, RFC-054, RFC-055) — **milestone M5** —
 and F2 (RFC-050), with VM-22's remediation V1–V4 (RFC-062, RFC-063), the
 two unplanned schema items E5 and E6 (RFC-066, RFC-068), the two
-equivalence-attestation items F5 and F6 (RFC-069, RFC-070), and F7
-(RFC-071).*
+equivalence-attestation items F5 and F6 (RFC-069, RFC-070), and F7 and
+F8 (RFC-071, RFC-072).*
 
 ### E5 — Assumption objects in the request schema (RFC-066) — effort S — **done**
 Unplanned, and raised by C3. The RFC-032 request schema carried scalars and
@@ -1263,3 +1322,59 @@ tables spans four PDF pages and two of those pages carry the tail of one
 table and the head of the next. A second, independent read by word
 x-position agrees on all 312 rows; its first, naive version disagreed on 25,
 every one of them on those two shared pages.
+
+### F8 — The bitwise boundary, measured (RFC-072) — effort S — **done**
+Unplanned, and the prior question B1 had never asked. B1's assessment named
+the DSL-translation problem as the obstacle that kept it unstarted through
+six RFCs. That is the *second* obstacle. The first is whether a compiled
+executor could join the bitwise class at all — §1.2 asks for bitwise
+equality, not closeness — and nobody had measured it.
+
+**Outcome (RFC-072).** Measured, and the answer splits by **IEEE-754** rather
+than by compiler. §5 requires `+ − × ÷ sqrt`, comparison and the rounding and
+sign manipulations to be correctly rounded, so two conforming implementations
+cannot disagree; §9.2 only *recommends* it for `exp`, `log`, `pow` and the
+trigonometric functions, and no library provides it. NumPy 2.4.6 against
+Numba 0.66.0 on one machine, on ordinary finite data: the first group is
+bitwise, the second is one ulp apart. Reductions are a third case with no
+safe length.
+
+Four things worth carrying forward.
+
+**The design is now determined, not open.** A kernel may contain only
+correctly-rounded operations; everything else is hoisted into a
+NumPy-computed slab. That is the only arrangement under which §1.2 survives,
+and it is the same architecture B1 already proposed for assumption lookups —
+two independent arguments landing on one design. It also lands where the
+performance is: the library's transcendentals are overwhelmingly
+loop-invariant along the model-point axis or table gathers, and what is left
+in the recursion is multiplication and subtraction. A survival chain compiled
+as a scalar loop over a slab is bitwise-identical and 2.7× faster, which is a
+floor rather than a result — it fuses nothing.
+
+**It is one fact, met twice.** `np.exp` and `**` were already known not to be
+bit-portable *across CPUs*, which is why `REPRODUCIBILITY_SCOPE` limits a
+pack digest to one machine and why the worked examples carry literal scenario
+values. The same gap in the same standard makes them non-portable across
+*implementations* on one machine. Naming it as one fact is worth more than
+two separate cautions, because it is the same operations both times.
+
+**The tempting mitigations are the dangerous ones.** "Reduce only small
+blocks in the kernel" has no threshold — the first disagreement is at twelve
+elements and past that it depends on the values, not the length (63 differs,
+64 agrees, 128 differs). And `x ** 3` looks exact and is not: NumPy
+special-cases small integer exponents into repeated multiplication and a
+compiler calls `pow`. Both would be right most of the time.
+
+**A skipped measurement reads exactly like a passing one.** The 39
+measurement cases need a compiler, and the main matrix deliberately does not
+install one — an llvmlite download in front of every test run, blocking a
+suite that does not depend on it. A separate `bitwise-boundary` job installs
+`[compile]` and sets `REQUIRE_COMPILE_EXTRA`, which turns the skip into a
+failure. Without it, an install step that half-succeeded would skip all 39
+and report green. Same family as RFC-071's emptied-out refusal, and the same
+answer: assert the mechanism, do not trust the condition.
+
+**What this does not do.** It does not build the compiled executor. B1 stays
+**not started**, with its remaining work — the DSL translation — unchanged in
+size but now with a specification to translate into.

@@ -27,3 +27,29 @@ jobs:
           python scripts/evidence_pack.py --out evidence
           python scripts/evidence_pack.py --out evidence-rebuild
           diff -r evidence evidence-rebuild
+
+  # RFC-072's boundary, measured rather than quoted. A separate job because
+  # it is the only thing in the repo that needs a compiler: installing it
+  # into the matrix above would put a 60 MB llvmlite download in front of
+  # every test run, and a failure to build it would block a suite that does
+  # not depend on it. Here it fails on its own.
+  #
+  # It is not optional. Without this job the 39 measurement cases in
+  # tests/test_bitwise_boundary.py skip, and a skipped measurement reads
+  # exactly like a passing one in the summary line.
+  bitwise-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[test,compile]"
+      # REQUIRE_COMPILE_EXTRA turns "the compiler is missing, so skip" into
+      # "the compiler is missing, so fail". Without it a job whose install
+      # step half-succeeded would skip all 39 measurement cases and report
+      # green, which is the failure mode this job exists to prevent.
+      - name: Measure what a compiled kernel reproduces bit for bit
+        env:
+          REQUIRE_COMPILE_EXTRA: "1"
+        run: pytest -q tests/test_bitwise_boundary.py
