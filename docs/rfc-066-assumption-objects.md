@@ -22,8 +22,9 @@ therefore invisible to the evidence pack's specimen set, which walks
 "modelpoints": [{"id": "A1", "dob": "1956-01-01", "valuation": "2021-01-01", …}]
 ```
 
-Eleven specimens now, up from eight. `PayoutAnnuity`, `PensionBuyout` and
-`LongevitySwap` are runnable over the API and in the pack.
+Twelve specimens now, up from eight. `PayoutAnnuity`, `PensionBuyout`,
+`LongevitySwap` and `IncomeProtection` are runnable over the API and in the
+pack.
 
 ## Why the original reasoning was right and stopped being right
 
@@ -43,9 +44,37 @@ same gap, and C3 widened it twice in one commit. A limit that grows with the
 codebase is a different thing from a limit that is fixed, and the argument
 for tolerating it is weaker every time it bites.
 
-The five that remain — a `TransitionMatrix`, an index-crediting rule, and a
-bound scenario set for three templates — keep the original reasoning intact,
-and it is now the *whole* of what is out of scope rather than half of it.
+## And one object-valued *field*, which is a smaller thing
+
+`IncomeProtection` was the odd one out and had been stranded since RFC-032.
+It does not need a different assumptions class — it binds a
+`TransitionMatrix` on the ordinary `Assumptions` alongside `interest`. So it
+needed no new `kind` at all, only `assumptions.transitions`, and the
+distinction is worth naming because it decides where the next such field
+goes: a *basis* is a `kind`, a *field* is a field.
+
+The builder is deliberately thin. `TransitionMatrix` already refuses a row
+that does not sum to one, a probability outside `[0, 1]`, and an absorbing
+state whose row lets the population leave — and its messages say which row
+and by how much. Re-validating any of that in the schema would be a second
+opinion about the same matrix, and the two would drift. So the tests assert
+that the *class's* messages survive the wrapper, not that the wrapper has its
+own.
+
+What the schema does own is the pairing: `states` and `matrix` must both be
+present, because a matrix is meaningless without the state order it was
+written for. Row 2 is not "sick" unless something says so, and defaulting to
+positional names would invent a chain.
+
+## What remains, and why it is now one reason
+
+`UnitLinkedGMDB`, `UnitLinkedGMxB` and `VariablePayoutAnnuity` need a bound
+**scenario set**; `FixedIndexedAnnuity` needs an index-crediting rule that
+itself reads index returns from one. That is a single format to invent, for
+a class that is still moving — the original reasoning, now covering one thing
+instead of standing in for several. A test asserts every remaining reason
+mentions a scenario or an index, so the list cannot be padded with new
+excuses while staying the same length.
 
 ## `kind` defaults to `scalar`, and that default is load-bearing
 
@@ -95,16 +124,27 @@ coercion exists to remove.
   swap that settles at zero in every period — which looks exactly like a
   working hedge, and is the reason this refusal is worth more than the
   convenience it costs.
-- **An unknown `kind`.**
+- **A transition matrix with no states, or states with no matrix.** The
+  matrix is meaningless without the order its rows were written in.
+- **An unknown `kind`**, and an unknown assumption field — adding
+  `transitions` must not turn the gate into a bag that accepts anything
+  object-shaped, which is asserted.
 
 ## Acceptance
 
-`tests/test_api_demo.py` — 10 further tests, on top of the existing
-per-example ones that now cover eleven templates instead of eight. The three
+`tests/test_api_demo.py` — 15 further tests, on top of the existing
+per-example ones that now cover twelve templates instead of eight. The four
 new specimens parse, run, and supply every field their model requires, which
 is checked by the harness that was already there.
 
 The specimen count is asserted, not described: `default_specimens()` returns
-eleven. And the `UNAVAILABLE` list is asserted by name, so the reasons cannot
+twelve. And the `UNAVAILABLE` list is asserted by name, so the reasons cannot
 be reworded while the list stays the same length — the failure this item
 existed to fix.
+
+One existing test had to change shape rather than value.
+`test_a_template_without_an_example_says_why` pinned `IncomeProtection` as
+*the* template with no example; it now has one, so the test is parametrised
+over `UNAVAILABLE` instead. A hard-coded name there turns a template becoming
+**available** into a red test about the wrong thing, which is a trap worth
+removing while the list is still shrinking.

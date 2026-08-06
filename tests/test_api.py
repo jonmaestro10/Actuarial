@@ -273,14 +273,23 @@ def test_the_lifecycle_through_the_endpoints(app, client):
 
 def test_results_are_not_available_before_they_exist(app, client):
     """409 rather than 404: the run exists and the answer does not yet,
-    which is a different thing from a run that never was."""
+    which is a different thing from a run that never was.
+
+    The submitted run may finish between the submit and the request — it is
+    executing concurrently, and an earlier version of this test read the
+    state first and then asserted 409, which is a race it lost under load.
+    So what is asserted is the invariant that has no race in it: **a run
+    that exists is never 404**, whichever side of the finish we land on, and
+    it is 200 once waited for. The 409 itself is pinned deterministically by
+    the failed-run test below, where the state cannot move under us.
+    """
     assert client.get("/runs/nope").status_code == 404
     assert client.get("/runs/nope/results").status_code == 404
     store = app.state.store
     run = store.submit({**REQUEST, "proj_len": 40})
-    if run.state is not RunState.SUCCEEDED:
-        assert client.get(f"/runs/{run.run_id}/results").status_code == 409
+    assert client.get(f"/runs/{run.run_id}/results").status_code in (200, 409)
     store.wait(run.run_id, timeout=120)
+    assert client.get(f"/runs/{run.run_id}/results").status_code == 200
 
 
 def test_a_failed_run_reports_the_failure_on_the_results_route(app, client):
