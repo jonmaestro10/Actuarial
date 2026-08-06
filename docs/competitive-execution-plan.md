@@ -1275,21 +1275,35 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: **workstream H (documentation),
-starting with H1 `CLAUDE.md`** — the whole speed workstream B1/B2/B3 has now
-landed, and what a new developer or an evaluating actuary needs is the
-orthogonal cut the 76 RFCs do not give them. H1 is worth taking before the
-next long build rather than after.
+*Next action for the implementing agent: **get CI running, then take one of
+the two measured items below.** Workstream B (B1, B2, B3) and workstream H
+(H1–H4) have both landed. What is left is G (platform operations), A3
+(MoSes/RAFM readers, deliberately gated on pilot demand), and two pieces of
+engineering that measurement has already pointed at.
+
+**CI is the blocker before anything else.** GitHub Actions has scheduled no
+run since PR #69: runs are either not created at all, or created and then
+cancelled at the 15-minute mark with `runner_id: 0`, which is an exhausted
+allowance rather than a backlog. Everything from RFC-071 onward is merged on
+**local verification only** — Python 3.11, full suite, pack byte-identity,
+`-W error::SyntaxWarning` with caches cleared. 3.12 and 3.13 are unverified,
+and the `bitwise-boundary` job has never executed anywhere. Note two ways a
+red is not a red: a superseded run reports `failure` with zero failed jobs,
+and a job that never got a runner reports `cancelled`.
 
 Two pieces of engineering are named by measurement rather than guessed, and
-either is a good second item. **B1's remaining order of magnitude**: the
+either is a good first item once CI is back. **B1's remaining order of magnitude**: the
 kernel is a median 14.6x but end-to-end is 1.36x, because the hoist pre-pass
 is a median 55% of the runtime — interleave the pre-pass with the kernel per
 period so a hoisted variable is computed from the kernel's own slabs instead
 of a second traversal. **B3's device measurement**: the machinery and both
 guarantees are built and tested, and nothing has run on silicon.
 
-For history, the item that unblocked all three: F8 — **read that assessment
+After those, workstream G is the largest untouched block: G1 multi-tenant
+packaging, G2 the SOC 2 substrate, G3 release cadence, G4 the pilot playbook.
+A3 stays deliberately parked until a pilot asks for it.
+
+For history, the item that unblocked the speed workstream: F8 — **read that assessment
 before designing anything**, because the kernel's contents are now determined
 by IEEE-754 rather than open: correctly-rounded operations only, everything
 else hoisted into a NumPy-computed slab, `fastmath` off, no reduction at any
