@@ -137,7 +137,7 @@ refusal distinguishes a category §6.C.8 does not have from one it has and
 this module has not transcribed, because those are different problems for the
 caller.
 
-The reason nine are absent is transcription risk, not effort: each needs
+The reason six are absent is transcription risk, not effort: each needs
 reading against the primary text before it is worth having, and a
 mis-transcribed prescribed factor is worse than an absent one because it
 looks authoritative.
@@ -159,7 +159,7 @@ them later is a decision rather than an accident.
 
 ## Acceptance
 
-`tests/test_vm22_prescribed.py` — 19 tests. `Provisional` arithmetic is
+`tests/test_vm22_prescribed.py` — 25 tests. `Provisional` arithmetic is
 asserted to be ordinary float arithmetic; the derived provisional list is
 asserted to empty out for a basis whose figures are settled, with identical
 values, so the standing is genuinely separate from the number. The two
