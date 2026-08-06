@@ -136,6 +136,24 @@ ORDER_DEPENDENT = frozenset({
     "amax", "amin", "max", "min", "nanmax", "nanmin",
 })
 
+#: The library versions the *measurement* was taken against, as
+#: ``major.minor``. Provenance for the evidence, not a constraint on the
+#: contract — and the difference matters.
+#:
+#: :data:`CORRECTLY_ROUNDED` is guaranteed by the standard, so no release of
+#: anything can withdraw it; :data:`IMPLEMENTATION_DEFINED` is the set this
+#: module declines to trust, so no observation can weaken it either. The
+#: classification is therefore **version-independent by construction**, and
+#: an upgrade cannot make a kernel built to it wrong.
+#:
+#: What an upgrade *can* do is change which of the untrusted operations
+#: happen to agree — NumPy has rewritten its SIMD transcendental kernels
+#: before and will again — which changes what is worth hoisting rather than
+#: what is safe. So this is recorded, and the measurement re-checks it, to
+#: make the evidence's age visible instead of letting a green run assert
+#: something about a library the repo stopped using two releases ago.
+MEASURED_AGAINST = {"numpy": "2.4", "numba": "0.66"}
+
 #: Compiler flags that void the guarantee whatever operations are used.
 #: ``fastmath`` licenses reassociation and contraction — it is exactly the
 #: permission to turn ``a * b + c`` into a fused multiply-add, which is more

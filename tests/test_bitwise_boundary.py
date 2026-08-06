@@ -35,6 +35,7 @@ import pytest
 from engine.core.bitwise import (
     CORRECTLY_ROUNDED,
     IMPLEMENTATION_DEFINED,
+    MEASURED_AGAINST,
     ORDER_DEPENDENT,
     UNSAFE_FLAGS,
     classify,
@@ -74,6 +75,38 @@ def test_the_measurement_is_not_allowed_to_skip_where_it_is_required():
         )
     if not required:
         pytest.skip("not the CI job that requires the compiler")
+
+
+@needs_compiler
+def test_the_measurement_says_which_libraries_it_measured():
+    """**The evidence has a date, and a green run must not hide it.**
+
+    Numba pins ``numpy<2.5``. The main test matrix installs no such ceiling,
+    so once NumPy moves past it the two CI jobs resolve *different* NumPys —
+    and this job would go on passing while measuring a library the suite no
+    longer runs on. Measured, green, and about the wrong thing, which is the
+    failure this repo keeps finding in provenance strings.
+
+    The classification itself is version-independent by construction, so a
+    mismatch is not a defect: :data:`CORRECTLY_ROUNDED` is guaranteed by
+    IEEE-754 and :data:`IMPLEMENTATION_DEFINED` is the set already declined.
+    What goes stale is the *evidence*, and the right response to this failing
+    is to re-run the measurement and update
+    :data:`~engine.core.bitwise.MEASURED_AGAINST` — not to widen either set.
+    """
+    def minor(version: str) -> str:
+        return ".".join(version.split(".")[:2])
+
+    assert minor(np.__version__) == MEASURED_AGAINST["numpy"], (
+        f"the boundary was measured against NumPy {MEASURED_AGAINST['numpy']} "
+        f"and this is {np.__version__}. Re-run the measurement and update "
+        f"MEASURED_AGAINST; if the transcendentals now agree, that is a "
+        f"coincidence of two versions and still not a guarantee."
+    )
+    assert minor(_numba.__version__) == MEASURED_AGAINST["numba"], (
+        f"the boundary was measured against Numba "
+        f"{MEASURED_AGAINST['numba']} and this is {_numba.__version__}"
+    )
 
 
 def _bits(x):
