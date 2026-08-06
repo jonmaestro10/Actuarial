@@ -22,39 +22,43 @@ template's shape. ``tests/test_api_demo.py`` asserts all three, and asserts
 that every example supplies every field its model requires — so an example
 cannot rot into a lie while the template moves under it.
 
-Five templates have no example, and they now want one thing
------------------------------------------------------------
-The catalogue offers sixteen and eleven of them are here. It used to be
-eight, and the three that joined — ``PayoutAnnuity``, ``PensionBuyout`` and
-``LongevitySwap`` — were kept out by the **request schema** rather than by
-anything about the templates: they need a
-:class:`~engine.data.basis.ValuationBasis` (``LongevitySwap`` needs two, one
-per leg) and their model points carry dates. Both limits are closed —
-:func:`~engine.api.catalogue.build_assumptions` takes a ``kind``, and
-:func:`~engine.api.catalogue.coerce_dates` turns an ISO-8601 string into a
-:class:`datetime.date` at the HTTP boundary.
+Four templates have no example, and they all want the same thing
+----------------------------------------------------------------
+The catalogue offers sixteen and twelve of them are here. It was eight two
+commits ago, and the four that joined were kept out by the **request
+schema** rather than by anything about the templates:
+
+* ``PayoutAnnuity``, ``PensionBuyout`` and ``LongevitySwap`` need a
+  :class:`~engine.data.basis.ValuationBasis` (``LongevitySwap`` needs two,
+  one per leg) and their model points carry dates.
+  :func:`~engine.api.catalogue.build_assumptions` now takes a ``kind`` and
+  :func:`~engine.api.catalogue.coerce_dates` turns an ISO-8601 string into a
+  :class:`datetime.date` at the HTTP boundary.
+* ``IncomeProtection`` needs a
+  :class:`~engine.data.multistate.TransitionMatrix`, which is an object-valued
+  *field* rather than a whole basis, and is now carried as
+  ``assumptions.transitions``.
 
 That mattered beyond the demonstration. The evidence pack's specimen set
 walks ``EXAMPLES``, so a template with no example is invisible to it, and
-half the catalogue was in that position for one reason with two faces.
+half the catalogue was in that position.
 
-What is left is one category rather than two: ``IncomeProtection`` needs a
-``TransitionMatrix``, ``FixedIndexedAnnuity`` an index-crediting rule, and
-``UnitLinkedGMDB``, ``UnitLinkedGMxB`` and ``VariablePayoutAnnuity`` a bound
-scenario set. Each is an **object** on
-:class:`~engine.data.assumptions.Assumptions` whose serialisation would have
-to be invented for a class that is still moving, which is the reasoning
-:mod:`engine.api.catalogue`'s docstring gives and which still holds for
-these five.
+What is left is **one** reason rather than three: ``UnitLinkedGMDB``,
+``UnitLinkedGMxB`` and ``VariablePayoutAnnuity`` need a bound scenario set,
+and ``FixedIndexedAnnuity`` an index-crediting rule that itself reads index
+returns from one. A scenario format is the serialisation that would have to
+be invented for a class still moving — the reasoning
+:mod:`engine.api.catalogue`'s docstring gives, now applying to one thing
+instead of standing in for several.
 
 :data:`UNAVAILABLE` records that, per template, so ``GET /models`` can say
 which of the sixteen a caller can actually run here and why the rest are
 not. A catalogue that lists a model it cannot run and does not say so is
-worse than one that lists eleven.
+worse than one that lists twelve.
 
-The way to run the other five is the same as it has always been: pass your
-own ``build`` to :func:`engine.api.app.create_app`, which is where an
-assumption basis richer than these belongs.
+The way to run the other four is the same as it has always been: pass your
+own ``build`` to :func:`engine.api.app.create_app`, which is where a
+scenario set belongs.
 """
 
 from __future__ import annotations
@@ -306,6 +310,38 @@ EXAMPLES: dict = {
             ],
         },
     },
+    "IncomeProtection": {
+        "note": "Group income protection on the three-state chain — "
+                "healthy, sick, dead — with a 5% annual chance of falling "
+                "sick and a 20% chance of recovering. Premiums are paid by "
+                "the healthy and the benefit by the sick, so waiver of "
+                "premium is the model rather than a rider on it.",
+        "request": {
+            "model": "IncomeProtection",
+            "proj_len": 21,
+            "outputs": ["healthy", "sick", "dead", "premiums", "benefits",
+                        "in_term", "v"],
+            "assumptions": {
+                "interest": 0.03,
+                "mortality": MORTALITY,
+                "transitions": {
+                    "states": {"names": ["healthy", "sick", "dead"],
+                               "absorbing": ["dead"]},
+                    "matrix": [[0.940, 0.050, 0.010],
+                               [0.200, 0.780, 0.020],
+                               [0.000, 0.000, 1.000]],
+                },
+            },
+            "modelpoints": [
+                {"id": "IP1", "age_at_entry": 35, "term_years": 20,
+                 "annual_premium": 600.0, "annual_benefit": 24_000.0,
+                 "init_pols": 1_000.0},
+                {"id": "IP2", "age_at_entry": 45, "term_years": 15,
+                 "annual_premium": 950.0, "annual_benefit": 18_000.0,
+                 "init_pols": 400.0},
+            ],
+        },
+    },
     "PayoutAnnuity": {
         "note": "Three annuities in payment on the valuation basis — a "
                 "level life annuity, one with a ten-year guarantee, and a "
@@ -380,9 +416,6 @@ EXAMPLES: dict = {
 #: is what a caller would hit if they wrote the request themselves, so it is
 #: a limit of the request schema rather than of the engine.
 UNAVAILABLE: dict = {
-    "IncomeProtection":
-        "needs a TransitionMatrix on the assumptions; the request schema "
-        "carries scalars and a mortality table, not multi-state transitions",
     "FixedIndexedAnnuity":
         "needs an index-crediting rule on the assumptions, and index "
         "returns from a bound scenario set",

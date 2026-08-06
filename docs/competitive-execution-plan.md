@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,193
+   naive implementation otherwise. The suite (`pytest`, currently 2,204
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -851,12 +851,11 @@ eight of sixteen unavailable over HTTP and therefore invisible to the
 evidence pack's specimen set. The request schema now takes a `kind` and
 carries a `ValuationBasis` — and two of them, for the swap — with ISO-8601
 dates coerced at the HTTP boundary rather than inside `from_dicts`. Eleven
-specimens, up from eight. What remains out of scope is now one category
-rather than two: a bound scenario set (three templates), a
-`TransitionMatrix`, and an index-crediting rule. **C4 will hit the
-`TransitionMatrix` half of that** — `IncomeProtection` is already there for
-the same reason — so it is worth deciding before C4 starts whether the
-multi-state assumption object gets the same treatment.*
+specimens, up from eight. What remains out of scope is now one
+reason rather than three: a bound scenario set (three templates), and an
+index-crediting rule that reads one. That decision was taken and built before
+C4 rather than after: `assumptions.transitions` is carried, and
+`IncomeProtection` — stranded since RFC-032 — has a worked example.*
 
 ### E5 — Assumption objects in the request schema (RFC-066) — effort S — **done**
 Unplanned, and raised by C3. The RFC-032 request schema carried scalars and
@@ -868,3 +867,13 @@ by fingerprint rather than by type, because a silent revaluation is what it
 exists to prevent. Dates are coerced at the HTTP boundary on an exact
 ISO-8601 match, and a string in that shape which is not a valid date is
 refused rather than passed through.
+
+**Extended before C4**, which would otherwise have added a ninth invisible
+template. `IncomeProtection` binds a `TransitionMatrix` on the ordinary
+`Assumptions`, so it needed no new `kind` — only `assumptions.transitions`,
+an object-valued *field*. That distinction decides where the next one goes:
+a basis is a kind, a field is a field. Twelve specimens now, up from eight,
+and every remaining exclusion is the **same** reason — a bound scenario set,
+or an index-crediting rule that reads one — asserted by a test so the list
+cannot be padded with new excuses while staying the same length. C4's LTC
+template lands on the multi-state engine with an example on day one.

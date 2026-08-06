@@ -21,8 +21,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from datetime import date  # noqa: E402
 
 from engine.api.catalogue import (  # noqa: E402
-    ASSUMPTION_KINDS, InvalidRequestError, build_assumptions, build_run,
-    builder, catalogue, coerce_dates,
+    ASSUMPTION_KINDS, OBJECT_ASSUMPTIONS, SCALAR_ASSUMPTIONS,
+    InvalidRequestError, build_assumptions, build_run, builder, catalogue,
+    coerce_dates,
 )
 from engine.core.timeaxis import TimeAxis  # noqa: E402
 from engine.data.assumptions import Assumptions  # noqa: E402
@@ -215,10 +216,17 @@ def test_the_example_endpoint_serves_a_body_that_submits(client):
     assert accepted.status_code == 202
 
 
-def test_a_template_without_an_example_says_why(client):
-    response = client.get("/models/IncomeProtection/example")
+@pytest.mark.parametrize("name", sorted(UNAVAILABLE))
+def test_a_template_without_an_example_says_why(client, name):
+    """404 with a reason, for every template that has none.
+
+    Parametrised over `UNAVAILABLE` rather than naming one, because the
+    list shrinks: this test used to pin `IncomeProtection`, which now has an
+    example, and a hard-coded name turns a template becoming *available*
+    into a red test about the wrong thing."""
+    response = client.get(f"/models/{name}/example")
     assert response.status_code == 404
-    assert "TransitionMatrix" in response.json()["detail"]
+    assert response.json()["detail"].strip()
     assert client.get("/models/NoSuchModel/example").status_code == 404
 
 
@@ -597,14 +605,101 @@ def test_a_swap_with_one_leg_is_refused():
 
 
 def test_the_remaining_unavailable_templates_all_want_the_same_thing():
-    """What is left out is now one category rather than two: a bound
-    scenario set or a multi-state transition matrix. The valuation-basis
-    half of the old limit is closed, and this asserts the list shrank rather
-    than the reasons being reworded."""
+    """What is left out is now **one** reason rather than three: a bound
+    scenario set, or an index-crediting rule that reads one. The
+    valuation-basis and transition-matrix limits are both closed, and this
+    asserts the list shrank rather than the reasons being reworded."""
     assert set(UNAVAILABLE) == {
-        "IncomeProtection", "FixedIndexedAnnuity", "UnitLinkedGMDB",
-        "UnitLinkedGMxB", "VariablePayoutAnnuity",
+        "FixedIndexedAnnuity", "UnitLinkedGMDB", "UnitLinkedGMxB",
+        "VariablePayoutAnnuity",
     }
-    for name in ("PayoutAnnuity", "PensionBuyout", "LongevitySwap"):
+    for name in ("PayoutAnnuity", "PensionBuyout", "LongevitySwap",
+                 "IncomeProtection"):
         assert name in EXAMPLES and name not in UNAVAILABLE
-    assert len(EXAMPLES) == 11 and len(catalogue()) == 16
+    assert len(EXAMPLES) == 12 and len(catalogue()) == 16
+    # Every remaining reason is the same one: a scenario set, or a rule that
+    # reads one. That is a single format to invent, not four.
+    for reason in UNAVAILABLE.values():
+        assert "scenario" in reason or "index" in reason
+
+
+def test_a_transition_matrix_arrives_as_a_transition_matrix():
+    """The template that has been stranded since RFC-032. `IncomeProtection`
+    binds a `TransitionMatrix` on the assumptions alongside `interest`, so it
+    needed no new `kind` — it needed one object-valued *field*, which is a
+    smaller thing than the basis chassis needed and was blocked for the same
+    reason."""
+    from engine.data.multistate import TransitionMatrix
+
+    built = build_assumptions(
+        EXAMPLES["IncomeProtection"]["request"]["assumptions"])
+    assert isinstance(built.transitions, TransitionMatrix)
+    assert built.transitions.states.names == ("healthy", "sick", "dead")
+    assert built.transitions.states.absorbing == frozenset({"dead"})
+    assert built.interest == 0.03
+
+
+def test_the_matrix_keeps_the_state_order_it_was_written_for():
+    """Row 2 is not "sick" unless something says so. The order in `states`
+    is the order of the rows, so a caller who lists them differently gets a
+    different chain rather than a silent relabelling."""
+    spec = {"mortality": 0.001, "transitions": {
+        "states": {"names": ["dead", "sick", "healthy"],
+                   "absorbing": ["dead"]},
+        "matrix": [[1.0, 0.0, 0.0], [0.02, 0.78, 0.20],
+                   [0.01, 0.05, 0.94]]}}
+    built = build_assumptions(spec)
+    assert built.transitions.states.names == ("dead", "sick", "healthy")
+    assert built.transitions.states.of("healthy") == 2
+
+
+def test_the_schema_leaves_the_matrix_to_argue_for_itself():
+    """`TransitionMatrix` already refuses a row that does not sum to one, a
+    probability outside [0, 1], and an absorbing state whose row lets the
+    population leave — and says which row and by how much. Re-checking any of
+    that in the schema would be a second opinion about the same matrix, and
+    the two would drift.
+
+    So these assert the *class's* messages survive the wrapper rather than
+    that the wrapper has its own."""
+    def spec(matrix, absorbing=("dead",)):
+        return {"mortality": 0.001, "transitions": {
+            "states": {"names": ["healthy", "sick", "dead"],
+                       "absorbing": list(absorbing)},
+            "matrix": matrix}}
+
+    with pytest.raises(InvalidRequestError, match="must sum to 1"):
+        build_assumptions(spec([[0.9, 0.05, 0.01], [0.2, 0.78, 0.02],
+                                [0.0, 0.0, 1.0]]))
+    with pytest.raises(InvalidRequestError, match="below zero"):
+        build_assumptions(spec([[1.05, -0.05, 0.0], [0.2, 0.78, 0.02],
+                                [0.0, 0.0, 1.0]]))
+    with pytest.raises(InvalidRequestError, match="declared absorbing"):
+        build_assumptions(spec([[0.94, 0.05, 0.01], [0.2, 0.78, 0.02],
+                                [0.1, 0.0, 0.9]]))
+    with pytest.raises(InvalidRequestError, match="expected"):
+        build_assumptions(spec([[0.5, 0.5], [0.5, 0.5]]))
+
+
+def test_a_matrix_without_its_states_is_refused():
+    """The matrix is meaningless without the state order it was written for,
+    and defaulting to positional names would invent a chain."""
+    with pytest.raises(InvalidRequestError, match="both 'states' and"):
+        build_assumptions({"mortality": 0.001,
+                           "transitions": {"matrix": [[1.0]]}})
+    with pytest.raises(InvalidRequestError, match="both 'states' and"):
+        build_assumptions({"mortality": 0.001, "transitions": {
+            "states": {"names": ["a", "b"]}}})
+    with pytest.raises(InvalidRequestError, match="unknown absorbing"):
+        build_assumptions({"mortality": 0.001, "transitions": {
+            "states": {"names": ["healthy", "dead"], "absorbing": ["gone"]},
+            "matrix": [[0.99, 0.01], [0.0, 1.0]]}})
+
+
+def test_an_unsupported_assumption_field_still_names_what_is_carried():
+    """The gate that keeps the schema honest. Adding `transitions` must not
+    turn it into a bag that accepts anything object-shaped."""
+    with pytest.raises(InvalidRequestError, match="unsupported assumption"):
+        build_assumptions({"mortality": 0.001, "reinsurance": {"quota": 0.5}})
+    assert "transitions" in OBJECT_ASSUMPTIONS
+    assert "transitions" not in SCALAR_ASSUMPTIONS

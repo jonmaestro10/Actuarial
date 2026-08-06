@@ -43,10 +43,20 @@ omitted ``kind`` and got a different basis than it did last week would be a
 silent revaluation, which is the one failure this whole layer exists to
 prevent.
 
-What is still out of scope is unchanged and is now the *whole* of what is
-out of scope: a bound scenario set, a ``TransitionMatrix``, and an
-index-crediting rule. Those are five templates, and each needs a format
-invented for a moving class rather than a format for two settled ones.
+One object-valued *field* is now carried too. ``IncomeProtection`` binds a
+:class:`~engine.data.multistate.TransitionMatrix` on
+:class:`~engine.data.assumptions.Assumptions` alongside ``interest``, so it
+needs no new ``kind`` — it needs ``assumptions.transitions``, which the
+scalar kind now takes. The builder is deliberately thin: ``TransitionMatrix``
+already refuses a row that does not sum to one, a probability outside
+``[0, 1]``, and an absorbing state whose row lets the population leave, so
+the schema constructs and lets the class do the arguing. A second validation
+here would be a second opinion about the same matrix.
+
+What is still out of scope is a **bound scenario set** — three templates —
+and an index-crediting rule. Those are the ones whose serialisation would
+have to be invented for a class that is still moving, which is the original
+reasoning and still holds for them.
 
 Dates arrive as strings, and are coerced here rather than in the core
 -------------------------------------------------------------------
@@ -89,6 +99,12 @@ SCALAR_ASSUMPTIONS = (
     "gmdb_fee", "gmab_fee", "gmwb_fee", "glwb_fee", "freq", "base_year",
     "fractional_ages",
 )
+
+#: Assumption fields that are **objects** rather than scalars, and are
+#: nonetheless expressible: each is a settled class with a shape a JSON
+#: object maps onto directly. Everything else on :class:`Assumptions` stays
+#: out — see the module docstring.
+OBJECT_ASSUMPTIONS = ("transitions",)
 
 EXECUTORS = ("auto", "vectorized", "interpreted", "stochastic")
 
@@ -211,6 +227,50 @@ def build_curve(spec: Any) -> YieldCurve:
         raise InvalidRequestError(f"curve: {exc}") from exc
 
 
+def build_transitions(spec: Any) -> "TransitionMatrix":
+    """A :class:`~engine.data.multistate.TransitionMatrix` from JSON.
+
+    ``states`` is ``{"names": [...], "absorbing": [...]}`` and ``matrix`` is
+    either ``(n, n)`` for an age-independent chain or ``(n_ages, n, n)`` with
+    ``min_age`` naming the first row.
+
+    Thin on purpose. ``TransitionMatrix`` already refuses a row that does not
+    sum to one, a probability outside ``[0, 1]``, and an absorbing state whose
+    row lets the population leave — and its messages say *which* row and by
+    how much. Re-checking any of that here would be a second opinion about
+    the same matrix, and the two would drift.
+    """
+    from engine.data.multistate import StateSpace, TransitionMatrix
+
+    if not isinstance(spec, dict):
+        raise InvalidRequestError("assumptions.transitions must be an object")
+    spec = dict(spec)
+    states = spec.pop("states", None)
+    matrix = spec.pop("matrix", None)
+    if not isinstance(states, dict) or matrix is None:
+        raise InvalidRequestError(
+            "assumptions.transitions needs both 'states' and 'matrix'. The "
+            "matrix is meaningless without the state order it was written "
+            "for — row 2 is not 'sick' unless something says so."
+        )
+    unknown = sorted(set(spec) - {"min_age"})
+    if unknown:
+        raise InvalidRequestError(
+            f"unsupported transitions fields {unknown}"
+        )
+    names = states.get("names")
+    if not isinstance(names, list):
+        raise InvalidRequestError(
+            "assumptions.transitions.states.names must be a list, in the "
+            "order the matrix rows are written"
+        )
+    try:
+        space = StateSpace(names, states.get("absorbing", ()))
+        return TransitionMatrix(matrix, space, **spec)
+    except (TypeError, ValueError, KeyError) as exc:
+        raise InvalidRequestError(f"assumptions.transitions: {exc}") from exc
+
+
 def build_valuation_basis(spec: dict) -> ValuationBasis:
     """A :class:`~engine.data.basis.ValuationBasis` from JSON."""
     spec = dict(spec)
@@ -288,12 +348,18 @@ def build_assumptions(spec: Any) -> Any:
         raise InvalidRequestError(
             "assumptions.mortality must be a number or an age-to-rate object"
         )
+    transitions = spec.pop("transitions", None)
+    if transitions is not None:
+        transitions = build_transitions(transitions)
     unknown = set(spec) - set(SCALAR_ASSUMPTIONS)
     if unknown:
         raise InvalidRequestError(
             f"unsupported assumption fields {sorted(unknown)}; this API "
-            f"carries {list(SCALAR_ASSUMPTIONS)} plus mortality"
+            f"carries {list(SCALAR_ASSUMPTIONS)} plus mortality and "
+            f"{list(OBJECT_ASSUMPTIONS)}"
         )
+    if transitions is not None:
+        spec["transitions"] = transitions
     try:
         return Assumptions(mortality=table, **spec)
     except (TypeError, ValueError) as exc:
