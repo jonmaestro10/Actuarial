@@ -1243,11 +1243,21 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: **B1 (§4, compiled kernels), then
-B2 and B3** — the whole speed workstream, taken in order because B3 gates on
-B1 and B2 shares its executor contract. B1 is the largest thing left, and F8
-(RFC-072) has just removed the unknown that kept it unstarted through six
-RFCs — **read that assessment
+*Next action for the implementing agent: **workstream H (documentation),
+starting with H1 `CLAUDE.md`** — the whole speed workstream B1/B2/B3 has now
+landed, and what a new developer or an evaluating actuary needs is the
+orthogonal cut the 76 RFCs do not give them. H1 is worth taking before the
+next long build rather than after.
+
+Two pieces of engineering are named by measurement rather than guessed, and
+either is a good second item. **B1's remaining order of magnitude**: the
+kernel is a median 14.6x but end-to-end is 1.36x, because the hoist pre-pass
+is a median 55% of the runtime — interleave the pre-pass with the kernel per
+period so a hoisted variable is computed from the kernel's own slabs instead
+of a second traversal. **B3's device measurement**: the machinery and both
+guarantees are built and tested, and nothing has run on silicon.
+
+For history, the item that unblocked all three: F8 — **read that assessment
 before designing anything**, because the kernel's contents are now determined
 by IEEE-754 rather than open: correctly-rounded operations only, everything
 else hoisted into a NumPy-computed slab, `fastmath` off, no reduction at any
@@ -1310,8 +1320,12 @@ it. The evidence is complete in `docs/sources/vm22-table-6-5-reading.md` and
 question — *"under your intended rule, when does column B's printed 2.0%
 after-expiry block ever apply?"* **Do not re-investigate it.** File the APF.
 
-**3. B1 (§4) is still unstarted**, but it is no longer blocked on an
-unknown. F8 (RFC-072) measured the thing its design turns on and the answer
+**3. B1, B2 and B3 have all landed** (RFC-074, RFC-075, RFC-076), and each
+left a named next step rather than a tidy ending — B1's hoist-pre-pass
+interleaving, B2's milestone M2 wording, B3's device measurement. The
+paragraph below is kept because its two rules are what the work was held to.
+
+The original entry: F8 (RFC-072) measured the thing its design turns on and the answer
 is a specification: a kernel may contain **only** IEEE-754-correctly-rounded
 operations, everything else hoisted into a NumPy-computed slab, `fastmath`
 off, and no reduction at any length — which puts every `@pool` body outside a
