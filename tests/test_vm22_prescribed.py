@@ -30,10 +30,12 @@ from engine.report.vm22_prescribed import (
     EXPENSE_BASE_YEAR,
     FX_CATEGORIES,
     FX_CATEGORIES_CARRIED,
+    LAPSE_TABLES_CARRIED,
     VM22_PRESCRIBED_2026,
     PrescribedAssumptions,
     PrescribedError,
     Provisional,
+    base_lapse_rate,
     fx_factor,
     maintenance_expense,
     partial_withdrawal_rate,
@@ -438,3 +440,70 @@ def test_a_guaranteed_living_benefit_lowers_the_qualified_withdrawal_rate():
 def test_a_negative_age_is_refused():
     with pytest.raises(PrescribedError, match="not negative"):
         partial_withdrawal_rate(-1, qualified=True)
+
+
+# --------------------------------------------------------------------------
+# §6.C.5 — the lapse tables, and the one that will not reconcile
+# --------------------------------------------------------------------------
+
+def test_the_surrender_charge_expiry_spike_is_the_shape_of_the_table():
+    """**Why the table has two dimensions at all.** An indexed annuity
+    written to a 60-to-69-year-old lapses at 3.5% the year before its
+    surrender charge expires and 41.5% the year it does — a factor of twelve
+    across one contract anniversary.
+
+    A single-rate lapse assumption cannot express that, and a model that
+    smoothed it would put the cash flow in the wrong *year* rather than
+    merely get the level wrong."""
+    assert base_lapse_rate(-1, 65) == pytest.approx(0.035)
+    assert base_lapse_rate(0, 65) == pytest.approx(0.415)
+    assert base_lapse_rate(1, 65) == pytest.approx(0.175)
+    assert base_lapse_rate(0, 65) / base_lapse_rate(-1, 65) \
+        == pytest.approx(11.86, abs=0.02)
+
+
+def test_a_guaranteed_living_benefit_flattens_the_after_expiry_rows():
+    """Table 6.6 is flat across every after-expiry row and its expiry spike
+    is less than half Table 6.4's. The contract holder who bought a benefit
+    that pays while they live is not leaving once the charge is gone, and
+    the two tables encode different behaviour rather than one scaled."""
+    after = [base_lapse_rate(d, 65, table="with_glb") for d in (1, 2, 3, 4, 5)]
+    assert after == [pytest.approx(0.065)] * 5
+    assert base_lapse_rate(0, 65, table="with_glb") == pytest.approx(0.140)
+    assert base_lapse_rate(0, 65, table="with_glb") < base_lapse_rate(0, 65)
+
+
+def test_the_bands_clamp_at_five_years_either_side():
+    """"5 yrs or more after expiry" and "5 yrs or more to expiry" are the end
+    rows, so nothing beyond them is extrapolated — a lapse rate ten years
+    past expiry is the five-year one, as the table says."""
+    assert base_lapse_rate(9, 65) == base_lapse_rate(5, 65) \
+        == pytest.approx(0.070)
+    assert base_lapse_rate(-9, 65) == base_lapse_rate(-5, 65) \
+        == pytest.approx(0.025)
+    assert base_lapse_rate(0, 85) == pytest.approx(0.235)   # 80 and above
+
+
+def test_the_fixed_annuity_lapse_table_is_refused_and_here_is_why():
+    """**Table 6.5 is not carried, and the reason is specific rather than
+    effort.** Its second dimension is the *interest guarantee period*, not
+    attained age, and its own Guidance Note supplies three worked examples.
+
+    Two of the three reproduce exactly under the straightforward reading —
+    row by years from surrender-charge expiry, column by where the contract
+    sits in its IGP cycle. The third does not: Example 3's contract year 5
+    comes out at **2.0%** where the text says **1.0%**.
+
+    So either the reading is wrong in a way Examples 1 and 2 cannot
+    discriminate, or the Guidance Note has an error. Carrying the table on a
+    reading that fails one of its own examples would put a plausible number
+    in every cell, which is worse than the refusal."""
+    with pytest.raises(PrescribedError, match="interest guarantee period"):
+        base_lapse_rate(0, 65, table="fixed")
+    assert set(LAPSE_TABLES_CARRIED) == {"indexed", "with_glb"}
+    assert "fixed" not in LAPSE_TABLES_CARRIED
+
+
+def test_a_negative_age_is_refused_by_the_lapse_lookup():
+    with pytest.raises(PrescribedError, match="not negative"):
+        base_lapse_rate(0, -1)

@@ -81,10 +81,10 @@ none of this is a reserve floor at year-end 2026, and that is a real reason
 to sequence it behind reserve arithmetic. It is *not* a reason to call the
 question closed, and conflating the two is the error this file corrects.
 
-## Five of the eleven are now carried
+## Seven of the eleven are now carried
 
 `engine/report/vm22_prescribed.py` (RFC-067) carries **Tables 6.1, 6.2, 6.3,
-6.7 and 6.8**, all transcribed from the primary text above and checked
+6.4, 6.6, 6.7 and 6.8**, all transcribed from the primary text above and checked
 against it, together with §6.C.2's expense rule and §6.C.8.i's mortality
 formula. `tests/test_vm22_prescribed.py` asserts the values against the text
 rather than against the module's own constants.
@@ -92,7 +92,7 @@ rather than against the module's own constants.
 Both bracketed figures are carried as `Provisional`, which is the mechanism
 this file's earlier note said the dated-set pattern lacked.
 
-**The remaining six are still recorded and not carried**, and `fx_factor`
+**The remaining four are still recorded and not carried**, and `fx_factor`
 refuses a category whose table is absent rather than serving the one that is
 present. Those six each carry a *second* dimension — an age band crossed with
 a surrender-charge duration, or a contract-year band crossed with sex — and a
@@ -114,3 +114,32 @@ fails against the real table, and it did.
 The standard projection amount itself is still unbuilt: §3.C makes it
 disclosure-only for year-end 2026, which is why the assumptions land before
 the calculation.
+
+
+## Table 6.5 fails one of its own worked examples
+
+The one absence with a specific, recheckable reason rather than a general
+one. §6.C.5's Table 6.5 — fixed annuities with no guaranteed living benefits
+— is keyed by the **interest guarantee period** rather than by attained age,
+and its Guidance Note supplies three worked examples of contract-year lapse
+sequences.
+
+Under the straightforward reading (row by years from surrender-charge expiry,
+column by where the contract sits in its IGP cycle):
+
+| example | the note's sequence | computed |
+|---|---|---|
+| 1: 3-yr IGP + 3-yr SC, then 1-yr IGPs, no SC | 1, 1, 1, 75, 10, 7.5, 3 | **exact** |
+| 2: 3-yr IGP + 3-yr SC, then the same again | 1, 1, 1, 75, 1, 1, 75 | **exact** |
+| 3: 1-yr IGP + 3-yr SC, then 2-yr IGP, no SC | 2.5, 2.5, 2.5, 25, **1**, 65 | 2.5, 2.5, 2.5, 25, **2**, 65 |
+
+Two of three reproduce exactly. Example 3's contract year 5 comes out at 2.0%
+against the text's 1.0% — the contract has renewed into a *longer* IGP with no
+surrender charge, which is the one transition Examples 1 and 2 never exercise.
+
+So either the reading is wrong in a way the first two examples cannot
+discriminate, or the Guidance Note has an error. The table is not carried,
+and `engine.report.vm22_prescribed.base_lapse_rate` refuses it by name with
+the dimension identified. The discrepancy lives in
+`tests/test_vm22_prescribed.py` so it is recheckable against the 2027 text
+rather than sitting in a comment.

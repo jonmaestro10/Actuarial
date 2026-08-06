@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,264
+   naive implementation otherwise. The suite (`pytest`, currently 2,269
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -898,9 +898,12 @@ carryable half, and `engine/report/vm22_prescribed.py` now carries Tables
 `Provisional` is the mechanism RFC-050 said the dated-set pattern lacked:
 the NAIC's own square brackets around `[1.025]` and `[2.5%]` mark figures
 still under discussion, and the flag is *derived* from the values rather
-than listed beside them. Five of the eleven tables are now
-carried; the remaining six each cross a second dimension and are refused
-rather than approximated. The standard projection amount itself is still
+than listed beside them. Seven of the eleven tables are now
+carried. Table 6.5 is refused for a **specific** reason: it fails one of its
+own three worked examples under a reading that reproduces the other two
+exactly, so either the reading is wrong where those two cannot discriminate
+or the Guidance Note has an error. The three structured-settlement sets need
+a read of their own. The standard projection amount itself is still
 unbuilt — §3.C makes it disclosure-only for 2026, which is why the
 assumptions land before the calculation. B1 (§4) remains unstarted and carries a
 written assessment of why. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4

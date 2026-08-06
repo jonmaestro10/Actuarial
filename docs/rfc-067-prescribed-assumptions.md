@@ -93,20 +93,60 @@ expected to live longer, so the with-benefit factor is at or below the
 without-benefit one at every age and for both sexes. That catches a
 transcription slip which swapped two columns, where the age-shape would not.
 
-## Five of eleven, and a refusal rather than a fallback
+## Seven of eleven, and a refusal rather than a fallback
 
 **Carried**, all transcribed from the primary text and checked against it:
 Table 6.1 (base maintenance expense), Table 6.7 (*F<sub>x</sub>*,
 Accumulation), Table 6.8 (*F<sub>x</sub>*, Payout Annuity), and Tables 6.2
 and 6.3 (partial withdrawals, qualified and non-qualified).
 
-**Not carried:** the remaining six — three sets of base lapse rates keyed by
-years before or after surrender-charge expiry, and three *F<sub>x</sub>* sets
-for structured settlements. Each of those carries a **second dimension** —
-an age band crossed with a surrender-charge duration, or a contract-year band
-crossed with sex — and a table whose second dimension is read wrongly is a
-plausible number in every cell rather than an obviously missing one. They
-need a read of their own.
+Tables 6.4 and 6.6 (base lapse rates) joined them.
+
+**Not carried:** Table 6.5, and three *F<sub>x</sub>* sets for structured
+settlements which cross a contract-year band with sex and need a read of
+their own.
+
+### Table 6.5 fails one of its own worked examples
+
+This is the sharpest version of "a table whose second dimension is read
+wrongly is a plausible number in every cell", because the text supplies the
+check itself.
+
+6.5's second dimension is the **interest guarantee period**, not attained
+age, and its Guidance Note gives three worked examples of contract-year lapse
+sequences. Under the straightforward reading — row by years from
+surrender-charge expiry, column by where the contract sits in its IGP cycle:
+
+| example | expected | computed |
+|---|---|---|
+| 1 | 1, 1, 1, 75, 10, 7.5, 3 | **exact** |
+| 2 | 1, 1, 1, 75, 1, 1, 75 | **exact** |
+| 3 | 2.5, 2.5, 2.5, 25, **1**, 65 | 2.5, 2.5, 2.5, 25, **2**, 65 |
+
+Two of three reproduce exactly; Example 3's contract year 5 comes out at 2.0%
+against the text's 1.0%. Either the reading is wrong in a way Examples 1 and 2
+cannot discriminate — they never exercise a renewal into a *longer* IGP with
+no surrender charge — or the Guidance Note has an error.
+
+Carrying the table on a reading that fails one of its own examples would be
+the plausible-number-everywhere failure, so it is refused, and
+`base_lapse_rate`'s message says which dimension the trouble is in. The
+discrepancy is recorded in the test rather than in a comment, so it is
+recheckable if the 2027 text restates the example.
+
+### What Tables 6.4 and 6.6 turned out to be
+
+The surrender-charge expiry spike is the whole reason the table has two
+dimensions. An indexed annuity written to a 60-to-69-year-old lapses at
+**3.5%** the year before its charge expires and **41.5%** the year it does — a
+factor of twelve across one contract anniversary. A single-rate lapse
+assumption cannot express that, and smoothing it would put the cash flow in
+the wrong *year* rather than merely get the level wrong.
+
+Table 6.6, for contracts *with* a guaranteed living benefit, is flat across
+every after-expiry row and its spike is less than half the size. Someone who
+bought a benefit that pays while they live is not leaving once the charge is
+gone — the two tables encode different behaviour rather than one scaled.
 
 ### What Tables 6.2 and 6.3 turned out to be
 
@@ -137,7 +177,7 @@ refusal distinguishes a category §6.C.8 does not have from one it has and
 this module has not transcribed, because those are different problems for the
 caller.
 
-The reason six are absent is transcription risk, not effort: each needs
+The reason the remaining four are absent is not transcription effort: each needs
 reading against the primary text before it is worth having, and a
 mis-transcribed prescribed factor is worse than an absent one because it
 looks authoritative.
@@ -159,7 +199,7 @@ them later is a decision rather than an accident.
 
 ## Acceptance
 
-`tests/test_vm22_prescribed.py` — 25 tests. `Provisional` arithmetic is
+`tests/test_vm22_prescribed.py` — 31 tests. `Provisional` arithmetic is
 asserted to be ordinary float arithmetic; the derived provisional list is
 asserted to empty out for a basis whose figures are settled, with identical
 values, so the standing is genuinely separate from the number. The two

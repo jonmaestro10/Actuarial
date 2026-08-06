@@ -34,29 +34,38 @@ because the escalation is unavoidable.
 
 What is carried, and what is refused
 ------------------------------------
-Five of the eleven tables are here, transcribed from the primary text and
+Seven of the eleven tables are here, transcribed from the primary text and
 checked against it:
 
 - **Table 6.1**, the base maintenance expense by contract type (§6.C.2.a),
   with §6.C.2.c's $35 for a contract the company does not administer.
 - **Tables 6.2 and 6.3**, prescribed partial withdrawal rates for qualified
   and non-qualified contracts (§6.C.4).
+- **Tables 6.4 and 6.6**, base lapse rates by years from surrender-charge
+  expiry crossed with attained-age band (§6.C.5).
 - **Tables 6.7 and 6.8**, the *F*\ :sub:`x` mortality factors for individual
   annuities in the Accumulation and Payout Annuity Reserving Categories
   (§6.C.8.i–ii).
 
-The remaining six — three sets of base lapse rates and three
-*F*\ :sub:`x` sets for structured settlements — are **recorded and not
-carried**, and :func:`fx_factor` **refuses** a category whose table is absent
+The remaining four — **Table 6.5** and three *F*\ :sub:`x` sets for
+structured settlements — are **recorded and not carried**, and :func:`fx_factor` **refuses** a category whose table is absent
 rather than falling back to one that is present. A mortality factor from the
 wrong category is a plausible number that no test would catch, which is
 precisely the failure mode this chapter has already produced eight times.
 
-The reason those six are absent is sharper than transcription effort: each
-crosses a **second dimension** — an age band against a surrender-charge
-duration, or a contract-year band against sex — and a table whose second
-dimension is read wrongly is a plausible number in *every* cell rather than
-an obviously missing one. They need a read of their own.
+**Table 6.5's absence is the specific one.** Its second dimension is the
+*interest guarantee period* rather than attained age, and its own Guidance
+Note supplies three worked examples. Two of the three reproduce exactly
+under the straightforward reading; the third does not — Example 3's contract
+year 5 comes out at 2.0% where the text says 1.0%. Either the reading is
+wrong in a way the first two examples cannot discriminate, or the Guidance
+Note has an error. Carrying it on a reading that fails one of its own
+examples would put a plausible number in every cell.
+
+The three structured-settlement sets cross a contract-year band with sex,
+and a table whose second dimension is read wrongly is a plausible number in
+*every* cell rather than an obviously missing one. They need a read of their
+own.
 
 What this does **not** build
 ----------------------------
@@ -531,3 +540,81 @@ def partial_withdrawal_rate(age, *, qualified: bool,
     rates = np.array([row[column] for row in table], dtype=np.float64)
     out = rates[index]
     return out if np.ndim(age) else float(out[0])
+
+
+#: §6.C.5, Tables 6.4 and 6.6: base lapse rates by years before or after
+#: surrender-charge expiry, crossed with attained-age band. Row order is the
+#: text's, running from long after expiry to long before it.
+SURRENDER_CHARGE_ROWS = ("5+ after", "4 after", "3 after", "2 after",
+                         "1 after", "upon", "1 to", "2 to", "3 to", "4 to",
+                         "5+ to")
+
+#: The attained-age bands Tables 6.4 and 6.6 are quoted over, as lower
+#: bounds. "Before 60", "60 to 69", "70 to 79", "80 and above".
+LAPSE_AGE_BANDS = (0, 60, 70, 80)
+
+_BASE_LAPSE = {
+    # Table 6.4: indexed annuities with no guaranteed living benefits.
+    "indexed": ((0.065, 0.070, 0.060, 0.050), (0.080, 0.085, 0.065, 0.050),
+                (0.085, 0.095, 0.070, 0.055), (0.110, 0.120, 0.090, 0.070),
+                (0.150, 0.175, 0.135, 0.090), (0.335, 0.415, 0.370, 0.235),
+                (0.045, 0.035, 0.040, 0.040), (0.040, 0.035, 0.030, 0.030),
+                (0.025, 0.020, 0.020, 0.020), (0.030, 0.025, 0.025, 0.025),
+                (0.020, 0.025, 0.020, 0.015)),
+    # Table 6.6: indexed and fixed annuities *with* guaranteed living
+    # benefits. Flat across the after-expiry rows, which the with-benefit
+    # contract holder's behaviour is: they are not leaving.
+    "with_glb": ((0.115, 0.065, 0.045, 0.040), (0.115, 0.065, 0.045, 0.040),
+                 (0.115, 0.065, 0.045, 0.040), (0.115, 0.065, 0.045, 0.040),
+                 (0.115, 0.065, 0.045, 0.040), (0.185, 0.140, 0.110, 0.085),
+                 (0.070, 0.045, 0.045, 0.035), (0.030, 0.025, 0.020, 0.025),
+                 (0.025, 0.015, 0.020, 0.025), (0.020, 0.015, 0.015, 0.020),
+                 (0.020, 0.015, 0.015, 0.015)),
+}
+
+#: Which of §6.C.5's three lapse tables are carried. Table 6.5 — fixed
+#: annuities with no guaranteed living benefits — is not; see
+#: :func:`base_lapse_rate` and RFC-067 for the reason, which is specific.
+LAPSE_TABLES_CARRIED = tuple(_BASE_LAPSE)
+
+
+def base_lapse_rate(years_from_expiry, age, *, table: str = "indexed"):
+    """§6.C.5, Tables 6.4 and 6.6: the prescribed base lapse rate.
+
+    ``years_from_expiry`` is signed the way the text reads: **positive after**
+    the surrender charge expires, zero in the year it expires ("Upon
+    expiry"), negative before. Five or more in either direction takes the end
+    row, as the table states.
+
+    The shock at expiry is the whole shape of the table and the reason it is
+    two-dimensional. An indexed annuity written to a 60-to-69-year-old lapses
+    at **3.5%** the year before its surrender charge expires and **41.5%** the
+    year it does — a factor of twelve across one contract anniversary. A
+    single-rate lapse assumption cannot express that, and a model that
+    smoothed it would put the cash flow in the wrong year rather than merely
+    get the level wrong.
+
+    Table 6.6, for contracts **with** a guaranteed living benefit, is flat
+    across every after-expiry row: the contract holder who bought a benefit
+    that pays while they live is not leaving once the charge is gone, and the
+    expiry spike is less than half the size.
+    """
+    if table not in _BASE_LAPSE:
+        raise PrescribedError(
+            f"§6.C.5 has no carried lapse table {table!r}; this module "
+            f"carries {list(LAPSE_TABLES_CARRIED)}. Table 6.5, fixed "
+            f"annuities without guaranteed living benefits, is keyed by the "
+            f"interest guarantee period rather than by attained age and is "
+            f"not transcribed — see RFC-067."
+        )
+    rates = np.array(_BASE_LAPSE[table], dtype=np.float64)
+    offsets = np.asarray(years_from_expiry)
+    if np.any(np.asarray(age) < 0):
+        raise PrescribedError("attained age is not negative")
+    # Row 5 is "upon expiry"; positive offsets walk up, negative walk down.
+    row = np.clip(5 - np.clip(offsets, -5, 5), 0, len(SURRENDER_CHARGE_ROWS) - 1)
+    band = np.clip(np.searchsorted(np.asarray(LAPSE_AGE_BANDS),
+                                   np.asarray(age), side="right") - 1,
+                   0, len(LAPSE_AGE_BANDS) - 1)
+    out = rates[row, band]
+    return out if (np.ndim(years_from_expiry) or np.ndim(age)) else float(out)
