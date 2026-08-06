@@ -18,3 +18,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[test,data,api]"
       - run: pytest -q
+      # RFC-049's acceptance: the evidence pack builds, and a rebuild from
+      # the same source is byte-identical — the directory is named by the
+      # pack digest, so `diff -r` fails if either the digest or any section
+      # moved.
+      - name: Build the validation evidence pack, twice
+        run: |
+          python scripts/evidence_pack.py --out evidence
+          python scripts/evidence_pack.py --out evidence-rebuild
+          diff -r evidence evidence-rebuild

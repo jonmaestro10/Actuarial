@@ -187,7 +187,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 | Excel integration | ✅ | ✅ | ✅ | ❌ |
 | Incumbent migration tooling (readers + parity reports) | n/a | n/a | n/a | 🟡 parity core (RFC-033: reusable diff engine, Markdown report, registered against both content digests), Prophet MPF/results readers (RFC-034, dialect-driven, mapping report) and conversion scaffold (RFC-036); ❌ MoSes readers |
 | Licence / cost model | Heavy, per-core/grid | Heavy | Heavy | Open code; one runtime dependency (NumPy); optional extras |
-| Regulatory track record & support organisation | ✅ decades | ✅ | ✅ | ❌ none |
+| Regulatory track record & support organisation | ✅ decades | ✅ | ✅ | ❌ none — but a machine-generated validation evidence pack (RFC-049): live test inventory, run-level executor-equivalence attestation, coverage, reconciliations on record, digest-identical rebuild asserted in CI |
 
 ---
 

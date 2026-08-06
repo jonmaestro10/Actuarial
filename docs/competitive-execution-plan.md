@@ -75,7 +75,7 @@ what any incumbent ships rather than merely reaching parity.
 | US statutory formulaic reserves + AAT | ❌ | CRVM/net-premium + asset adequacy runner | Same | C2 |
 | Pensions / longevity as products | ❌ | Buy-in/buy-out, longevity swap templates | Same | C3 |
 | US health / LTC | ❌ | LTC template on the multi-state engine | Same | C4 |
-| Regulatory track record / evidence | ❌ (not software) | — | Machine-generated validation **evidence pack** — the closest software can get to a track record | F1 |
+| Regulatory track record / evidence | 🟡 evidence pack shipped (F1, RFC-049): test inventory, run equivalence attestation, coverage, parity records, digest-identical rebuild in CI | — | Machine-generated validation **evidence pack** — the closest software can get to a track record | F1 |
 | Vendor library update cadence | ❌ (not software) | — | Regulation-as-dated-sets diff reports (generalize the 2015/35 vs 2026/269 pattern) | F2 |
 | Exact-decimal audit mode (PLAN §3.4 promise) | ❌ | — | Decimal sign-off executor; no incumbent offers one | F3 |
 | General insurance beyond chain-ladder LIC | 🟡 | Reserve variability (Mack, ODP bootstrap) + premium-liability template | Reserve *ranges* reproduced against published triangles in CI — Igloo/ResQ assert them, we prove them | C5 |
@@ -188,7 +188,7 @@ Landscape §5.1: the binding constraint for production nested-stochastic. The
 graph and forward loop exist (`engine/core/graph.py`, `vector.py`); PLAN §4.2
 and §4.3 are designed but unbuilt.
 
-### B1 — The compiled executor (RFC-037) — effort L
+### B1 — The compiled executor (RFC-037) — effort L — **not started**
 
 **Build:** `engine/core/compiled.py`; optional extra `[compile]` (Numba).
 
@@ -201,6 +201,18 @@ and §4.3 are designed but unbuilt.
   `skipif` Numba absent).
 - Cache compiled kernels per (model class, time structure) keyed by the
   graph digest.
+
+**Assessment (2026-08, before starting):** this item is larger than its
+effort marker. Numba cannot compile a `@var` body as written — the bodies
+call into assumption objects (`periodic_q`, `Decrements.split`, expense and
+treaty bases), which are ordinary Python over tables and objects. Emitting a
+jitted forward loop with *the same op order* therefore means translating the
+DSL into a compilable form: an array-expression tape recorded off the
+vectorized executor, or an AST transpiler over `@var` bodies with the
+assumption lookups hoisted into precomputed slabs. Either is a project in
+its own right, and neither can be half-shipped without weakening §1.2. It
+was left unstarted rather than begun badly; F1 (whose dependency A1 was
+already met) was taken next, per §10's own note that B2 does not require B1.
 
 **Accept:** every template in `engine/library/` bitwise-identical across
 interpreted / vectorized / compiled; `scripts/benchmark_compiled.py` extends
@@ -427,7 +439,7 @@ Landscape §4 lists five places the repo is already ahead. These items widen
 those leads into things no incumbent can answer. F1 should land early (after
 A1 and B1) because it compounds: every subsequent item enriches the pack.
 
-### F1 — The validation evidence pack (RFC-049) — effort M
+### F1 — The validation evidence pack (RFC-049) — effort M — **shipped**
 `engine/report/evidence.py` + `scripts/evidence_pack.py`: one command emits a
 content-addressed directory — the test inventory (collected live from
 pytest), the closed-form identity list, the executor-equivalence attestation
@@ -584,6 +596,9 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: claim RFC-037 and begin B1 (§4),
-following the protocol in §1. M1 is complete — A1 shipped as RFC-033, A2 as
-RFC-034, A4 as RFC-036.*
+*Next action for the implementing agent: B1 (§4) is unstarted and carries a
+written assessment of why — read it before picking the item up, and expect an
+array-expression compiler rather than a wrapper. Everything else on §10's
+path is open; D1 (§6) is the next item with no unmet dependency. Shipped so
+far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 — and F1
+(RFC-049).*

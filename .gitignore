@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Evidence packs are build artifacts: content-addressed, regenerable from
+# the commit they name, and never the thing under version control (RFC-049).
+evidence/
+evidence-rebuild/
