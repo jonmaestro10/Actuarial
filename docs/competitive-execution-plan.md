@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,243
+   naive implementation otherwise. The suite (`pytest`, currently 2,264
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -467,7 +467,7 @@ and it is the multi-state counterpart of VM-22's reduce-then-aggregate. Both
 honest workarounds are documented with their costs; neither is chosen, and
 elimination periods are out for the same reason.
 
-### C5 — General insurance beyond the chain-ladder LIC (RFC-054) — effort L
+### C5 — General insurance beyond the chain-ladder LIC (RFC-054) — effort L — **first half done**
 The landscape doc names the market this repo doesn't address (Igloo, ResQ,
 Tyche); the chain-ladder LIC (`engine/report/incurred_claims.py`) is the
 seed. Two halves:
@@ -481,6 +481,35 @@ seed. Two halves:
   template for earned/unearned premium, earning patterns, expected loss and
   cat-load cashflows — pairing naturally with the existing PAA overlay
   (`engine/report/paa.py`), which was built for exactly these contracts.
+
+**Outcome, first half (RFC-054).** Shipped. Every figure in Mack's Table 3
+reproduces exactly — `(80, 26, 19, 27, 29, 26, 22, 23, 29)` by accident year
+and 13% in total — and the bootstrap's over-dispersion comes out at
+φ = 52,601, the value the England–Verrall literature quotes. The check ran
+the right way round: those targets were transcribed into
+`tests/test_published_sources.py` *before* anything could compute them, with
+a test asserting `mack_standard_error` did not exist, so there was no
+implementation to tune the transcription toward.
+
+The design point is that **estimation error and prediction error are
+different numbers** and are close enough here to be mistaken for agreement:
+the bootstrap gives 15% (estimation), Mack 13% (prediction), and the
+bootstrap with its process step 16% (prediction). `process_variance`
+defaults to `False` and the docstring says which number each setting
+returns, because a process step added silently would let an estimation error
+be quoted against a published prediction error and pass inspection. The
+decomposition `15.4 ⊕ 5.3 = 16.3` is asserted, which is what distinguishes a
+real process step from extra noise of about the right size. Mack's 13% and
+the bootstrap's 16% are then left disagreeing: two models, not two estimates
+of one number, and averaging them would make a modelling choice on the
+user's behalf.
+
+Also reported rather than assumed: the total error exceeds the accident
+periods added in quadrature by 20%, because they share their development
+factors. `quadrature_total` computes the wrong figure on purpose, the same
+posture as `vm22.floor_outside_reserve`.
+
+**Second half not started:** `engine/library/general_insurance.py`.
 
 **Accept:** `tests/test_gi_reserving.py` reproduces published Mack/ODP
 results; `tests/test_general_insurance.py` golden-tests the template and
@@ -841,12 +870,12 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: C5 (§10, general insurance beyond
-the chain-ladder LIC, RFC-054) — whose first half, Mack standard errors, is
-already pinned by `tests/test_published_sources.py` against Table 3 of the
-published paper and fails loudly the moment `incurred_claims.py` grows a
-`standard_error`. Or the remaining nine §6.C tables (RFC-067), each of which
-needs reading against the primary text before it is worth having — `engine/library/long_term_care.py` on the
+*Next action for the implementing agent: **C5's second half** — the
+premium-liability template `engine/library/general_insurance.py`, which
+pairs with the PAA overlay already in `engine/report/paa.py`. C5's first
+half (reserve variability, RFC-054) is done and reproduces Mack's Table 3
+exactly. Or the remaining §6.C tables (RFC-067), each of which needs reading
+against the primary text before it is worth having — `engine/library/long_term_care.py` on the
 multi-state engine, with `engine/library/income_protection.py` as the
 pattern. Two things C3 leaves on the record. First, the executor
 classification note below has now been exercised and it holds: `PensionBuyout`
@@ -869,7 +898,8 @@ carryable half, and `engine/report/vm22_prescribed.py` now carries Tables
 `Provisional` is the mechanism RFC-050 said the dated-set pattern lacked:
 the NAIC's own square brackets around `[1.025]` and `[2.5%]` mark figures
 still under discussion, and the flag is *derived* from the values rather
-than listed beside them. The other nine tables are recorded and refused
+than listed beside them. Five of the eleven tables are now
+carried; the remaining six each cross a second dimension and are refused
 rather than approximated. The standard projection amount itself is still
 unbuilt — §3.C makes it disclosure-only for 2026, which is why the
 assumptions land before the calculation. B1 (§4) remains unstarted and carries a

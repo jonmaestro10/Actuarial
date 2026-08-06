@@ -32,43 +32,19 @@ from engine.report.incurred_claims import ChainLadder, Triangle, development_fac
 # docs/sources/mack-1993-chain-ladder.md
 # --------------------------------------------------------------------------
 
-#: Table 1, p. 221. Cumulative paid claims, ten accident years.
-TAYLOR_ASHE = [
-    [357848, 1124788, 1735330, 2218270, 2745596, 3319994, 3466336, 3606286,
-     3833515, 3901463],
-    [352118, 1236139, 2170033, 3353322, 3799067, 4120063, 4647867, 4914039,
-     5339085],
-    [290507, 1292306, 2218525, 3235179, 3985995, 4132918, 4628910, 4909315],
-    [310608, 1418858, 2195047, 3757447, 4029929, 4381982, 4588268],
-    [443160, 1136350, 2128333, 2897821, 3402672, 3873311],
-    [396132, 1333217, 2180715, 2985752, 3691712],
-    [440832, 1288463, 2419861, 3483130],
-    [359480, 1421128, 2864498],
-    [376686, 1363294],
-    [344014],
-]
-
-#: p. 221, quoted to three or four significant figures.
-PUBLISHED_FACTORS = (3.49, 1.75, 1.46, 1.174, 1.104, 1.086, 1.054, 1.077,
-                     1.018)
-
-#: Table 2, p. 221, chain-ladder column, in thousands, accident years 2–10.
-PUBLISHED_RESERVES = (95, 470, 710, 985, 1419, 2178, 3920, 4279, 4626)
-PUBLISHED_TOTAL = 18681
-
-#: Table 3, p. 222 — standard error as a percentage of each reserve. Not
-#: asserted: the repo has no Mack variability (execution plan C5). Recorded
-#: so that C5 arrives with a published target rather than a self-made one.
-PUBLISHED_STANDARD_ERROR_PCT = (80, 26, 19, 27, 29, 26, 22, 23, 29)
-PUBLISHED_TOTAL_STANDARD_ERROR_PCT = 13
+# The figures themselves live in tests/conftest.py, reached through the
+# `published` fixture, so the two reserving suites share one transcription
+# rather than each keeping a copy. The citations and the assertions stay
+# here, which is what this file is for.
 
 
 @pytest.fixture(scope="module")
-def taylor_ashe():
-    return ChainLadder(Triangle(TAYLOR_ASHE, cumulative=True), method="volume")
+def taylor_ashe(published):
+    return ChainLadder(Triangle(published.rows, cumulative=True),
+                       method="volume")
 
 
-def test_the_development_factors_are_macks(taylor_ashe):
+def test_the_development_factors_are_macks(taylor_ashe, published):
     """Table 1's factors, to the precision the paper prints them.
 
     Mack quotes three or four significant figures, so that is the tolerance
@@ -76,8 +52,8 @@ def test_the_development_factors_are_macks(taylor_ashe):
     against the method.
     """
     ours = taylor_ashe.factors
-    assert len(ours) == len(PUBLISHED_FACTORS)
-    for k, (published, got) in enumerate(zip(PUBLISHED_FACTORS, ours),
+    assert len(ours) == len(published.factors)
+    for k, (published, got) in enumerate(zip(published.factors, ours),
                                          start=1):
         # 3 s.f. on the first factor (3.49), 4 s.f. on the rest.
         places = 3 if published >= 10 or k == 1 else 4
@@ -85,14 +61,14 @@ def test_the_development_factors_are_macks(taylor_ashe):
             published, abs=5e-3), f"factor {k}"
 
 
-def test_the_reserves_by_accident_year_are_macks(taylor_ashe):
+def test_the_reserves_by_accident_year_are_macks(taylor_ashe, published):
     """Table 2's chain-ladder column. The paper rounds to the nearest
     thousand, so a reserve of 95 carries half a percent of rounding on its
     own — which is why the tolerance is relative and generous at the small
     end and why the total is checked separately and tightly."""
     ours = taylor_ashe.reserve[1:] / 1000.0
-    assert len(ours) == len(PUBLISHED_RESERVES)
-    for i, (published, got) in enumerate(zip(PUBLISHED_RESERVES, ours),
+    assert len(ours) == len(published.reserves)
+    for i, (published, got) in enumerate(zip(published.reserves, ours),
                                          start=2):
         tolerance = max(0.5 / published, 1e-4)   # the paper's own rounding
         assert got == pytest.approx(published, rel=tolerance), \
@@ -100,17 +76,17 @@ def test_the_reserves_by_accident_year_are_macks(taylor_ashe):
 
 
 def test_the_overall_reserve_is_macks_to_the_rounding_he_published(
-        taylor_ashe):
+        taylor_ashe, published):
     """The headline number, and the tightest thing this source can hold the
     engine to: 18,681 thousand, rounded to the nearest thousand, so any
     total inside half a thousand of it agrees exactly."""
     total = taylor_ashe.total_reserve / 1000.0
-    assert total == pytest.approx(PUBLISHED_TOTAL, abs=0.5)
+    assert total == pytest.approx(published.total, abs=0.5)
     # Tighter than the tolerance, on the numbers as they actually come out.
-    assert abs(total - PUBLISHED_TOTAL) < 0.2
+    assert abs(total - published.total) < 0.2
 
 
-def test_the_ultimates_add_up_to_the_reserve_plus_what_is_paid(taylor_ashe):
+def test_the_ultimates_add_up_to_the_reserve_plus_what_is_paid(taylor_ashe, published):
     """An internal identity, checked here rather than in the LIC suite
     because it is what makes the comparison above meaningful: if the
     reserve were not ultimate-less-paid, agreeing with Mack's reserve would
@@ -122,12 +98,12 @@ def test_the_ultimates_add_up_to_the_reserve_plus_what_is_paid(taylor_ashe):
         float(taylor_ashe.ultimates.sum() - latest.sum()), rel=1e-12)
 
 
-def test_the_simple_average_disagrees_and_that_is_the_point(taylor_ashe):
+def test_the_simple_average_disagrees_and_that_is_the_point(taylor_ashe, published):
     """Mack's figures are the volume-weighted chain ladder. The unweighted
     factors are a different estimator and give a different answer on the
     same triangle — so the check above is a check on *the method named*,
     not on chain ladder in general."""
-    simple = ChainLadder(Triangle(TAYLOR_ASHE, cumulative=True),
+    simple = ChainLadder(Triangle(published.rows, cumulative=True),
                          method="simple")
     assert simple.total_reserve != taylor_ashe.total_reserve
     # Both are defensible; the paper's own Table 2 spans 16,652 to 22,301
@@ -136,23 +112,32 @@ def test_the_simple_average_disagrees_and_that_is_the_point(taylor_ashe):
         / taylor_ashe.total_reserve < 0.25
 
 
-def test_the_standard_errors_are_recorded_but_nothing_computes_them_yet():
-    """The honest half of this source.
+def test_the_standard_errors_are_macks(taylor_ashe, published):
+    """Table 3, p. 222 — the reason Mack's paper is famous.
 
-    Table 3 is the reason Mack's paper is famous, and the repo cannot
-    reproduce it: reserve variability is execution-plan item C5 and is
-    unstarted. This asserts that the targets are on record and that nothing
-    here quietly claims to have met them.
+    This test used to assert the opposite: that `mack_standard_error` did
+    **not** exist, and that the targets were on record with nothing claiming
+    to have met them. C5 landed, so it now asserts the thing it was holding
+    a place for.
+
+    That ordering is the point and is worth stating. The targets were
+    transcribed from the paper before any code could produce them, so there
+    was no implementation to tune them toward — which is the difference
+    between a published check and a regression test of one's own output.
     """
-    assert len(PUBLISHED_STANDARD_ERROR_PCT) == len(PUBLISHED_RESERVES)
-    assert PUBLISHED_TOTAL_STANDARD_ERROR_PCT == 13
-    import engine.report.incurred_claims as lic
+    from engine.report.incurred_claims import mack_standard_error
 
-    for absent in ("mack_standard_error", "standard_error", "bootstrap"):
-        assert not hasattr(lic, absent), (
-            f"{absent} exists now — C5 has landed, so wire it to "
-            f"PUBLISHED_STANDARD_ERROR_PCT and delete this test"
-        )
+    mack = mack_standard_error(taylor_ashe)
+    assert len(published.standard_error_pct) == len(published.reserves)
+
+    ours = [round(100 * cv) for cv in mack.coefficient_of_variation[1:]]
+    assert tuple(ours) == published.standard_error_pct
+    assert round(100 * mack.total_coefficient_of_variation) == \
+        published.total_standard_error_pct == 13
+
+    # The paper's own point about the total: it is not the periods added in
+    # quadrature, because they share their development factors.
+    assert mack.total > mack.quadrature_total
 
 
 # --------------------------------------------------------------------------
