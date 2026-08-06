@@ -184,10 +184,14 @@ def test_a_pooled_template_is_outside_the_class_not_in_breach_of_it():
     assert row["bitwise_identical"] is False
     assert "pooled variables" in row["excluded_because"]
     assert row["repeats_deterministically"] is True
+    # RFC-061's bridge: the formulas are still in the class, and the pack
+    # records that rather than leaving the row looking like a gap.
+    assert row["bitwise_on_one_modelpoint"] is True
     assert row["executors"] == ["vectorized"]
     assert section.content["n_in_class"] == 0
     assert section.content["n_outside_class"] == 1
-    assert "outside the equivalence class by construction" in section.summary
+    assert "outside it by construction" in section.summary
+    assert "block of one" in section.summary
 
 
 def test_a_template_that_cannot_run_is_reported_as_not_run():

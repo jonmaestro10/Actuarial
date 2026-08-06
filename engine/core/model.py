@@ -173,7 +173,13 @@ class Model:
         per time step over a whole block.
 
         A block is never chunked when it has pooled variables, so this
-        always sees the entire population — see engine/core/vector.py.
+        always sees the entire population — see engine/core/vector.py. The
+        other way of seeing less than the population is to be evaluated one
+        policy at a time, where ``values`` arrives as a scalar and this
+        returns it unchanged: a pool of one. That is correct for a block of
+        one and wrong for anything larger, so it is the *runner* that
+        refuses rather than this reduction that guesses — see
+        :func:`engine.core.runner.check_per_policy` and RFC-061.
         """
         import numpy as np
 

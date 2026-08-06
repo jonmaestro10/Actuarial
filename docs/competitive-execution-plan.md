@@ -28,6 +28,24 @@ them; the acceptance criteria assume them.
    New executors (B1) join that equivalence class; new templates (C-items)
    must pass it; nothing may weaken it to a tolerance. If an operation cannot
    be made bitwise-reproducible, replace the operation, not the guarantee.
+
+   **Amended by RFC-061 — there are two classes, not one.** A template
+   declaring `@pool` variables (or setting `couples_model_points`) reduces
+   across the model-point axis, and the interpreted executor evaluates one
+   policy at a time, so it cannot make that reduction: `GroupLife` and
+   `WithProfitsEndowment` are outside the per-policy class *by
+   construction*, not in breach of it. The interpreted executor now refuses
+   such a block rather than returning a pool of one, and the invariant reads:
+
+   - **per-policy class** — interpreted ≡ vectorized ≡ (B1) compiled,
+     bitwise, for every template that does not couple its model points;
+   - **block class** — for pooled and coupling templates: vectorized ≡ (B1)
+     compiled bitwise, plus chunk-invariance, run-to-run determinism, and a
+     *single-model-point bridge* into the per-policy class, where a pool of
+     one is the same reduction either way and both executors agree bitwise.
+
+   Nothing is weakened to a tolerance. B1's acceptance criterion is read
+   against whichever class a template belongs to.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
@@ -215,7 +233,9 @@ was left unstarted rather than begun badly; F1 (whose dependency A1 was
 already met) was taken next, per §10's own note that B2 does not require B1.
 
 **Accept:** every template in `engine/library/` bitwise-identical across
-interpreted / vectorized / compiled; `scripts/benchmark_compiled.py` extends
+interpreted / vectorized / compiled — read against §1.2's two classes, so
+for the two pooled templates the target is vectorized ≡ compiled plus the
+single-point bridge (RFC-061); `scripts/benchmark_compiled.py` extends
 the benchmark family; target ≥5× over the vectorized executor on the
 100k × 60y benchmark, actual numbers published in the RFC (per PLAN:
 marketing = engineering). If any op resists bitwise reproduction under Numba,
@@ -467,8 +487,9 @@ why it is what it is. No incumbent offers an exact-arithmetic mode at all.
 
 ### F4 — The findings catalogue (RFC-052) — effort S
 The sharp-edge findings (counterparty band cliff, interest-SCR duration
-matching, AoS ordering dependence, LDTI vs IFRS 17 timing) are currently
-scattered through RFCs. Collect them: `docs/findings/` with one page per
+matching, AoS ordering dependence, LDTI vs IFRS 17 timing, and RFC-061's
+pool of one — a pooled model run per policy returned plausible numbers in
+which every policy's pool was itself) are currently scattered through RFCs. Collect them: `docs/findings/` with one page per
 finding, each backed by a runnable script under `scripts/findings/` asserted
 in CI — a demonstrable audit-and-review capability, per landscape §4.4, and
 sales collateral that is also a regression suite.

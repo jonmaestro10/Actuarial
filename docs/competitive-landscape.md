@@ -22,7 +22,9 @@ competitive with, and in several respects ahead of, what the incumbents offer:
   proprietary IDE.
 - **Validation rigour exceeds industry practice.** 1,326 test functions across
   55 files; closed-form golden tests; two executors (interpreted and
-  vectorized) required to agree **bitwise** on every template; a 408,000-rate
+  vectorized) required to agree **bitwise** on every template that does not
+  pool across model points, and a stated second class of claims for the two
+  that do (RFC-061); a 408,000-rate
   bitwise parity harness against the validated VPLA implementation; a
   content-addressed run registry that refuses a determinism failure. No
   incumbent ships anything like this level of machine-checked accuracy

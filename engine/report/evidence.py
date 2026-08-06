@@ -247,12 +247,25 @@ def executor_equivalence(specimens: Iterable[Mapping[str, Any]] | None = None,
                 failure = f"{executor}: {type(exc).__name__}: {exc}"
                 break
             digests[executor] = record.results_digest
-        # A single-executor template gets the weaker claim it can support:
-        # the same question asked twice gets the same answer.
+        # A single-executor template gets the two weaker claims it can
+        # support: the same question asked twice gets the same answer, and
+        # the *formulas* still meet the full invariant on a block of one,
+        # where a pool of one is the same reduction either way (RFC-061).
         repeated = None
+        single_point = None
         if failure is None and len(applicable) == 1:
             _, again = record_run(**specimen, executor=applicable[0])
             repeated = again.results_digest == digests[applicable[0]]
+            one = {**specimen, "modelpoints": list(specimen["modelpoints"])[:1]}
+            try:
+                bridge = {
+                    e: record_run(**one, executor=e)[1].results_digest
+                    for e in executors
+                }
+                single_point = len(set(bridge.values())) == 1
+            except Exception as exc:  # pragma: no cover - defensive
+                single_point = False
+                failure = f"single-point bridge: {type(exc).__name__}: {exc}"
         agreed = (failure is None and len(applicable) > 1
                   and len(set(digests.values())) == 1)
         entries.append({
@@ -268,6 +281,7 @@ def executor_equivalence(specimens: Iterable[Mapping[str, Any]] | None = None,
             "in_equivalence_class": len(applicable) > 1,
             "excluded_because": excluded,
             "repeats_deterministically": repeated,
+            "bitwise_on_one_modelpoint": single_point,
             "error": failure,
         })
     entries.sort(key=lambda row: row["template"])
@@ -278,8 +292,9 @@ def executor_equivalence(specimens: Iterable[Mapping[str, Any]] | None = None,
         "equivalence", "Executor equivalence",
         f"{agreed} of {len(in_class)} templates bitwise-identical across "
         f"{', '.join(executors)}"
-        + (f"; {outside} outside the equivalence class by construction "
-           f"(pooled or coupled), each run twice for determinism instead."
+        + (f"; {outside} outside it by construction (pooled or coupled), "
+           f"each held instead to determinism and to the same invariant on a "
+           f"block of one, where the reduction is the same either way."
            if outside else "."),
         {"available": True, "executors": list(executors),
          "n_templates": len(entries), "n_in_class": len(in_class),
@@ -560,6 +575,10 @@ def _render(entry: Section) -> list[str]:
                     f"n/a — {row['excluded_because']}; repeat run "
                     + ("identical" if row["repeats_deterministically"]
                        else "**DIFFERED**")
+                    + "; one model point "
+                    + ("bitwise across both executors"
+                       if row.get("bitwise_on_one_modelpoint")
+                       else "**NOT bitwise**")
                 )
             if row.get("error"):
                 # A template that could not be run is not a template that
