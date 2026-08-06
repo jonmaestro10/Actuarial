@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,174
+   naive implementation otherwise. The suite (`pytest`, currently 2,193
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -804,8 +804,7 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: **E5 — teach the request schema to
-carry an assumption object** (see below) or C4 (§10, US health / LTC,
+*Next action for the implementing agent: C4 (§10, US health / LTC,
 RFC-042) — `engine/library/long_term_care.py` on the
 multi-state engine, with `engine/library/income_protection.py` as the
 pattern. Two things C3 leaves on the record. First, the executor
@@ -833,12 +832,26 @@ RFC-045, RFC-046) — milestone M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) �
 milestone M4 — C1, C2, C3 (RFC-039, RFC-040, RFC-041) and F2 (RFC-050),
 with VM-22's remediation V1–V4 (RFC-062, RFC-063).
 
-**The one item this run identified and did not build.** Eight of sixteen
-templates are unavailable through the API and therefore invisible to the
-evidence pack's specimen set, every one because the RFC-032 request schema
-carries scalars and a mortality table and cannot express an assumption
-*object* — a `ValuationBasis`, a `TransitionMatrix`, a bound scenario set —
-nor a `datetime.date` on a model point. That is now the largest single gap
-in the pack's coverage, it grows with every basis-chassis template (C3 added
-two; C4 will add another), and it is a schema item rather than a library
-one. It belongs in workstream E.*
+**One unplanned item, identified and built this run: E5 (RFC-066).** C3
+added two templates that could carry no worked example, taking the count to
+eight of sixteen unavailable over HTTP and therefore invisible to the
+evidence pack's specimen set. The request schema now takes a `kind` and
+carries a `ValuationBasis` — and two of them, for the swap — with ISO-8601
+dates coerced at the HTTP boundary rather than inside `from_dicts`. Eleven
+specimens, up from eight. What remains out of scope is now one category
+rather than two: a bound scenario set (three templates), a
+`TransitionMatrix`, and an index-crediting rule. **C4 will hit the
+`TransitionMatrix` half of that** — `IncomeProtection` is already there for
+the same reason — so it is worth deciding before C4 starts whether the
+multi-state assumption object gets the same treatment.*
+
+### E5 — Assumption objects in the request schema (RFC-066) — effort S — **done**
+Unplanned, and raised by C3. The RFC-032 request schema carried scalars and
+a flat mortality table, which kept the whole `ValuationBasis` chassis — half
+the catalogue — off the API and out of the evidence pack's specimen set.
+`assumptions` is now a discriminated union on `kind`, defaulting to
+`"scalar"` so no existing request changes meaning; that default is asserted
+by fingerprint rather than by type, because a silent revaluation is what it
+exists to prevent. Dates are coerced at the HTTP boundary on an exact
+ISO-8601 match, and a string in that shape which is not a valid date is
+refused rather than passed through.

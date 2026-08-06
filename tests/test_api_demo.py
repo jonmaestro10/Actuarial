@@ -18,9 +18,16 @@ import pytest
 fastapi = pytest.importorskip("fastapi", reason="needs the [api] extra")
 from fastapi.testclient import TestClient  # noqa: E402
 
+from datetime import date  # noqa: E402
+
 from engine.api.catalogue import (  # noqa: E402
-    InvalidRequestError, build_run, builder, catalogue,
+    ASSUMPTION_KINDS, InvalidRequestError, build_assumptions, build_run,
+    builder, catalogue, coerce_dates,
 )
+from engine.core.timeaxis import TimeAxis  # noqa: E402
+from engine.data.assumptions import Assumptions  # noqa: E402
+from engine.data.basis import ValuationBasis  # noqa: E402
+from engine.library.longevity_swap import LongevitySwapBasis  # noqa: E402
 from engine.api.examples import (  # noqa: E402
     EXAMPLES, UNAVAILABLE, example, unavailable,
 )
@@ -486,3 +493,118 @@ def test_the_page_asks_for_nothing_it_cannot_be_given(client):
         shape = re.sub(r"\{[^}]*\}", "{}", pattern)
         assert any(re.sub(r"\{[^}]*\}", "{}", route) == shape
                    for route in routes), f"{path} is not a route"
+
+
+# --------------------------------------------------------------------------
+# The assumption object, and the dates that go with it
+# --------------------------------------------------------------------------
+
+def test_a_request_with_no_kind_still_means_exactly_what_it_meant():
+    """The load-bearing default. Every request written before the other
+    kinds existed omits `kind`, and a request that quietly got a different
+    basis than it did last week would be a silent revaluation — which is the
+    one failure this layer exists to prevent.
+
+    Asserted by building the same specimen with and without the key and
+    requiring the same fingerprint, not merely the same type."""
+    from engine.core.fingerprint import fingerprint
+
+    spec = EXAMPLES["TermLife"]["request"]["assumptions"]
+    implied = build_assumptions(spec)
+    explicit = build_assumptions({**spec, "kind": "scalar"})
+    assert isinstance(implied, Assumptions)
+    assert fingerprint(implied) == fingerprint(explicit)
+
+
+def test_a_valuation_basis_arrives_as_a_valuation_basis():
+    """The half of the catalogue that had no way in. A mortality basis and a
+    yield curve, from JSON, with the sex-keyed rate layout a published table
+    comes in."""
+    basis = build_assumptions(
+        EXAMPLES["PayoutAnnuity"]["request"]["assumptions"])
+    assert isinstance(basis, ValuationBasis)
+    assert basis.freq == 1
+    assert basis.mortality.year_start == 2014
+
+
+def test_the_swap_gets_two_bases_and_they_are_not_the_same_one():
+    """Two legs, two survival schedules — the whole content of the contract.
+    A schema that built one basis and used it twice would produce a swap
+    that settles at zero in every period and looks like it works."""
+    terms = build_assumptions(
+        EXAMPLES["LongevitySwap"]["request"]["assumptions"])
+    assert isinstance(terms, LongevitySwapBasis)
+    axis = TimeAxis(terms.freq, 40, date(2021, 1, 1))
+    projected = terms.projection.survival(axis, [date(1956, 1, 1)], ["M"])
+    contracted = terms.fixed.survival(axis, [date(1956, 1, 1)], ["M"])
+    assert contracted[0][20] > projected[0][20]     # the heavier scale
+
+
+def test_an_iso_date_becomes_a_date_and_nothing_else_is_touched():
+    """JSON has no date. The coercion is exact-match and lives at the HTTP
+    boundary, not inside `from_dicts`, which has callers passing real date
+    objects and should not start guessing at strings for them."""
+    rows = coerce_dates([{"id": "A1", "dob": "1956-01-01", "sex": "M",
+                          "note": "born 1956-01-01 in Leeds",
+                          "term": "10", "init_lives": 1.0}])
+    assert rows[0]["dob"] == date(1956, 1, 1)
+    assert rows[0]["sex"] == "M"                    # not a date, untouched
+    assert rows[0]["term"] == "10"                  # a numeric string stays
+    assert rows[0]["note"] == "born 1956-01-01 in Leeds"   # not an exact match
+    assert rows[0]["init_lives"] == 1.0
+
+
+def test_a_string_shaped_like_a_date_that_is_not_one_is_refused():
+    """A caller who wrote `2021-13-01` meant a date. Leaving it as a string
+    would hand it to a projection that asks it for a year, which is the
+    failure the coercion exists to remove."""
+    with pytest.raises(InvalidRequestError, match="shaped like a date"):
+        coerce_dates([{"id": "A1", "valuation": "2021-13-01"}])
+
+
+def test_an_unknown_assumption_kind_is_refused():
+    with pytest.raises(InvalidRequestError, match="assumptions.kind"):
+        build_assumptions({"kind": "vibes", "mortality": 0.01})
+    assert set(ASSUMPTION_KINDS) == {"scalar", "valuation_basis",
+                                     "longevity_swap_basis"}
+
+
+def test_a_basis_missing_half_of_itself_is_refused():
+    """A mortality basis and a discount curve, and neither stands in for the
+    other. Defaulting the missing half would be inventing an assumption."""
+    good = EXAMPLES["PayoutAnnuity"]["request"]["assumptions"]
+    for absent in ("mortality", "curve"):
+        spec = {k: v for k, v in good.items() if k != absent}
+        with pytest.raises(InvalidRequestError, match="needs both"):
+            build_assumptions(spec)
+
+
+def test_a_mortality_basis_without_its_year_is_refused():
+    """A generational basis whose rates are not dated means something
+    different every year it is used, and nothing downstream would say so."""
+    good = EXAMPLES["PayoutAnnuity"]["request"]["assumptions"]
+    rates = {k: v for k, v in good["mortality"].items() if k != "year_start"}
+    with pytest.raises(InvalidRequestError, match="year_start"):
+        build_assumptions({**good, "mortality": rates})
+
+
+def test_a_swap_with_one_leg_is_refused():
+    """Both legs or neither. One leg silently reused as the other is a swap
+    that settles at zero forever."""
+    good = EXAMPLES["LongevitySwap"]["request"]["assumptions"]
+    with pytest.raises(InvalidRequestError, match="two legs"):
+        build_assumptions({k: v for k, v in good.items() if k != "fixed"})
+
+
+def test_the_remaining_unavailable_templates_all_want_the_same_thing():
+    """What is left out is now one category rather than two: a bound
+    scenario set or a multi-state transition matrix. The valuation-basis
+    half of the old limit is closed, and this asserts the list shrank rather
+    than the reasons being reworded."""
+    assert set(UNAVAILABLE) == {
+        "IncomeProtection", "FixedIndexedAnnuity", "UnitLinkedGMDB",
+        "UnitLinkedGMxB", "VariablePayoutAnnuity",
+    }
+    for name in ("PayoutAnnuity", "PensionBuyout", "LongevitySwap"):
+        assert name in EXAMPLES and name not in UNAVAILABLE
+    assert len(EXAMPLES) == 11 and len(catalogue()) == 16
