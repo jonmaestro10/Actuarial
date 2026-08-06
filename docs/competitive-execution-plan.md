@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 1,997
+   naive implementation otherwise. The suite (`pytest`, currently 2,024
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -87,7 +87,7 @@ what any incumbent ships rather than merely reaching parity.
 | Governance: RBAC, approvals | 🟡 token auth + four roles (D1, RFC-043) and digest-bound 4-eyes approval (D2, RFC-044) shipped | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
 | Production run operations | 🟡 digest-chained audit log + declarative run calendar shipped (D3, RFC-045) | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
 | Results warehouse | ✅ star schema in partitioned Parquet with the run fingerprint on every fact row (E1, RFC-046) | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
-| Excel integration | 🟡 audit workbook writer shipped (E2, RFC-047); ❌ live add-in (E4) | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet — and state, in the workbook, the precision the format costs, which no vendor's does | E2 |
+| Excel integration | ✅ audit workbook writer (E2, RFC-047) and live add-in (E4, RFC-056) shipped | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet — and state, in the workbook, the precision the format costs, which no vendor's does | E2 |
 | Production UI | ✅ runs list, seriatim drill-down, semantic assumption diff, artifact and evidence views shipped (E3, RFC-048) | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have — plus a diff that names the component that moved, and URLs that are citations because the run id is a content digest | E3 |
 | VM-22 | ❌ | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit | C1 |
 | US statutory formulaic reserves + AAT | ❌ | CRVM/net-premium + asset adequacy runner | Same | C2 |
@@ -471,7 +471,7 @@ tool over E1's warehouse rather than a charting product built here
 populates the moment there is a run rather than waiting to be found
 (§7.3.5).
 
-### E4 — The live Excel add-in (RFC-056) — effort M
+### E4 — The live Excel add-in (RFC-056) — effort M — **shipped**
 The tool actuaries will never give up, made a first-class client of the API
 (PLAN §6's "Excel add-in (later)" — now). **Build:** `engine/excel/addin.py`
 on xlwings, behind the same `[excel]` extra: submit a run from a sheet
@@ -487,7 +487,23 @@ polling and stamping logic against a test API instance without requiring a
 running Excel (xlwings mocked at the boundary); a manual smoke procedure
 against real Excel is documented in the RFC.
 
-**Milestone M4:** E2 + E3 + E4.
+**Shipped with a finding (RFC-056).** The failure a live sheet makes easy
+is not a stale stamp but a *partially* stale block: refresh a 40-period
+pull with a 10-period one and rows 12–42 of the old run stay where they
+were, under the new run's heading and below the new run's fingerprint, with
+nothing on screen to show it. So a block records its own extent in its own
+stamp, and a write clears the extent the sheet says the previous block
+occupied — driven by what is in the workbook, not by what the process
+remembers, so it survives closing Excel and refreshing from another
+machine. An unreadable extent stops rather than guessing a rectangle to
+clear. The add-in imports no executor, no template and no assumption
+object — asserted by a test over its own source — so a number it wrote came
+from a registered run because there is nowhere else it could have come
+from; and the transport is `urllib`, so `[excel]` gains no client
+dependency beyond xlwings itself.
+
+**Milestone M4 — "meeting actuaries where they are":** E2 + E3 + E4 —
+**shipped** (RFC-047, RFC-048, RFC-056).
 
 ---
 
@@ -655,15 +671,16 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: E4 (§7, the live Excel add-in,
-RFC-056) is the next item in sequence and closes milestone M4 — both its
-dependencies are shipped, E2 for the stamping and formatting code it
-reuses and D1 for the token auth it authenticates with; note that its
-acceptance criterion mocks xlwings at the boundary, so it needs no Excel to
-be tested and does need a documented manual smoke procedure. B1 (§4)
+*Next action for the implementing agent: §10's path now runs into
+workstream C, and C1 (§5, VM-22, RFC-039) is the next item — it is also the
+most time-sensitive item on the plan, since VM-22 is effective for 2026
+valuations, and §10 already licenses pulling it forward. It builds on the
+CTE machinery in `engine/report/pbr.py` and pairs with the FIA and
+payout-annuity templates already in the library; per the workstream's
+standing habit it ships with one documented sharp-edge finding. B1 (§4)
 remains unstarted and carries a written assessment of why — read it before
 picking the item up, and expect an array-expression compiler rather than a
 wrapper. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) —
 milestone M1 — F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045,
-RFC-046) — milestone M3 — and E2 (RFC-047) and E3 (RFC-048), two thirds of
-M4.*
+RFC-046) — milestone M3 — and E2, E3, E4 (RFC-047, RFC-048, RFC-056) —
+milestone M4.*
