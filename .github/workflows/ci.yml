@@ -10,7 +10,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12"]
+        # 3.13 measured green on the full suite against numpy 2.5.1 before
+        # being added here. 3.14 is *not* ready and the blocker is one
+        # package: pydantic calls `typing._eval_type(..., prefer_fwd_module=)`,
+        # which 3.14 removed under PEP 649/749, so every module importing the
+        # API layer fails at collection. The engine itself already passes on
+        # 3.14 — 2,023 tests, no numerical difference — which is §1.4's
+        # NumPy-only rule for engine/core|data|library|report doing its job.
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
