@@ -66,7 +66,7 @@ what any incumbent ships rather than merely reaching parity.
 | Incumbent migration tooling | 🟡 M1 shipped: parity core (A1, RFC-033), Prophet readers (A2, RFC-034), scaffold (A4, RFC-036); MoSes readers (A3) on pilot demand | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
 | Compiled kernels | ❌ | Numba forward-loop kernels | Compiled executor joins the **bitwise** equivalence class — incumbents compile but never prove equivalence | B1 |
 | Cross-machine scale-out | 🟡 one machine | Multi-machine dispatch | Bitwise-identical results regardless of grid topology, verified by the registry | B2 |
-| Governance: RBAC, approvals | 🟡 token auth + four roles shipped (D1, RFC-043); approvals (D2) outstanding | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
+| Governance: RBAC, approvals | 🟡 token auth + four roles (D1, RFC-043) and digest-bound 4-eyes approval (D2, RFC-044) shipped | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
 | Production run operations | ❌ | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
 | Results warehouse | ❌ | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
 | Excel integration | ❌ | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet | E2 |
@@ -363,7 +363,7 @@ route gains a role requirement; `tests/test_auth.py` exercises allowed and
 denied per role. Unauthenticated mode remains the default for library/local
 use — auth activates when a principals file is configured.
 
-### D2 — Assumption approval, 4-eyes (RFC-044) — effort M
+### D2 — Assumption approval, 4-eyes (RFC-044) — effort M — **shipped**
 `engine/core/approvals.py` + API routes. An approval is a content-addressed
 record `(assumption digest, approver, timestamp, note)` in the registry.
 A run submitted in **approved mode** refuses any assumption set whose digest
@@ -599,6 +599,6 @@ order unless there is a concrete reason not to.
 *Next action for the implementing agent: B1 (§4) is unstarted and carries a
 written assessment of why — read it before picking the item up, and expect an
 array-expression compiler rather than a wrapper. Everything else on §10's
-path is open; D2 (§6) is the next item in sequence. Shipped so far: A1
-(RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 — F1 (RFC-049) and D1
-(RFC-043).*
+path is open; D3 (§6) is the next item in sequence. Shipped so far: A1
+(RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 — F1 (RFC-049), D1
+(RFC-043) and D2 (RFC-044).*
