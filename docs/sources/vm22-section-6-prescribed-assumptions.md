@@ -81,10 +81,10 @@ none of this is a reserve floor at year-end 2026, and that is a real reason
 to sequence it behind reserve arithmetic. It is *not* a reason to call the
 question closed, and conflating the two is the error this file corrects.
 
-## Two of the eleven are now carried
+## Five of the eleven are now carried
 
-`engine/report/vm22_prescribed.py` (RFC-067) carries **Table 6.1** and
-**Table 6.7**, both transcribed from the primary text above and checked
+`engine/report/vm22_prescribed.py` (RFC-067) carries **Tables 6.1, 6.2, 6.3,
+6.7 and 6.8**, all transcribed from the primary text above and checked
 against it, together with §6.C.2's expense rule and §6.C.8.i's mortality
 formula. `tests/test_vm22_prescribed.py` asserts the values against the text
 rather than against the module's own constants.
@@ -92,9 +92,12 @@ rather than against the module's own constants.
 Both bracketed figures are carried as `Provisional`, which is the mechanism
 this file's earlier note said the dated-set pattern lacked.
 
-**The other nine are still recorded and not carried**, and `fx_factor`
+**The remaining six are still recorded and not carried**, and `fx_factor`
 refuses a category whose table is absent rather than serving the one that is
-present. The reason is transcription risk, not effort: each table needs
+present. Those six each carry a *second* dimension — an age band crossed with
+a surrender-charge duration, or a contract-year band crossed with sex — and a
+table whose second dimension is read wrongly is a plausible number in every
+cell rather than an obviously missing one. The reason is transcription risk, not effort: each table needs
 reading against the primary text before it is worth having, and a
 mis-transcribed prescribed factor is worse than an absent one because it
 looks authoritative.

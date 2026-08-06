@@ -93,15 +93,41 @@ expected to live longer, so the with-benefit factor is at or below the
 without-benefit one at every age and for both sexes. That catches a
 transcription slip which swapped two columns, where the age-shape would not.
 
-## Two of eleven, and a refusal rather than a fallback
+## Five of eleven, and a refusal rather than a fallback
 
-**Carried:** Table 6.1 (base maintenance expense) and Table 6.7 (*F<sub>x</sub>*
-for the Accumulation Reserving Category), both transcribed from the primary
-text and checked against it.
+**Carried**, all transcribed from the primary text and checked against it:
+Table 6.1 (base maintenance expense), Table 6.7 (*F<sub>x</sub>*,
+Accumulation), Table 6.8 (*F<sub>x</sub>*, Payout Annuity), and Tables 6.2
+and 6.3 (partial withdrawals, qualified and non-qualified).
 
-**Not carried:** the other nine — partial withdrawals qualified and
-non-qualified, three sets of base lapse rates, and four further *F<sub>x</sub>*
-sets for payout annuities and structured settlements.
+**Not carried:** the remaining six — three sets of base lapse rates keyed by
+years before or after surrender-charge expiry, and three *F<sub>x</sub>* sets
+for structured settlements. Each of those carries a **second dimension** —
+an age band crossed with a surrender-charge duration, or a contract-year band
+crossed with sex — and a table whose second dimension is read wrongly is a
+plausible number in every cell rather than an obviously missing one. They
+need a read of their own.
+
+### What Tables 6.2 and 6.3 turned out to be
+
+Two tables rather than one with an adjustment, and the numbers say why. The
+qualified rates grade 1.65% → 6.30% with attained age; the non-qualified ones
+sit at **1.60% at every age** without a guaranteed living benefit. Required
+minimum distributions drive withdrawals on qualified money and there is no
+equivalent pressure on non-qualified. A module applying one table with a
+factor would look reasonable and be wrong at every age above 65.
+
+The bands are the text's own — "59 and under", "60 – 64" — so 59 and 60 take
+different rates and **nothing interpolates between them**. Interpolating
+would produce a rate the text does not contain at every age between the band
+edges, which is the tempting smoothing and precisely what a prescribed table
+exists to prevent.
+
+Table 6.8 has the same early-sixties trough as 6.7 — 103% female and 95% male
+at 62 — and is **not split by guaranteed living benefit**, so asking for a
+split it does not have is refused rather than answered from the accumulation
+table. That is the wrong-section failure one level down from the category
+refusal.
 
 `fx_factor` **refuses** a category whose table is absent rather than falling
 back to the one that is present. A mortality factor from the wrong category

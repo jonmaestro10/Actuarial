@@ -194,7 +194,7 @@ FX_MIN_AGE, FX_MAX_AGE = 50, 105
 #: Which Reserving Categories have an *F*\ :sub:`x` table carried here.
 #: §6.C.8 gives five; two of the five belong to structured settlements and
 #: are not transcribed, nor is the payout-annuity set.
-FX_CATEGORIES_CARRIED = ("accumulation",)
+FX_CATEGORIES_CARRIED = ("accumulation", "payout_annuity")
 
 #: The categories §6.C.8 covers, including the ones not carried — so a
 #: refusal can tell a caller whether they asked for something that exists.
@@ -369,9 +369,21 @@ def fx_factor(age, sex: str, *, category: str = "accumulation",
         raise PrescribedError(
             f"Table 6.7 is quoted by sex; {sex!r} is not 'M' or 'F'"
         )
-    column = {("F", False): 1, ("M", False): 2,
-              ("F", True): 3, ("M", True): 4}[(sex, guaranteed_living_benefit)]
-    table = np.array(_FX_ACCUMULATION, dtype=np.float64)
+    if category == "payout_annuity":
+        if guaranteed_living_benefit:
+            raise PrescribedError(
+                "Table 6.8 is not split by guaranteed living benefit; §6.C.8 "
+                "gives one pair of columns for the Payout Annuity Reserving "
+                "Category, and asking for a split it does not have would be "
+                "answered from the accumulation table"
+            )
+        table = np.array(_FX_PAYOUT, dtype=np.float64)
+        column = 1 if sex == "F" else 2
+    else:
+        column = {("F", False): 1, ("M", False): 2,
+                  ("F", True): 3,
+                  ("M", True): 4}[(sex, guaranteed_living_benefit)]
+        table = np.array(_FX_ACCUMULATION, dtype=np.float64)
     ages = np.clip(np.asarray(age), FX_MIN_AGE, FX_MAX_AGE)
     factors = np.where(ages >= FX_MAX_AGE, 1.0,
                        np.interp(ages, table[:, 0], table[:, column]))
@@ -404,3 +416,114 @@ def prescribed_mortality_rate(q_2012, g2, fx, n: int):
             "a value outside that would make (1 − G2)^n change sign or grow"
         )
     return q * (1.0 - scale) ** n * np.asarray(fx, dtype=np.float64)
+
+
+#: Table 6.8, §6.C.8.ii: *F*\\ :sub:`x` for individual annuities in the Payout
+#: Annuity Reserving Category, other than structured settlements.
+#: ``(attained age, female, male)``. Same floor and cap as Table 6.7.
+_FX_PAYOUT = (
+    (50, 1.2500, 1.0000),
+    (51, 1.2500, 1.0000),
+    (52, 1.2500, 1.0000),
+    (53, 1.2500, 1.0000),
+    (54, 1.2500, 1.0000),
+    (55, 1.2500, 1.0000),
+    (56, 1.2500, 1.0000),
+    (57, 1.2500, 1.0000),
+    (58, 1.2060, 0.9900),
+    (59, 1.1620, 0.9800),
+    (60, 1.1180, 0.9700),
+    (61, 1.0740, 0.9600),
+    (62, 1.0300, 0.9500),
+    (63, 1.0100, 0.9540),
+    (64, 0.9900, 0.9580),
+    (65, 0.9700, 0.9620),
+    (66, 0.9500, 0.9660),
+    (67, 0.9300, 0.9700),
+    (68, 0.9440, 0.9860),
+    (69, 0.9580, 1.0020),
+    (70, 0.9720, 1.0180),
+    (71, 0.9860, 1.0340),
+    (72, 1.0000, 1.0500),
+    (73, 1.0160, 1.0700),
+    (74, 1.0320, 1.0900),
+    (75, 1.0480, 1.1100),
+    (76, 1.0640, 1.1300),
+    (77, 1.0800, 1.1500),
+    (78, 1.0800, 1.1600),
+    (79, 1.0800, 1.1700),
+    (80, 1.0800, 1.1800),
+    (81, 1.0800, 1.1900),
+    (82, 1.0800, 1.2000),
+    (83, 1.0800, 1.2000),
+    (84, 1.0800, 1.2000),
+    (85, 1.0800, 1.2000),
+    (86, 1.0800, 1.2000),
+    (87, 1.0800, 1.2000),
+    (88, 1.0900, 1.1900),
+    (89, 1.1000, 1.1800),
+    (90, 1.1100, 1.1700),
+    (91, 1.1200, 1.1600),
+    (92, 1.1300, 1.1500),
+    (93, 1.1300, 1.1500),
+    (94, 1.1300, 1.1500),
+    (95, 1.1300, 1.1500),
+    (96, 1.1300, 1.1500),
+    (97, 1.1300, 1.1500),
+    (98, 1.1140, 1.1300),
+    (99, 1.0980, 1.1100),
+    (100, 1.0820, 1.0900),
+    (101, 1.0660, 1.0700),
+    (102, 1.0500, 1.0500),
+    (103, 1.0330, 1.0330),
+    (104, 1.0170, 1.0170),
+)
+
+#: §6.C.4, Tables 6.2 and 6.3: prescribed partial withdrawal rates for
+#: Accumulation Reserving Category contracts, by attained-age band and by
+#: whether the contract has a guaranteed living benefit not yet exercised.
+#: The bands are the text's own — "59 and under", "60 – 64", … "80 and
+#: over" — recorded as their lower bound.
+PARTIAL_WITHDRAWAL_BANDS = (0, 60, 65, 70, 75, 80)
+
+_PARTIAL_WITHDRAWALS = {
+    # (qualified, without GLB / with GLB prior to exercising)
+    "qualified": ((0.0165, 0.0095), (0.0210, 0.0115), (0.0235, 0.0140),
+                  (0.0395, 0.0270), (0.0480, 0.0430), (0.0630, 0.0580)),
+    "non_qualified": ((0.0160, 0.0115), (0.0160, 0.0115), (0.0160, 0.0115),
+                      (0.0160, 0.0165), (0.0160, 0.0165), (0.0160, 0.0165)),
+}
+
+#: Which tax treatments §6.C.4 gives a table for.
+WITHDRAWAL_TREATMENTS = tuple(_PARTIAL_WITHDRAWALS)
+
+
+def partial_withdrawal_rate(age, *, qualified: bool,
+                            guaranteed_living_benefit: bool = False):
+    """§6.C.4, Tables 6.2 and 6.3: the prescribed partial withdrawal rate.
+
+    Banded by attained age, and the bands are the text's rather than a
+    smoothing of it — "59 and under" is a step, not the start of a gradient,
+    so a life aged 59 and one aged 60 take different rates and nothing here
+    interpolates between them. Interpolating would produce a rate the text
+    does not contain, at every age between the band edges.
+
+    The **qualified** table grades with age and the **non-qualified** one
+    barely moves: 1.60% at every age without a guaranteed living benefit,
+    and two values with one. That is the tax treatment showing through —
+    required minimum distributions drive withdrawals on qualified money and
+    there is no equivalent pressure on non-qualified — and it is why the two
+    are separate tables rather than one with an adjustment.
+    """
+    table = _PARTIAL_WITHDRAWALS["qualified" if qualified
+                                 else "non_qualified"]
+    ages = np.atleast_1d(np.asarray(age))
+    if np.any(ages < 0):
+        raise PrescribedError("attained age is not negative")
+    column = 1 if guaranteed_living_benefit else 0
+    edges = np.asarray(PARTIAL_WITHDRAWAL_BANDS)
+    index = np.clip(np.searchsorted(edges, ages, side="right") - 1,
+                    0, len(edges) - 1)
+    rates = np.array([row[column] for row in table], dtype=np.float64)
+    out = rates[index]
+    return out if np.ndim(age) else float(out[0])

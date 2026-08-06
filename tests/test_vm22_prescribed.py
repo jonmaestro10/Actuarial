@@ -36,6 +36,7 @@ from engine.report.vm22_prescribed import (
     Provisional,
     fx_factor,
     maintenance_expense,
+    partial_withdrawal_rate,
     prescribed_mortality_rate,
 )
 
@@ -258,7 +259,6 @@ def test_a_category_whose_table_is_not_carried_is_refused():
     it for a payout annuity would be a plausible number from the wrong
     section, which nothing downstream would question — and that is exactly
     how this chapter produced eight errors before anyone read it."""
-    assert FX_CATEGORIES_CARRIED == ("accumulation",)
     assert set(FX_CATEGORIES_CARRIED) < set(FX_CATEGORIES)
 
     for absent in set(FX_CATEGORIES) - set(FX_CATEGORIES_CARRIED):
@@ -337,3 +337,104 @@ def test_the_dated_set_says_what_it_carries_and_what_it_does_not():
     assert "nine" in text and "not" in text
     assert "provisional" in text
     assert VM22_PRESCRIBED_2026.label.startswith("VM-22 §6.C")
+
+
+# --------------------------------------------------------------------------
+# Tables 6.2, 6.3 and 6.8 — three more of the eleven
+# --------------------------------------------------------------------------
+
+def test_the_payout_annuity_factors_are_table_6_8():
+    """§6.C.8.ii. Spot values read from the primary text: 125%/100% at the
+    young ages, and the same trough in the early sixties Table 6.7 has —
+    103% female and 95% male at 62."""
+    assert fx_factor(50, "F", category="payout_annuity") \
+        == pytest.approx(1.25)
+    assert fx_factor(50, "M", category="payout_annuity") \
+        == pytest.approx(1.00)
+    assert fx_factor(62, "F", category="payout_annuity") \
+        == pytest.approx(1.03)
+    assert fx_factor(62, "M", category="payout_annuity") \
+        == pytest.approx(0.95)
+    assert fx_factor(110, "M", category="payout_annuity") == pytest.approx(1.0)
+
+
+def test_the_payout_table_is_not_split_by_guaranteed_living_benefit():
+    """§6.C.8 gives Table 6.8 one pair of columns. Asking for a split it
+    does not have would otherwise be answered from the accumulation table —
+    which is the same wrong-section failure the category refusal exists for,
+    one level down."""
+    with pytest.raises(PrescribedError, match="not split by guaranteed"):
+        fx_factor(62, "F", category="payout_annuity",
+                  guaranteed_living_benefit=True)
+
+
+def test_the_two_carried_factor_sets_are_different_tables():
+    """A regression against the obvious implementation slip: serving one
+    table for both categories. They agree nowhere useful — 125% against
+    150% for a female at 50 — so a single wrong lookup shows up here."""
+    assert fx_factor(50, "F") != pytest.approx(
+        fx_factor(50, "F", category="payout_annuity"))
+    assert set(FX_CATEGORIES_CARRIED) == {"accumulation", "payout_annuity"}
+    still_absent = set(FX_CATEGORIES) - set(FX_CATEGORIES_CARRIED)
+    assert still_absent == {"structured_settlement_standard",
+                            "structured_settlement_substandard"}
+    for absent in still_absent:
+        with pytest.raises(PrescribedError, match="not transcribed here"):
+            fx_factor(70, "F", category=absent)
+
+
+def test_the_withdrawal_bands_are_steps_and_are_not_interpolated():
+    """§6.C.4's bands are the text's own — "59 and under", "60 – 64", … —
+    so 59 and 60 take different rates and nothing between them is invented.
+
+    Interpolating would produce a rate the text does not contain at every
+    age between the band edges, which is the tempting smoothing and the one
+    a prescribed table exists to prevent."""
+    assert partial_withdrawal_rate(59, qualified=True) == pytest.approx(0.0165)
+    assert partial_withdrawal_rate(60, qualified=True) == pytest.approx(0.0210)
+    assert partial_withdrawal_rate(64, qualified=True) == pytest.approx(0.0210)
+    assert partial_withdrawal_rate(65, qualified=True) == pytest.approx(0.0235)
+    assert partial_withdrawal_rate(80, qualified=True) == pytest.approx(0.0630)
+    assert partial_withdrawal_rate(99, qualified=True) == pytest.approx(0.0630)
+    # The step is a step: no value between the two band rates is produced.
+    ages = np.arange(50, 66)
+    rates = partial_withdrawal_rate(ages, qualified=True)
+    assert set(np.round(rates, 6)) == {0.0165, 0.0210, 0.0235}
+
+
+def test_the_non_qualified_table_barely_moves_and_that_is_the_tax_code():
+    """Tables 6.2 and 6.3 are two tables rather than one with an adjustment,
+    and the reason shows in the numbers: the qualified rates grade from
+    1.65% to 6.30% with age, and the non-qualified ones sit at 1.60% at
+    every age without a guaranteed living benefit.
+
+    Required minimum distributions drive withdrawals on qualified money and
+    there is no equivalent pressure on non-qualified. Asserted because a
+    module that applied one table with a factor would look reasonable and
+    would be wrong at every age above 65."""
+    ages = np.arange(50, 91)
+    qualified = partial_withdrawal_rate(ages, qualified=True)
+    other = partial_withdrawal_rate(ages, qualified=False)
+    assert np.all(other == pytest.approx(0.0160))
+    assert qualified.max() / qualified.min() == pytest.approx(3.82, abs=0.02)
+
+    with_glb = partial_withdrawal_rate(ages, qualified=False,
+                                       guaranteed_living_benefit=True)
+    assert set(np.round(with_glb, 6)) == {0.0115, 0.0165}
+
+
+def test_a_guaranteed_living_benefit_lowers_the_qualified_withdrawal_rate():
+    """A contract holder who bought a benefit they have not yet exercised
+    withdraws less, because withdrawing erodes it. True at every band in the
+    qualified table, which is the check that the two columns are the right
+    way round."""
+    ages = np.arange(50, 91)
+    without = partial_withdrawal_rate(ages, qualified=True)
+    with_glb = partial_withdrawal_rate(ages, qualified=True,
+                                       guaranteed_living_benefit=True)
+    assert np.all(with_glb < without)
+
+
+def test_a_negative_age_is_refused():
+    with pytest.raises(PrescribedError, match="not negative"):
+        partial_withdrawal_rate(-1, qualified=True)
