@@ -18,6 +18,11 @@ excel = ["openpyxl>=3.1", "xlwings>=0.31"]
 # engine/core/bitwise.py can be *measured* against it rather than asserted;
 # nothing in engine/ imports it, and engine/core stays NumPy-only (§1.4).
 compile = ["numba>=0.61"]
+# The device backend B3 is written against. CuPy mirrors NumPy's op set,
+# which is why the executor is written once and the backend is a namespace.
+# Nothing in engine/ imports it unconditionally: engine/core/gpu.py falls
+# back to NumPy and says so at DEVICE_STATUS.
+gpu = ["cupy-cuda12x>=13"]
 
 [tool.setuptools.packages.find]
 include = ["engine*"]

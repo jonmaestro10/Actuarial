@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,511
-   tests — 2,465 of them without the `[compile]` extra, whose 46 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,519
+   tests — 2,473 of them without the `[compile]` extra, whose 46 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
@@ -423,7 +423,7 @@ itself has changed shape: it is now "bitwise across workers that attest
 alike", which is still a claim no incumbent makes and should be published in
 those words rather than the original ones.
 
-### B3 — GPU kernels (RFC-053) — effort L
+### B3 — GPU kernels (RFC-053) — effort L — **machinery built, device unmeasured**
 
 Starts only after B1 ships: the profiling data from the compiled executor
 decides which stochastic slabs justify a device (PLAN §4.6's original
@@ -452,6 +452,37 @@ move: incumbents' grids publish no reproducibility statement at all.
 path keeps the code imported and unit-tested in CI); the two guarantees
 asserted; `scripts/benchmark_gpu.py` added to the benchmark family with
 published numbers on the nested-stochastic workload vs B1.
+
+**Outcome (RFC-076).** The backend seam, both guarantees as executable
+contracts, and the reconciliation machinery are built and tested. **No CUDA
+device was available**, so the CuPy path is unexercised — recorded at
+`engine.core.gpu.DEVICE_STATUS` rather than left for a reader to infer from
+skip markers, and printed first by the benchmark.
+
+**The bound is measured without silicon, and that is principled rather than a
+substitute.** What separates a device answer from a CPU answer is the order
+partial sums are combined in, and that order is reproducible in NumPy:
+`DeviceReduction` reduces in the block-wise tree a device uses, block width 32
+so the tree has a warp's real shape. On the stochastic slabs B3 targets — up
+to 200 million cells — the worst spread against NumPy's pairwise reduction is
+**1.8e-15**, giving the 1e-12 target about **560x** headroom. The target is
+safe, and a device run that missed it would be evidence of a defect rather
+than of floating point.
+
+**It corrects an intuition.** A device-shaped tree is *closer* to NumPy than a
+naive sequential CPU loop is, because both are trees — the loop disagrees by
+an order of magnitude more. Asserted, so the reasoning behind the bound cannot
+quietly invert.
+
+**And a benchmark that reported nothing looked like a strong result.** The
+first version used a uniform-positive slab, which reduces to the same bits in
+any order, and printed 0.00e+00 on every workload. Cancellation between large
+opposite-signed partials is where reduction order actually shows.
+
+**Still owed:** the device kernels, and the stochastic-slab profile this RFC
+was meant to open with. RFC-074 profiled the deterministic path; the
+equivalent for the scenario dimension is what a device would accelerate, and
+measuring it needs a device to be worth anything.
 
 ---
 
