@@ -34,7 +34,7 @@ because the escalation is unavoidable.
 
 What is carried, and what is refused
 ------------------------------------
-Seven of the eleven tables are here, transcribed from the primary text and
+Ten of the eleven tables are here, transcribed from the primary text and
 checked against it:
 
 - **Table 6.1**, the base maintenance expense by contract type (§6.C.2.a),
@@ -46,12 +46,15 @@ checked against it:
 - **Tables 6.7 and 6.8**, the *F*\ :sub:`x` mortality factors for individual
   annuities in the Accumulation and Payout Annuity Reserving Categories
   (§6.C.8.i–ii).
+- **Tables 6.9, 6.10 and 6.11**, the *F*\ :sub:`x` factors for structured
+  settlements — standard lives, and substandard lives at rate-ups of 1 to 20
+  years and of 21 or more (§6.C.8.iii). RFC-071.
 
-The remaining four — **Table 6.5** and three *F*\ :sub:`x` sets for
-structured settlements — are **recorded and not carried**, and :func:`fx_factor` **refuses** a category whose table is absent
-rather than falling back to one that is present. A mortality factor from the
-wrong category is a plausible number that no test would catch, which is
-precisely the failure mode this chapter has already produced eight times.
+The one that remains — **Table 6.5** — is **recorded and not carried**, and
+:func:`fx_factor` **refuses** a category whose table is absent rather than
+falling back to one that is present. A mortality factor from the wrong
+category is a plausible number that no test would catch, which is precisely
+the failure mode this chapter has already produced eight times.
 
 **Table 6.5's absence is the specific one, and the reading is exonerated.**
 Its second dimension is the *interest guarantee period* rather than attained
@@ -74,10 +77,22 @@ axis switch" the drafters intend is theirs to say, and carrying the table on
 either would put a plausible number in every cell. See
 ``docs/sources/vm22-section-6-prescribed-assumptions.md``.
 
-The three structured-settlement sets cross a contract-year band with sex,
-and a table whose second dimension is read wrongly is a plausible number in
-*every* cell rather than an obviously missing one. They need a read of their
-own.
+**The structured-settlement sets have a second dimension, and it is not the
+same one twice.** Table 6.9 bands contract years 1–5 / 6–10 / ≥11; Tables
+6.10 and 6.11 band them 1–10 / 11–20 / 21–30 / ≥31. A table whose second
+dimension is read wrongly is a plausible number in *every* cell rather than
+an obviously missing one, so :func:`fx_factor` takes ``contract_year`` as a
+required argument for these categories and refuses it for the two that have
+no such axis.
+
+Two things about them are worth knowing before using one. Their base table is
+**not** the 2012 IAM Basic table: §6.C.8.iii projects the **1983 IAM Table
+'a'** from **2011**, one year earlier and a different table entirely, which
+:func:`mortality_basis` carries and :func:`projection_offset` enforces. And
+the substandard factors are *lower* than the standard ones — 55% against
+300% at the youngest ages — because §6.C.8.iii applies Actuarial Guideline
+IX-A's Constant Extra Death loading **before** the factor, so the two
+multiply different rates and are not comparable.
 
 What this does **not** build
 ----------------------------
@@ -88,13 +103,14 @@ assumptions land before the calculation. This module carries the prescribed
 inputs; nothing here computes an SPA, and
 :mod:`engine.report.vm22` is unchanged.
 
-The mortality basis is a formula over two artefacts that live in **VM-M** —
-the 2012 IAM Basic Mortality Table (VM-M §2.C) and Projection Scale G2
-(VM-M §1.J.1.c). Neither is carried here, so
-:func:`prescribed_mortality_rate` takes them as arguments. That is the same
-shape :func:`engine.report.vm22.stochastic_exclusion_test` uses for the
+The mortality basis is a formula over artefacts that live in **VM-M** — the
+2012 IAM Basic Mortality Table (VM-M §2.C), the 1983 IAM Table 'a'
+(VM-M §1.M) and Projection Scale G2 (VM-M §1.J.1.c). None is carried here,
+so :func:`prescribed_mortality_rate` takes them as arguments. That is the
+same shape :func:`engine.report.vm22.stochastic_exclusion_test` uses for the
 prescribed scenarios, and for the same reason: a chapter's own data is not
-this chapter's to invent.
+this chapter's to invent. Which of the base tables a category calls for
+**is** this chapter's, and :func:`mortality_basis` answers it.
 """
 
 from __future__ import annotations
@@ -213,19 +229,80 @@ _FX_ACCUMULATION = (
     (104, 1.0100, 1.0170, 1.0100, 1.0170),
 )
 
-#: The table's own floor and cap. "<=50" is the first row; ">=105" is 100%.
+#: Tables 6.7 and 6.8's own floor and cap. "<=50" is their first row;
+#: ">=105" is 100%. **The floor is theirs alone** — the structured
+#: settlement tables run from age 2 (see :data:`FX_STRUCTURED_MIN_AGE`), and
+#: reusing this one would silently serve a 50-year-old's factor to a child.
 FX_MIN_AGE, FX_MAX_AGE = 50, 105
 
-#: Which Reserving Categories have an *F*\ :sub:`x` table carried here.
-#: §6.C.8 gives five; two of the five belong to structured settlements and
-#: are not transcribed, nor is the payout-annuity set.
-FX_CATEGORIES_CARRIED = ("accumulation", "payout_annuity")
+#: Tables 6.9 to 6.11's floor: "≤2". Structured settlements are written on
+#: claimants, and a claimant can be an injured child, so the youngest row of
+#: these tables is an age Tables 6.7 and 6.8 never reach. The cap is the
+#: same ">=105" at 100%.
+FX_STRUCTURED_MIN_AGE = 2
 
-#: The categories §6.C.8 covers, including the ones not carried — so a
-#: refusal can tell a caller whether they asked for something that exists.
+#: Table 6.9's contract-year bands, as lower bounds: "Contract Years 1 to 5",
+#: "6 to 10", "≥11".
+FX_STANDARD_CONTRACT_YEARS = (1, 6, 11)
+
+#: Tables 6.10 and 6.11's, which are a **different** banding of the same
+#: axis: "1 to 10", "11 to 20", "21 to 30", "≥31". Three bands against four,
+#: and no boundary in common past the first.
+FX_SUBSTANDARD_CONTRACT_YEARS = (1, 11, 21, 31)
+
+#: The age rate-up at which §6.C.8.iii moves from Table 6.10 to Table 6.11.
+#: 6.10 is headed "age rate-ups of 1-20 years" and 6.11 "≥21 years".
+FX_RATE_UP_SPLIT = 21
+
+#: Which Reserving Categories have an *F*\ :sub:`x` table carried here.
+#: §6.C.8 gives four and all four are now transcribed (RFC-071); the refusal
+#: below stays because the section can grow one.
+FX_CATEGORIES_CARRIED = ("accumulation", "payout_annuity",
+                         "structured_settlement_standard",
+                         "structured_settlement_substandard")
+
+#: The categories §6.C.8 covers. Kept separate from
+#: :data:`FX_CATEGORIES_CARRIED` so a refusal can tell a caller whether they
+#: asked for something that exists but is absent, or for something the
+#: section does not have — a distinction that survives the two lists being
+#: momentarily equal.
 FX_CATEGORIES = ("accumulation", "payout_annuity",
                  "structured_settlement_standard",
                  "structured_settlement_substandard")
+
+
+@dataclass(frozen=True)
+class MortalityBasis:
+    """The base table an *F*\\ :sub:`x` set multiplies, and the year *n* runs
+    from.
+
+    §6.C.8 states this per category and they are **not** the same. §6.C.8.i
+    and .ii project the 2012 IAM Basic Mortality Table from 2012; §6.C.8.iii
+    projects the 1983 IAM Table 'a' from **2011**. Two base tables and two
+    base years, and nothing in the shape of ``q (1 − G2)^n × F`` shows which
+    pair a caller used — so the pairing is data here rather than a remark in
+    a docstring.
+    """
+
+    table: str
+    vm_m_section: str
+    base_year: int
+
+
+#: §6.C.8's base tables, by Reserving Category. The structured-settlement
+#: entries are the reason this mapping exists: an implementation that reached
+#: for the 2012 IAM Basic table and the 2012 base year out of habit would be
+#: wrong on both counts, and the arithmetic would not complain.
+FX_MORTALITY_BASIS = {
+    "accumulation": MortalityBasis(
+        "2012 IAM Basic Mortality Table", "VM-M §2.C", 2012),
+    "payout_annuity": MortalityBasis(
+        "2012 IAM Basic Mortality Table", "VM-M §2.C", 2012),
+    "structured_settlement_standard": MortalityBasis(
+        "1983 IAM Table 'a'", "VM-M §1.M", 2011),
+    "structured_settlement_substandard": MortalityBasis(
+        "1983 IAM Table 'a'", "VM-M §1.M", 2011),
+}
 
 
 @dataclass(frozen=True)
@@ -279,15 +356,19 @@ class PrescribedAssumptions:
 #: silently while the digest keeps changing for other reasons. It did: the
 #: text said "Table 6.1 and Table 6.7 are carried; the other nine …" for
 #: as long as RFC-067 had been carrying seven.
-TABLES_CARRIED = ("6.1", "6.2", "6.3", "6.4", "6.6", "6.7", "6.8")
+TABLES_CARRIED = ("6.1", "6.2", "6.3", "6.4", "6.6", "6.7", "6.8",
+                  "6.9", "6.10", "6.11")
 
-#: The four §6.C does state and this module does not transcribe: Table 6.5
-#: (see :func:`base_lapse_rate`) and the three structured-settlement
-#: *F*\ :sub:`x` sets, 6.9 to 6.11.
-TABLES_NOT_CARRIED = ("6.5", "6.9", "6.10", "6.11")
+#: The one §6.C does state and this module does not transcribe: Table 6.5,
+#: whose Guidance Note contradicts its own grid. See :func:`base_lapse_rate`
+#: and ``docs/sources/vm22-table-6-5-reading.md``.
+TABLES_NOT_CARRIED = ("6.5",)
 
 _CARRIED = ", ".join(f"Table {t}" for t in TABLES_CARRIED)
 _ABSENT = ", ".join(f"Table {t}" for t in TABLES_NOT_CARRIED)
+# Derived down to the verb, because the count reached one and "the other 1
+# … are recorded" is the kind of sentence a reader stops trusting.
+_ABSENT_VERB = "is" if len(TABLES_NOT_CARRIED) == 1 else "are"
 
 #: The 2026 text, carrying what §6.C states.
 VM22_PRESCRIBED_2026 = PrescribedAssumptions(
@@ -296,7 +377,7 @@ VM22_PRESCRIBED_2026 = PrescribedAssumptions(
           f"Section 6.C. {len(TABLES_CARRIED)} of "
           f"{len(TABLES_CARRIED) + len(TABLES_NOT_CARRIED)} prescribed "
           f"tables are carried ({_CARRIED}); the other "
-          f"{len(TABLES_NOT_CARRIED)} ({_ABSENT}) are recorded in "
+          f"{len(TABLES_NOT_CARRIED)} ({_ABSENT}) {_ABSENT_VERB} recorded in "
           f"docs/sources/ and not transcribed. The escalation and inflation "
           f"figures are bracketed in the text and are therefore "
           f"provisional."),
@@ -380,22 +461,101 @@ def maintenance_expense(contract_type: str, valuation_year: int,
     )
 
 
+_STRUCTURED = ("structured_settlement_standard",
+               "structured_settlement_substandard")
+
+
+def _structured_columns(category: str, sex: str, contract_year,
+                        rate_up_years):
+    """Pick Table 6.9/6.10/6.11 and the column each contract year lands in.
+
+    Split out because the column arithmetic is where this goes wrong. The
+    two bandings differ — three bands against four, sharing only their first
+    boundary — so a band index computed against the wrong one is in range,
+    is off by one or two, and reads a real cell of a real table.
+    """
+    if contract_year is None:
+        raise PrescribedError(
+            f"§6.C.8.iii's factors for {category!r} are quoted by contract "
+            f"year as well as attained age; contract_year is required. "
+            f"Table 6.9 bands 1-5/6-10/>=11 and Tables 6.10 and 6.11 band "
+            f"1-10/11-20/21-30/>=31, so there is no band to default to."
+        )
+    years = np.asarray(contract_year)
+    if np.any(years < 1):
+        raise PrescribedError(
+            "contract year is 1 in the first year of the contract; §6.C.8.iii "
+            "has no row below that and a 0 would read the first band as if "
+            "it were a year of cover"
+        )
+    if category == "structured_settlement_standard":
+        if rate_up_years is not None:
+            raise PrescribedError(
+                "Table 6.9 is the standard-lives table and has no rate-up "
+                "dimension; a life with an age rate-up is substandard and "
+                "belongs to Table 6.10 or 6.11 under "
+                "category='structured_settlement_substandard'"
+            )
+        bands, table = FX_STANDARD_CONTRACT_YEARS, _FX_SS_STANDARD
+    else:
+        if rate_up_years is None:
+            raise PrescribedError(
+                "§6.C.8.iii: \"The factors for Substandard lives differ by "
+                "the extent of the age rate-up\" — Table 6.10 covers 1 to 20 "
+                "years and Table 6.11 covers 21 or more, so rate_up_years is "
+                "required and the two tables disagree at every age"
+            )
+        if np.ndim(rate_up_years) != 0:
+            raise PrescribedError(
+                "rate_up_years selects between two different tables and is "
+                "therefore scalar; call once per rate-up band rather than "
+                "letting one lookup straddle Tables 6.10 and 6.11"
+            )
+        if rate_up_years < 1:
+            raise PrescribedError(
+                f"an age rate-up of {rate_up_years} is not substandard; "
+                f"Table 6.10 starts at a rate-up of 1 year and a life with "
+                f"none is a standard life under Table 6.9"
+            )
+        bands = FX_SUBSTANDARD_CONTRACT_YEARS
+        table = (_FX_SS_SUBSTANDARD_1_20 if rate_up_years < FX_RATE_UP_SPLIT
+                 else _FX_SS_SUBSTANDARD_21_PLUS)
+    band = np.searchsorted(np.asarray(bands), years, side="right") - 1
+    # Columns run band-major, female then male, as the header rows print
+    # them: (band 1 F, band 1 M, band 2 F, band 2 M, …).
+    return (np.array(table, dtype=np.float64),
+            1 + 2 * band + (0 if sex == "F" else 1))
+
+
 def fx_factor(age, sex: str, *, category: str = "accumulation",
-              guaranteed_living_benefit: bool = False) -> np.ndarray:
-    r"""Table 6.7's *F*\ :sub:`x`, the adjustment to the 2012 IAM Basic table.
+              guaranteed_living_benefit: bool = False,
+              contract_year=None, rate_up_years=None) -> np.ndarray:
+    r"""§6.C.8's *F*\ :sub:`x`, the adjustment to the prescribed base table.
 
     §6.C.8: the factors "represent adjustments to the 2012 IAM Basic
     Mortality Table brought up to the current period using Projection Scale
     G2 … Such adjustments reflect emerging experience, including the impact
     of how historical mortality improvement has differed from the G2 scale."
 
-    Ages at or below 50 take the first row and ages at or above 105 take
-    100%, both as the table states rather than as an extrapolation.
+    Which base table is adjusted depends on the category, and it is not the
+    2012 IAM Basic table for all of them — see :func:`mortality_basis`.
 
-    Only the Accumulation Reserving Category's table is carried. Another
-    category is **refused** rather than served from this one: §6.C.8 gives a
-    different set per category, and a factor from the wrong one is a
-    plausible number nothing downstream would question.
+    Tables 6.7 and 6.8 (``accumulation``, ``payout_annuity``) are quoted by
+    attained age and sex, floor at age 50 and cap at 105. Tables 6.9 to 6.11
+    (the two structured-settlement categories) are quoted by attained age,
+    **contract year** and sex, floor at age **2**, and cap at 105 alike. The
+    caps are the tables' own statements rather than extrapolation.
+
+    ``contract_year`` is required for a structured settlement and refused for
+    the other two, which have no such axis; ``rate_up_years`` is required for
+    a substandard structured settlement, because §6.C.8.iii splits those
+    between Table 6.10 (rate-ups of 1 to 20 years) and Table 6.11 (21 or
+    more), and refused otherwise.
+
+    A category whose table is not carried is **refused** rather than served
+    from one that is: §6.C.8 gives a different set per category, and a factor
+    from the wrong one is a plausible number nothing downstream would
+    question.
     """
     if category not in FX_CATEGORIES:
         raise PrescribedError(
@@ -413,34 +573,124 @@ def fx_factor(age, sex: str, *, category: str = "accumulation",
     sex = str(sex).upper()
     if sex not in ("M", "F"):
         raise PrescribedError(
-            f"Table 6.7 is quoted by sex; {sex!r} is not 'M' or 'F'"
+            f"§6.C.8's tables are quoted by sex; {sex!r} is not 'M' or 'F'"
         )
-    if category == "payout_annuity":
+    if category in _STRUCTURED:
         if guaranteed_living_benefit:
             raise PrescribedError(
-                "Table 6.8 is not split by guaranteed living benefit; §6.C.8 "
-                "gives one pair of columns for the Payout Annuity Reserving "
-                "Category, and asking for a split it does not have would be "
-                "answered from the accumulation table"
+                "§6.C.8.iii's structured settlement tables are not split by "
+                "guaranteed living benefit; a structured settlement is a "
+                "stream of payments under a claim settlement and has no "
+                "rider, and answering the split from Table 6.7 would be a "
+                "factor from the wrong section"
             )
-        table = np.array(_FX_PAYOUT, dtype=np.float64)
-        column = 1 if sex == "F" else 2
+        table, column = _structured_columns(
+            category, sex, contract_year, rate_up_years)
+        min_age = FX_STRUCTURED_MIN_AGE
     else:
-        column = {("F", False): 1, ("M", False): 2,
-                  ("F", True): 3,
-                  ("M", True): 4}[(sex, guaranteed_living_benefit)]
-        table = np.array(_FX_ACCUMULATION, dtype=np.float64)
-    ages = np.clip(np.asarray(age), FX_MIN_AGE, FX_MAX_AGE)
-    factors = np.where(ages >= FX_MAX_AGE, 1.0,
-                       np.interp(ages, table[:, 0], table[:, column]))
-    return factors
+        if contract_year is not None:
+            raise PrescribedError(
+                f"Tables 6.7 and 6.8 are quoted by attained age alone; "
+                f"{category!r} has no contract-year band, and accepting one "
+                f"would let a caller believe a banding had been applied"
+            )
+        if rate_up_years is not None:
+            raise PrescribedError(
+                f"an age rate-up is a structured settlement's underwriting "
+                f"and {category!r} has no rate-up dimension; §6.C.8 states it "
+                f"only at .iii"
+            )
+        if category == "payout_annuity":
+            if guaranteed_living_benefit:
+                raise PrescribedError(
+                    "Table 6.8 is not split by guaranteed living benefit; "
+                    "§6.C.8 gives one pair of columns for the Payout Annuity "
+                    "Reserving Category, and asking for a split it does not "
+                    "have would be answered from the accumulation table"
+                )
+            table = np.array(_FX_PAYOUT, dtype=np.float64)
+            column = 1 if sex == "F" else 2
+        else:
+            column = {("F", False): 1, ("M", False): 2,
+                      ("F", True): 3,
+                      ("M", True): 4}[(sex, guaranteed_living_benefit)]
+            table = np.array(_FX_ACCUMULATION, dtype=np.float64)
+        min_age = FX_MIN_AGE
+    ages = np.clip(np.asarray(age), min_age, FX_MAX_AGE)
+    # Age and column are broadcast against each other *before* the lookup:
+    # a scalar age with a vector of contract years is the natural projection
+    # and would otherwise silently take the first column.
+    ages, column = np.broadcast_arrays(ages, np.asarray(column))
+    # Every column is graded and the wanted one selected afterwards, so that
+    # an array of contract years picks a different column per element
+    # without a Python loop.
+    graded = np.stack(
+        [np.interp(ages, table[:, 0], table[:, c])
+         for c in range(1, table.shape[1])], axis=-1)
+    picked = np.take_along_axis(graded, (column - 1)[..., None],
+                                axis=-1)[..., 0]
+    return np.where(ages >= FX_MAX_AGE, 1.0, picked)
 
 
-def prescribed_mortality_rate(q_2012, g2, fx, n: int):
-    """§6.C.8.i: ``q_x^(2012+n) = q_x^2012 (1 − G2_x)^n × F_x``.
+def mortality_basis(category: str = "accumulation") -> MortalityBasis:
+    """Which base table §6.C.8 projects for ``category``, and from when.
 
-    The 2012 IAM Basic Mortality Table (VM-M §2.C) and Projection Scale G2
-    (VM-M §1.J.1.c) are **arguments**, not data carried here. They belong to
+    A mechanism rather than a sentence, because the difference is invisible
+    downstream. §6.C.8.i and .ii project the **2012 IAM Basic Mortality
+    Table** from 2012; §6.C.8.iii projects the **1983 IAM Table 'a'** from
+    **2011**. A caller who reached for the 2012 table and the 2012 base year
+    for a structured settlement would be using the wrong rates *and* one
+    improvement year too few, and ``q (1 − G2)^n × F`` would return a
+    perfectly ordinary number.
+
+    §6.C.8 also covers group annuities, international business and the
+    Longevity Reinsurance Reserving Category, which take the 1994 GAM Table
+    with Projection Scale AA and have **no** *F*\\ :sub:`x` at all — a
+    different shape, not a missing table, so they are refused here.
+    """
+    try:
+        return FX_MORTALITY_BASIS[category]
+    except KeyError:
+        raise PrescribedError(
+            f"§6.C.8 states no F_x base table for {category!r}; it gives one "
+            f"for {list(FX_MORTALITY_BASIS)}. Group annuities, international "
+            f"business and the Longevity Reinsurance Reserving Category take "
+            f"the 1994 GAM Table with Projection Scale AA and carry no F_x."
+        ) from None
+
+
+def projection_offset(valuation_year: int, *,
+                      category: str = "accumulation") -> int:
+    """The ``n`` in §6.C.8's formula, counted from the category's own base.
+
+    The offset is where the two base years bite, and it is the one place the
+    module can catch the confusion: ``projection_offset(2026)`` is 14 and
+    ``projection_offset(2026, category="structured_settlement_standard")``
+    is **15**, because §6.C.8.iii counts from 2011.
+    """
+    basis = mortality_basis(category)
+    if valuation_year < basis.base_year:
+        raise PrescribedError(
+            f"{valuation_year} is before {basis.base_year}, the base year of "
+            f"{basis.table} for {category!r}; §6.C.8 projects forward from it "
+            f"and a negative n would run the improvement backwards"
+        )
+    return int(valuation_year) - basis.base_year
+
+
+def prescribed_mortality_rate(q_base, g2, fx, n: int):
+    """§6.C.8: ``q_x^(base+n) = q_x^base (1 − G2_x)^n × F_x``.
+
+    One formula over two bases. §6.C.8.i and .ii write it
+    ``q_x^(2012+n) = q_x^2012 …`` over the 2012 IAM Basic Mortality Table;
+    §6.C.8.iii writes it ``q_x^(2011+n) = q_x^2011 …`` over the 1983 IAM
+    Table 'a'. The arithmetic is identical and the inputs are not, which is
+    why :func:`mortality_basis` exists and why ``n`` should come from
+    :func:`projection_offset` rather than from a subtraction written at the
+    call site.
+
+    The base table (VM-M §2.C or §1.M) and Projection Scale G2 (VM-M
+    §1.J.1.c) are **arguments**, not data carried here. They belong to
     another chapter, and this module inventing them would be the same error
     as inventing the prescribed scenarios — see
     :func:`engine.report.vm22.stochastic_exclusion_test`, which takes its
@@ -452,9 +702,10 @@ def prescribed_mortality_rate(q_2012, g2, fx, n: int):
     """
     if n < 0:
         raise PrescribedError(
-            f"n is {n}: §6.C.8's formula projects forward from 2012, not back"
+            f"n is {n}: §6.C.8's formula projects forward from its base "
+            f"year, not back"
         )
-    q = np.asarray(q_2012, dtype=np.float64)
+    q = np.asarray(q_base, dtype=np.float64)
     scale = np.asarray(g2, dtype=np.float64)
     if np.any(scale >= 1.0) or np.any(scale < 0.0):
         raise PrescribedError(
@@ -524,6 +775,338 @@ _FX_PAYOUT = (
     (103, 1.0330, 1.0330),
     (104, 1.0170, 1.0170),
 )
+
+#: Table 6.9, §6.C.8.iii: *F*\ :sub:`x` for structured settlement contracts
+#: on **standard** lives. ``(attained age, then female and male for each of
+#: contract years 1-5, 6-10 and >=11)`` — six value columns, band-major, in
+#: the order the two header rows print them. Age "<=2" is the first row and
+#: ">=105" is 100%; the cap row is the code's, as it is for Tables 6.7
+#: and 6.8.
+_FX_SS_STANDARD = (
+    (2, 3.0000, 3.0000, 3.0000, 3.0000, 3.6500, 3.7500),
+    (3, 3.0600, 3.0600, 3.0700, 3.0600, 3.7400, 3.8100),
+    (4, 3.1200, 3.1200, 3.1400, 3.1200, 3.8300, 3.8700),
+    (5, 3.1800, 3.1800, 3.2100, 3.1800, 3.9200, 3.9300),
+    (6, 3.2400, 3.2400, 3.2800, 3.2400, 4.0100, 3.9900),
+    (7, 3.3000, 3.3000, 3.3500, 3.3000, 4.1000, 4.0500),
+    (8, 3.3500, 3.3000, 3.3900, 3.3000, 4.1500, 4.0500),
+    (9, 3.4000, 3.3000, 3.4300, 3.3000, 4.2000, 4.0500),
+    (10, 3.4500, 3.3000, 3.4700, 3.3000, 4.2500, 4.0500),
+    (11, 3.5000, 3.3000, 3.5100, 3.3000, 4.3000, 4.0500),
+    (12, 3.5500, 3.3000, 3.5500, 3.3000, 4.3500, 4.0500),
+    (13, 3.5500, 3.3100, 3.5500, 3.3100, 4.3500, 4.0700),
+    (14, 3.5500, 3.3200, 3.5500, 3.3200, 4.3500, 4.0900),
+    (15, 3.5500, 3.3300, 3.5500, 3.3300, 4.3500, 4.1100),
+    (16, 3.5500, 3.3400, 3.5500, 3.3400, 4.3500, 4.1300),
+    (17, 3.5500, 3.3500, 3.5500, 3.3500, 4.3500, 4.1500),
+    (18, 3.5400, 3.3500, 3.5400, 3.3500, 4.3400, 4.1400),
+    (19, 3.5300, 3.3500, 3.5300, 3.3500, 4.3300, 4.1300),
+    (20, 3.5200, 3.3500, 3.5200, 3.3500, 4.3200, 4.1200),
+    (21, 3.5100, 3.3500, 3.5100, 3.3500, 4.3100, 4.1100),
+    (22, 3.5000, 3.3500, 3.5000, 3.3500, 4.3000, 4.1000),
+    (23, 3.5000, 3.3800, 3.5000, 3.3800, 4.2900, 4.1400),
+    (24, 3.5000, 3.4100, 3.5000, 3.4100, 4.2800, 4.1800),
+    (25, 3.5000, 3.4400, 3.5000, 3.4400, 4.2700, 4.2200),
+    (26, 3.5000, 3.4700, 3.5000, 3.4700, 4.2600, 4.2600),
+    (27, 3.5000, 3.5000, 3.5000, 3.5000, 4.2500, 4.3000),
+    (28, 3.5500, 3.5800, 3.5500, 3.5800, 4.3200, 4.4000),
+    (29, 3.6000, 3.6600, 3.6000, 3.6600, 4.3900, 4.5000),
+    (30, 3.6500, 3.7400, 3.6500, 3.7400, 4.4600, 4.6000),
+    (31, 3.7000, 3.8200, 3.7000, 3.8200, 4.5300, 4.7000),
+    (32, 3.7500, 3.9000, 3.7500, 3.9000, 4.6000, 4.8000),
+    (33, 3.7500, 3.9200, 3.7500, 3.9200, 4.6000, 4.8200),
+    (34, 3.7500, 3.9400, 3.7500, 3.9400, 4.6000, 4.8400),
+    (35, 3.7500, 3.9600, 3.7500, 3.9600, 4.6000, 4.8600),
+    (36, 3.7500, 3.9800, 3.7500, 3.9800, 4.6000, 4.8800),
+    (37, 3.7500, 4.0000, 3.7500, 4.0000, 4.6000, 4.9000),
+    (38, 3.5900, 3.8700, 3.5900, 3.8700, 4.4400, 4.7800),
+    (39, 3.4300, 3.7400, 3.4300, 3.7400, 4.2800, 4.6600),
+    (40, 3.2700, 3.6100, 3.2700, 3.6100, 4.1200, 4.5400),
+    (41, 3.1100, 3.4800, 3.1100, 3.4800, 3.9600, 4.4200),
+    (42, 2.9500, 3.3500, 2.9500, 3.3500, 3.8000, 4.3000),
+    (43, 2.7800, 3.1200, 2.7900, 3.1200, 3.6300, 4.0400),
+    (44, 2.6100, 2.8900, 2.6300, 2.8900, 3.4600, 3.7800),
+    (45, 2.4400, 2.6600, 2.4700, 2.6600, 3.2900, 3.5200),
+    (46, 2.2700, 2.4300, 2.3100, 2.4300, 3.1200, 3.2600),
+    (47, 2.1000, 2.2000, 2.1500, 2.2000, 2.9500, 3.0000),
+    (48, 2.0600, 2.1300, 2.1000, 2.1300, 2.8800, 2.9100),
+    (49, 2.0200, 2.0600, 2.0500, 2.0600, 2.8100, 2.8200),
+    (50, 1.9800, 1.9900, 2.0000, 1.9900, 2.7400, 2.7300),
+    (51, 1.9400, 1.9200, 1.9500, 1.9200, 2.6700, 2.6400),
+    (52, 1.9000, 1.8500, 1.9000, 1.8500, 2.6000, 2.5500),
+    (53, 1.8900, 1.8500, 1.8900, 1.8500, 2.5800, 2.5400),
+    (54, 1.8800, 1.8500, 1.8800, 1.8500, 2.5600, 2.5300),
+    (55, 1.8700, 1.8500, 1.8700, 1.8500, 2.5400, 2.5200),
+    (56, 1.8600, 1.8500, 1.8600, 1.8500, 2.5200, 2.5100),
+    (57, 1.8500, 1.8500, 1.8500, 1.8500, 2.5000, 2.5000),
+    (58, 1.7900, 1.8000, 1.8200, 1.8300, 2.4500, 2.4600),
+    (59, 1.7300, 1.7500, 1.7900, 1.8100, 2.4000, 2.4200),
+    (60, 1.6700, 1.7000, 1.7600, 1.7900, 2.3500, 2.3800),
+    (61, 1.6100, 1.6500, 1.7300, 1.7700, 2.3000, 2.3400),
+    (62, 1.5500, 1.6000, 1.7000, 1.7500, 2.2500, 2.3000),
+    (63, 1.4900, 1.5400, 1.6600, 1.7200, 2.1800, 2.2400),
+    (64, 1.4300, 1.4800, 1.6200, 1.6900, 2.1100, 2.1800),
+    (65, 1.3700, 1.4200, 1.5800, 1.6600, 2.0400, 2.1200),
+    (66, 1.3100, 1.3600, 1.5400, 1.6300, 1.9700, 2.0600),
+    (67, 1.2500, 1.3000, 1.5000, 1.6000, 1.9000, 2.0000),
+    (68, 1.2300, 1.2800, 1.4900, 1.5800, 1.8400, 1.9300),
+    (69, 1.2100, 1.2600, 1.4800, 1.5600, 1.7800, 1.8600),
+    (70, 1.1900, 1.2400, 1.4700, 1.5400, 1.7200, 1.7900),
+    (71, 1.1700, 1.2200, 1.4600, 1.5200, 1.6600, 1.7200),
+    (72, 1.1500, 1.2000, 1.4500, 1.5000, 1.6000, 1.6500),
+    (73, 1.1400, 1.1800, 1.4300, 1.4800, 1.5600, 1.6100),
+    (74, 1.1300, 1.1600, 1.4100, 1.4600, 1.5200, 1.5700),
+    (75, 1.1200, 1.1400, 1.3900, 1.4400, 1.4800, 1.5300),
+    (76, 1.1100, 1.1200, 1.3700, 1.4200, 1.4400, 1.4900),
+    (77, 1.1000, 1.1000, 1.3500, 1.4000, 1.4000, 1.4500),
+    (78, 1.1000, 1.1000, 1.3300, 1.3700, 1.3700, 1.4100),
+    (79, 1.1000, 1.1000, 1.3100, 1.3400, 1.3400, 1.3700),
+    (80, 1.1000, 1.1000, 1.2900, 1.3100, 1.3100, 1.3300),
+    (81, 1.1000, 1.1000, 1.2700, 1.2800, 1.2800, 1.2900),
+    (82, 1.1000, 1.1000, 1.2500, 1.2500, 1.2500, 1.2500),
+    (83, 1.1000, 1.1000, 1.2300, 1.2300, 1.2300, 1.2300),
+    (84, 1.1000, 1.1000, 1.2100, 1.2100, 1.2100, 1.2100),
+    (85, 1.1000, 1.1000, 1.1900, 1.1900, 1.1900, 1.1900),
+    (86, 1.1000, 1.1000, 1.1700, 1.1700, 1.1700, 1.1700),
+    (87, 1.1000, 1.1000, 1.1500, 1.1500, 1.1500, 1.1500),
+    (88, 1.1000, 1.1000, 1.1400, 1.1400, 1.1400, 1.1400),
+    (89, 1.1000, 1.1000, 1.1300, 1.1300, 1.1300, 1.1300),
+    (90, 1.1000, 1.1000, 1.1200, 1.1200, 1.1200, 1.1200),
+    (91, 1.1000, 1.1000, 1.1100, 1.1100, 1.1100, 1.1100),
+    (92, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000),
+    (93, 1.0900, 1.0900, 1.0900, 1.0900, 1.0900, 1.0900),
+    (94, 1.0800, 1.0800, 1.0800, 1.0800, 1.0800, 1.0800),
+    (95, 1.0700, 1.0700, 1.0700, 1.0700, 1.0700, 1.0700),
+    (96, 1.0600, 1.0600, 1.0600, 1.0600, 1.0600, 1.0600),
+    (97, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500),
+    (98, 1.0400, 1.0400, 1.0400, 1.0400, 1.0400, 1.0400),
+    (99, 1.0300, 1.0300, 1.0300, 1.0300, 1.0300, 1.0300),
+    (100, 1.0200, 1.0200, 1.0200, 1.0200, 1.0200, 1.0200),
+    (101, 1.0100, 1.0100, 1.0100, 1.0100, 1.0100, 1.0100),
+    (102, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000),
+    (103, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000),
+    (104, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000, 1.0000),
+)
+
+#: Table 6.10, §6.C.8.iii: *F*\ :sub:`x` for structured settlements on
+#: **substandard** lives with age rate-ups of 1 to 20 years. Eight value
+#: columns, because the banding is *not* Table 6.9's: contract years 1-10,
+#: 11-20, 21-30 and >=31, female and male within each.
+_FX_SS_SUBSTANDARD_1_20 = (
+    (2, 0.5500, 0.5500, 0.5500, 0.5500, 0.5500, 0.5500, 0.5500, 0.5500),
+    (3, 0.5700, 0.5700, 0.5700, 0.5700, 0.5700, 0.5700, 0.5700, 0.5700),
+    (4, 0.5900, 0.5900, 0.5900, 0.5900, 0.5900, 0.5900, 0.5900, 0.5900),
+    (5, 0.6100, 0.6100, 0.6100, 0.6100, 0.6100, 0.6100, 0.6100, 0.6100),
+    (6, 0.6300, 0.6300, 0.6300, 0.6300, 0.6300, 0.6300, 0.6300, 0.6300),
+    (7, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (8, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (9, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (10, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (11, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (12, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (13, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (14, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (15, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (16, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (17, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (18, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (19, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (20, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (21, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (22, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (23, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (24, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (25, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (26, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (27, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500, 0.6500),
+    (28, 0.6600, 0.6700, 0.6600, 0.6700, 0.6600, 0.6700, 0.6600, 0.6700),
+    (29, 0.6700, 0.6900, 0.6700, 0.6900, 0.6700, 0.6900, 0.6700, 0.6900),
+    (30, 0.6800, 0.7100, 0.6800, 0.7100, 0.6800, 0.7100, 0.6800, 0.7100),
+    (31, 0.6900, 0.7300, 0.6900, 0.7300, 0.6900, 0.7300, 0.6900, 0.7300),
+    (32, 0.7000, 0.7500, 0.7000, 0.7500, 0.7000, 0.7500, 0.7000, 0.7500),
+    (33, 0.7100, 0.7500, 0.7100, 0.7600, 0.7200, 0.7700, 0.7200, 0.7700),
+    (34, 0.7200, 0.7500, 0.7200, 0.7700, 0.7400, 0.7900, 0.7400, 0.7900),
+    (35, 0.7300, 0.7500, 0.7300, 0.7800, 0.7600, 0.8100, 0.7600, 0.8100),
+    (36, 0.7400, 0.7500, 0.7400, 0.7900, 0.7800, 0.8300, 0.7800, 0.8300),
+    (37, 0.7500, 0.7500, 0.7500, 0.8000, 0.8000, 0.8500, 0.8000, 0.8500),
+    (38, 0.7500, 0.7700, 0.8100, 0.8800, 0.9000, 0.9800, 0.9300, 1.0100),
+    (39, 0.7500, 0.7900, 0.8700, 0.9600, 1.0000, 1.1100, 1.0600, 1.1700),
+    (40, 0.7500, 0.8100, 0.9300, 1.0400, 1.1000, 1.2400, 1.1900, 1.3300),
+    (41, 0.7500, 0.8300, 0.9900, 1.1200, 1.2000, 1.3700, 1.3200, 1.4900),
+    (42, 0.7500, 0.8500, 1.0500, 1.2000, 1.3000, 1.5000, 1.4500, 1.6500),
+    (43, 0.7500, 0.8400, 1.0700, 1.1900, 1.3400, 1.5000, 1.4900, 1.6500),
+    (44, 0.7500, 0.8300, 1.0900, 1.1800, 1.3800, 1.5000, 1.5300, 1.6500),
+    (45, 0.7500, 0.8200, 1.1100, 1.1700, 1.4200, 1.5000, 1.5700, 1.6500),
+    (46, 0.7500, 0.8100, 1.1300, 1.1600, 1.4600, 1.5000, 1.6100, 1.6500),
+    (47, 0.7500, 0.8000, 1.1500, 1.1500, 1.5000, 1.5000, 1.6500, 1.6500),
+    (48, 0.7600, 0.8000, 1.1600, 1.1500, 1.5000, 1.5000, 1.6600, 1.6500),
+    (49, 0.7700, 0.8000, 1.1700, 1.1500, 1.5000, 1.5000, 1.6700, 1.6500),
+    (50, 0.7800, 0.8000, 1.1800, 1.1500, 1.5000, 1.5000, 1.6800, 1.6500),
+    (51, 0.7900, 0.8000, 1.1900, 1.1500, 1.5000, 1.5000, 1.6900, 1.6500),
+    (52, 0.8000, 0.8000, 1.2000, 1.1500, 1.5000, 1.5000, 1.7000, 1.6500),
+    (53, 0.8200, 0.8200, 1.2300, 1.1900, 1.5500, 1.5400, 1.7400, 1.7000),
+    (54, 0.8400, 0.8400, 1.2600, 1.2300, 1.6000, 1.5800, 1.7800, 1.7500),
+    (55, 0.8600, 0.8600, 1.2900, 1.2700, 1.6500, 1.6200, 1.8200, 1.8000),
+    (56, 0.8800, 0.8800, 1.3200, 1.3100, 1.7000, 1.6600, 1.8600, 1.8500),
+    (57, 0.9000, 0.9000, 1.3500, 1.3500, 1.7500, 1.7000, 1.9000, 1.9000),
+    (58, 0.9000, 0.9100, 1.3500, 1.3600, 1.7500, 1.7200, 1.9100, 1.9200),
+    (59, 0.9000, 0.9200, 1.3500, 1.3700, 1.7500, 1.7400, 1.9200, 1.9400),
+    (60, 0.9000, 0.9300, 1.3500, 1.3800, 1.7500, 1.7600, 1.9300, 1.9600),
+    (61, 0.9000, 0.9400, 1.3500, 1.3900, 1.7500, 1.7800, 1.9400, 1.9800),
+    (62, 0.9000, 0.9500, 1.3500, 1.4000, 1.7500, 1.8000, 1.9500, 2.0000),
+    (63, 0.8900, 0.9400, 1.3300, 1.3800, 1.7200, 1.7800, 1.9200, 1.9800),
+    (64, 0.8800, 0.9300, 1.3100, 1.3600, 1.6900, 1.7600, 1.8900, 1.9600),
+    (65, 0.8700, 0.9200, 1.2900, 1.3400, 1.6600, 1.7400, 1.8600, 1.9400),
+    (66, 0.8600, 0.9100, 1.2700, 1.3200, 1.6300, 1.7200, 1.8300, 1.9200),
+    (67, 0.8500, 0.9000, 1.2500, 1.3000, 1.6000, 1.7000, 1.8000, 1.9000),
+    (68, 0.8400, 0.8900, 1.2400, 1.2900, 1.5900, 1.6800, 1.7800, 1.8800),
+    (69, 0.8300, 0.8800, 1.2300, 1.2800, 1.5800, 1.6600, 1.7600, 1.8600),
+    (70, 0.8200, 0.8700, 1.2200, 1.2700, 1.5700, 1.6400, 1.7400, 1.8400),
+    (71, 0.8100, 0.8600, 1.2100, 1.2600, 1.5600, 1.6200, 1.7200, 1.8200),
+    (72, 0.8000, 0.8500, 1.2000, 1.2500, 1.5500, 1.6000, 1.7000, 1.8000),
+    (73, 0.8000, 0.8500, 1.1900, 1.2400, 1.5300, 1.5800, 1.6800, 1.7700),
+    (74, 0.8000, 0.8500, 1.1800, 1.2300, 1.5100, 1.5600, 1.6600, 1.7400),
+    (75, 0.8000, 0.8500, 1.1700, 1.2200, 1.4900, 1.5400, 1.6400, 1.7100),
+    (76, 0.8000, 0.8500, 1.1600, 1.2100, 1.4700, 1.5200, 1.6200, 1.6800),
+    (77, 0.8000, 0.8500, 1.1500, 1.2000, 1.4500, 1.5000, 1.6000, 1.6500),
+    (78, 0.8400, 0.8800, 1.1400, 1.1800, 1.4000, 1.4400, 1.5300, 1.5700),
+    (79, 0.8800, 0.9100, 1.1300, 1.1600, 1.3500, 1.3800, 1.4600, 1.4900),
+    (80, 0.9200, 0.9400, 1.1200, 1.1400, 1.3000, 1.3200, 1.3900, 1.4100),
+    (81, 0.9600, 0.9700, 1.1100, 1.1200, 1.2500, 1.2600, 1.3200, 1.3300),
+    (82, 1.0000, 1.0000, 1.1000, 1.1000, 1.2000, 1.2000, 1.2500, 1.2500),
+    (83, 1.0200, 1.0200, 1.1000, 1.1000, 1.1800, 1.1800, 1.2200, 1.2200),
+    (84, 1.0400, 1.0400, 1.1000, 1.1000, 1.1600, 1.1600, 1.1900, 1.1900),
+    (85, 1.0600, 1.0600, 1.1000, 1.1000, 1.1400, 1.1400, 1.1600, 1.1600),
+    (86, 1.0800, 1.0800, 1.1000, 1.1000, 1.1200, 1.1200, 1.1300, 1.1300),
+    (87, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000),
+    (88, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000),
+    (89, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000),
+    (90, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000),
+    (91, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000),
+    (92, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000, 1.1000),
+    (93, 1.0900, 1.0900, 1.0900, 1.0900, 1.0900, 1.0900, 1.0900, 1.0900),
+    (94, 1.0800, 1.0800, 1.0800, 1.0800, 1.0800, 1.0800, 1.0800, 1.0800),
+    (95, 1.0700, 1.0700, 1.0700, 1.0700, 1.0700, 1.0700, 1.0700, 1.0700),
+    (96, 1.0600, 1.0600, 1.0600, 1.0600, 1.0600, 1.0600, 1.0600, 1.0600),
+    (97, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500),
+    (98, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500),
+    (99, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500),
+    (100, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500),
+    (101, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500),
+    (102, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500, 1.0500),
+    (103, 1.0330, 1.0330, 1.0330, 1.0330, 1.0330, 1.0330, 1.0330, 1.0330),
+    (104, 1.0170, 1.0170, 1.0170, 1.0170, 1.0170, 1.0170, 1.0170, 1.0170),
+)
+
+#: Table 6.11, §6.C.8.iii: the same eight columns as Table 6.10, for age
+#: rate-ups of 21 years or more. A separate table rather than a shift of
+#: 6.10 — the two disagree at nearly every cell.
+_FX_SS_SUBSTANDARD_21_PLUS = (
+    (2, 0.5500, 0.5500, 0.5500, 0.5500, 0.7000, 0.7500, 0.7000, 0.7000),
+    (3, 0.5700, 0.5700, 0.5700, 0.5700, 0.7200, 0.7600, 0.7200, 0.7200),
+    (4, 0.5900, 0.5900, 0.5900, 0.5900, 0.7400, 0.7700, 0.7400, 0.7400),
+    (5, 0.6100, 0.6100, 0.6100, 0.6100, 0.7600, 0.7800, 0.7600, 0.7600),
+    (6, 0.6300, 0.6300, 0.6300, 0.6300, 0.7800, 0.7900, 0.7800, 0.7800),
+    (7, 0.6500, 0.6500, 0.6500, 0.6500, 0.8000, 0.8000, 0.8000, 0.8000),
+    (8, 0.6500, 0.6500, 0.6500, 0.6500, 0.8100, 0.8000, 0.8100, 0.8000),
+    (9, 0.6500, 0.6500, 0.6500, 0.6500, 0.8200, 0.8000, 0.8200, 0.8000),
+    (10, 0.6500, 0.6500, 0.6500, 0.6500, 0.8300, 0.8000, 0.8300, 0.8000),
+    (11, 0.6500, 0.6500, 0.6500, 0.6500, 0.8400, 0.8000, 0.8400, 0.8000),
+    (12, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (13, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (14, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (15, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (16, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (17, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (18, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (19, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (20, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (21, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (22, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8000, 0.8500, 0.8000),
+    (23, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8100, 0.8500, 0.8100),
+    (24, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8200, 0.8500, 0.8200),
+    (25, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8300, 0.8500, 0.8300),
+    (26, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8400, 0.8500, 0.8400),
+    (27, 0.6500, 0.6500, 0.6500, 0.6500, 0.8500, 0.8500, 0.8500, 0.8500),
+    (28, 0.6600, 0.6700, 0.6600, 0.6700, 0.8600, 0.8700, 0.8600, 0.8700),
+    (29, 0.6700, 0.6900, 0.6700, 0.6900, 0.8700, 0.8900, 0.8700, 0.8900),
+    (30, 0.6800, 0.7100, 0.6800, 0.7100, 0.8800, 0.9100, 0.8800, 0.9100),
+    (31, 0.6900, 0.7300, 0.6900, 0.7300, 0.8900, 0.9300, 0.8900, 0.9300),
+    (32, 0.7000, 0.7500, 0.7000, 0.7500, 0.9000, 0.9500, 0.9000, 0.9500),
+    (33, 0.7100, 0.7600, 0.7100, 0.7600, 0.9100, 0.9600, 0.9200, 0.9700),
+    (34, 0.7200, 0.7700, 0.7200, 0.7700, 0.9200, 0.9700, 0.9400, 0.9900),
+    (35, 0.7300, 0.7800, 0.7300, 0.7800, 0.9300, 0.9800, 0.9600, 1.0100),
+    (36, 0.7400, 0.7900, 0.7400, 0.7900, 0.9400, 0.9900, 0.9800, 1.0300),
+    (37, 0.7500, 0.8000, 0.7500, 0.8000, 0.9500, 1.0000, 1.0000, 1.0500),
+    (38, 0.7700, 0.8300, 0.7900, 0.8500, 0.9800, 1.0500, 1.0700, 1.1500),
+    (39, 0.7900, 0.8600, 0.8300, 0.9000, 1.0100, 1.1000, 1.1400, 1.2500),
+    (40, 0.8100, 0.8900, 0.8700, 0.9500, 1.0400, 1.1500, 1.2100, 1.3500),
+    (41, 0.8300, 0.9200, 0.9100, 1.0000, 1.0700, 1.2000, 1.2800, 1.4500),
+    (42, 0.8500, 0.9500, 0.9500, 1.0500, 1.1000, 1.2500, 1.3500, 1.5500),
+    (43, 0.8500, 0.9400, 0.9600, 1.0400, 1.1100, 1.2300, 1.3700, 1.5400),
+    (44, 0.8500, 0.9300, 0.9700, 1.0300, 1.1200, 1.2100, 1.3900, 1.5300),
+    (45, 0.8500, 0.9200, 0.9800, 1.0200, 1.1300, 1.1900, 1.4100, 1.5200),
+    (46, 0.8500, 0.9100, 0.9900, 1.0100, 1.1400, 1.1700, 1.4300, 1.5100),
+    (47, 0.8500, 0.9000, 1.0000, 1.0000, 1.1500, 1.1500, 1.4500, 1.5000),
+    (48, 0.8600, 0.9000, 1.0000, 1.0000, 1.1600, 1.1500, 1.4600, 1.5000),
+    (49, 0.8700, 0.9000, 1.0000, 1.0000, 1.1700, 1.1500, 1.4700, 1.5000),
+    (50, 0.8800, 0.9000, 1.0000, 1.0000, 1.1800, 1.1500, 1.4800, 1.5000),
+    (51, 0.8900, 0.9000, 1.0000, 1.0000, 1.1900, 1.1500, 1.4900, 1.5000),
+    (52, 0.9000, 0.9000, 1.0000, 1.0000, 1.2000, 1.1500, 1.5000, 1.5000),
+    (53, 0.9200, 0.9200, 1.0300, 1.0300, 1.2300, 1.1900, 1.5500, 1.5400),
+    (54, 0.9400, 0.9400, 1.0600, 1.0600, 1.2600, 1.2300, 1.6000, 1.5800),
+    (55, 0.9600, 0.9600, 1.0900, 1.0900, 1.2900, 1.2700, 1.6500, 1.6200),
+    (56, 0.9800, 0.9800, 1.1200, 1.1200, 1.3200, 1.3100, 1.7000, 1.6600),
+    (57, 1.0000, 1.0000, 1.1500, 1.1500, 1.3500, 1.3500, 1.7500, 1.7000),
+    (58, 1.0100, 1.0100, 1.1500, 1.1600, 1.3500, 1.3600, 1.7500, 1.7200),
+    (59, 1.0200, 1.0200, 1.1500, 1.1700, 1.3500, 1.3700, 1.7500, 1.7400),
+    (60, 1.0300, 1.0300, 1.1500, 1.1800, 1.3500, 1.3800, 1.7500, 1.7600),
+    (61, 1.0400, 1.0400, 1.1500, 1.1900, 1.3500, 1.3900, 1.7500, 1.7800),
+    (62, 1.0500, 1.0500, 1.1500, 1.2000, 1.3500, 1.4000, 1.7500, 1.8000),
+    (63, 1.0300, 1.0400, 1.1400, 1.1800, 1.3300, 1.3800, 1.7200, 1.7800),
+    (64, 1.0100, 1.0300, 1.1300, 1.1600, 1.3100, 1.3600, 1.6900, 1.7600),
+    (65, 0.9900, 1.0200, 1.1200, 1.1400, 1.2900, 1.3400, 1.6600, 1.7400),
+    (66, 0.9700, 1.0100, 1.1100, 1.1200, 1.2700, 1.3200, 1.6300, 1.7200),
+    (67, 0.9500, 1.0000, 1.1000, 1.1000, 1.2500, 1.3000, 1.6000, 1.7000),
+    (68, 0.9400, 0.9900, 1.0900, 1.0900, 1.2400, 1.2900, 1.5900, 1.6800),
+    (69, 0.9300, 0.9800, 1.0800, 1.0800, 1.2300, 1.2800, 1.5800, 1.6600),
+    (70, 0.9200, 0.9700, 1.0700, 1.0700, 1.2200, 1.2700, 1.5700, 1.6400),
+    (71, 0.9100, 0.9600, 1.0600, 1.0600, 1.2100, 1.2600, 1.5600, 1.6200),
+    (72, 0.9000, 0.9500, 1.0500, 1.0500, 1.2000, 1.2500, 1.5500, 1.6000),
+    (73, 0.9000, 0.9400, 1.0400, 1.0400, 1.1900, 1.2400, 1.5300, 1.5800),
+    (74, 0.9000, 0.9300, 1.0300, 1.0300, 1.1800, 1.2300, 1.5100, 1.5600),
+    (75, 0.9000, 0.9200, 1.0200, 1.0200, 1.1700, 1.2200, 1.4900, 1.5400),
+    (76, 0.9000, 0.9100, 1.0100, 1.0100, 1.1600, 1.2100, 1.4700, 1.5200),
+    (77, 0.9000, 0.9000, 1.0000, 1.0000, 1.1500, 1.2000, 1.4500, 1.5000),
+    (78, 0.9000, 0.9000, 0.9900, 0.9900, 1.1200, 1.1600, 1.3800, 1.4200),
+    (79, 0.9000, 0.9000, 0.9800, 0.9800, 1.0900, 1.1200, 1.3100, 1.3400),
+    (80, 0.9000, 0.9000, 0.9700, 0.9700, 1.0600, 1.0800, 1.2400, 1.2600),
+    (81, 0.9000, 0.9000, 0.9600, 0.9600, 1.0300, 1.0400, 1.1700, 1.1800),
+    (82, 0.9000, 0.9000, 0.9500, 0.9500, 1.0000, 1.0000, 1.1000, 1.1000),
+    (83, 0.9100, 0.9100, 0.9500, 0.9500, 0.9900, 0.9900, 1.0700, 1.0700),
+    (84, 0.9200, 0.9200, 0.9500, 0.9500, 0.9800, 0.9800, 1.0400, 1.0400),
+    (85, 0.9300, 0.9300, 0.9500, 0.9500, 0.9700, 0.9700, 1.0100, 1.0100),
+    (86, 0.9400, 0.9400, 0.9500, 0.9500, 0.9600, 0.9600, 0.9800, 0.9800),
+    (87, 0.9500, 0.9500, 0.9500, 0.9500, 0.9500, 0.9500, 0.9500, 0.9500),
+    (88, 0.9400, 0.9400, 0.9400, 0.9400, 0.9400, 0.9400, 0.9400, 0.9400),
+    (89, 0.9300, 0.9300, 0.9300, 0.9300, 0.9300, 0.9300, 0.9300, 0.9300),
+    (90, 0.9200, 0.9200, 0.9200, 0.9200, 0.9200, 0.9200, 0.9200, 0.9200),
+    (91, 0.9100, 0.9100, 0.9100, 0.9100, 0.9100, 0.9100, 0.9100, 0.9100),
+    (92, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (93, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (94, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (95, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (96, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (97, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (98, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (99, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (100, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (101, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (102, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000, 0.9000),
+    (103, 0.9330, 0.9330, 0.9330, 0.9330, 0.9330, 0.9330, 0.9330, 0.9330),
+    (104, 0.9670, 0.9670, 0.9670, 0.9670, 0.9670, 0.9670, 0.9670, 0.9670),
+)
+
 
 #: §6.C.4, Tables 6.2 and 6.3: prescribed partial withdrawal rates for
 #: Accumulation Reserving Category contracts, by attained-age band and by

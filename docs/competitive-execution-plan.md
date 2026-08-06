@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,392
+   naive implementation otherwise. The suite (`pytest`, currently 2,402
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -930,12 +930,15 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: **milestone M5 is reached** — C1–C6
-are all shipped, each with its sharp-edge finding documented, and the
+*Next action for the implementing agent: **B1 (§4, compiled kernels) is the
+next item**, and it is now the largest thing left. Milestone M5 is reached —
+C1–C6 are all shipped, each with its sharp-edge finding documented, the
 catalogue's nineteen templates all have a worked example for the first time
-since RFC-032, and the evidence pack's equivalence section is fully attested
-for the first time. Two things are open, plus one standing rule the last
-three RFCs earned.
+since RFC-032, and the evidence pack's equivalence section is fully attested.
+F7 (RFC-071) closed the last §6.C item that was an implementation task, so
+what remains on that thread is one letter to the NAIC. Three things are open,
+plus the standing rules the last four RFCs earned — and **two of those rules
+belong in B1's acceptance criteria**, not merely in its RFC.
 
 **1. The evidence pack's equivalence section is clean — keep it that way.**
 This entry used to name the open work; there is none. RFC-068 read the
@@ -962,14 +965,27 @@ stochastic only … a stated class, not an omission" — was wrong for as long
 as it existed, and the pack had been contradicting it the whole time. Where
 a class exclusion cannot be enforced, it is a test, not a paragraph.
 
-**2. The four §6.C tables still uncarried (RFC-067).** Unchanged and still
-needing a human: **Table 6.5 fails one of its own three worked examples**
-under a reading that reproduces the other two exactly, so either the reading
-is wrong where those two cannot discriminate or the Guidance Note has an
-error. The three structured-settlement *F<sub>x</sub>* sets each cross a
-contract-year band with sex, and a second dimension read wrongly is a
-plausible number in every cell rather than an obviously missing one. Seven
-of eleven are carried.
+RFC-071 adds a third to the pair, from the same family: **a refusal whose
+condition has emptied out stops being asserted, silently.** Its category
+refusal was tested by looping over `set(FX_CATEGORIES) -
+set(FX_CATEGORIES_CARRIED)`; carrying the last three tables made that set
+empty, and the loop would have gone on passing while asserting nothing. The
+fix is the `test_the_reason_mechanism_still_answers_with_nothing_to_report`
+pattern one level up: narrow the state inside the test so the mechanism has
+to fire. Worth checking wherever a test iterates a difference of two sets
+that the work is closing.
+
+**2. One §6.C table remains uncarried, and it needs a human.** F7 (RFC-071)
+carried the three structured-settlement *F<sub>x</sub>* sets, so §6.C is at
+**ten of eleven**. What is left is **Table 6.5**, and it is not an
+implementation task: it fails one of its own three worked examples under a
+reading that reproduces the other two exactly, the reading is **exonerated**
+(1.0% appears in no at-or-after-expiry row, so Example 3 cannot be produced
+by any cell of the table), and 144 parameterised readings reproduce none of
+it. The evidence is complete in `docs/sources/vm22-table-6-5-reading.md` and
+`-published-record.md`, including the APF route and the sharpest form of the
+question — *"under your intended rule, when does column B's printed 2.0%
+after-expiry block ever apply?"* **Do not re-investigate it.** File the APF.
 
 **3. B1 (§4) is still unstarted** and carries a written assessment of why.
 When it lands, note that RFC-070's rule applies to it directly: a compiled
@@ -1010,8 +1026,9 @@ and half built** (RFC-067). F2 is built (RFC-050). VM-20 Appendix 1.F was
 read and does not contain scenario data at all — it prescribes shocks to a
 generator, so carrying it means building the generator. The prescribed
 **assumption sets** were the carryable half, and
-`engine/report/vm22_prescribed.py` now carries Tables 6.1 and 6.7 with
-§6.C.2's expense rule and §6.C.8.i's mortality formula. `Provisional` is the
+`engine/report/vm22_prescribed.py` now carries **ten of §6.C's eleven
+tables** — 6.1 to 6.4 and 6.6 to 6.11 — with §6.C.2's expense rule and
+§6.C.8's mortality formula over both of its base tables. `Provisional` is the
 mechanism RFC-050 said the dated-set pattern lacked: the NAIC's own square
 brackets around `[1.025]` and `[2.5%]` mark figures still under discussion,
 and the flag is *derived* from the values rather than listed beside them.
@@ -1024,8 +1041,9 @@ F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045, RFC-046) — milestone
 M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) — milestone M4 — C1–C6
 (RFC-039, RFC-040, RFC-041, RFC-042, RFC-054, RFC-055) — **milestone M5** —
 and F2 (RFC-050), with VM-22's remediation V1–V4 (RFC-062, RFC-063), the
-two unplanned schema items E5 and E6 (RFC-066, RFC-068), and the two
-equivalence-attestation items F5 and F6 (RFC-069, RFC-070).*
+two unplanned schema items E5 and E6 (RFC-066, RFC-068), the two
+equivalence-attestation items F5 and F6 (RFC-069, RFC-070), and F7
+(RFC-071).*
 
 ### E5 — Assumption objects in the request schema (RFC-066) — effort S — **done**
 Unplanned, and raised by C3. The RFC-032 request schema carried scalars and
@@ -1179,3 +1197,69 @@ policy, producing *equal numbers with an unequal contract* — which is
 invisible to any test that compares values. `tests/test_spouse_binding.py`
 and `tests/test_slab_binding.py` both assert shape, dtype and value
 separately for that reason.
+
+### F7 — The three structured-settlement *F<sub>x</sub>* tables (RFC-071) — effort M — **done**
+The last uncarried §6.C work that was an implementation task rather than a
+question for the NAIC. RFC-067 carried seven of the eleven prescribed tables
+and left four; three of those were simply unread, and the sentence it left
+behind said why they were delicate rather than why they were absent.
+
+**Outcome (RFC-071).** Tables 6.9, 6.10 and 6.11 are carried — 312 rows read,
+309 transcribed, all 2,266 printed cells reproduced through `fx_factor`.
+§6.C is at **ten of eleven**, and the remaining one is Table 6.5, which is
+waiting on an APF and not on effort. The provenance string needed no editing:
+RFC-067 made it derived, so moving three entries between `TABLES_CARRIED` and
+`TABLES_NOT_CARRIED` re-derived "10 of 11" on its own. Its *verb* did need
+deriving — with the absent count down to one, "the other 1 (Table 6.5) **are**
+recorded" reads as a broken sentence, and a generated sentence that reads
+wrong is one a reader stops trusting.
+
+Four things are worth carrying forward.
+
+**The second dimension is banded differently in the two tables, and the
+boundaries they share are the trap.** Table 6.9 bands contract years
+1–5/6–10/≥11; Tables 6.10 and 6.11 band them 1–10/11–20/21–30/≥31. They share
+1 and **11**, and contract year 11 opens Table 6.9's *third* band and the
+substandard tables' *second*. A band index computed against the wrong list is
+in range and reads a real cell — 170% instead of 225% for a female aged 62 —
+so `contract_year` is required for these categories and refused for the two
+that have no such axis, and the wrong reading is **computed on purpose** in
+the test rather than described.
+
+**§6.C.8.iii projects a different base table, from a different year.**
+§6.C.8.i and .ii project the 2012 IAM Basic Mortality Table from 2012;
+§6.C.8.iii projects the **1983 IAM Table 'a'** (VM-M §1.M) from **2011**. At
+a 2026 valuation *n* is 14 for one and 15 for the other, and `q (1 − G2)^n ×
+F` returns an ordinary number under either. Neither table belongs here, but
+*which* of them a category calls for does, so `FX_MORTALITY_BASIS` carries
+the pairing and `projection_offset` derives the offset instead of leaving the
+subtraction to the call site. This came from reading the prose above the
+grid, which is where the last three sessions' findings have all come from.
+
+**The substandard factors are lower than the standard ones, and Table 6.11 is
+not monotone.** 55% against 300% at the youngest ages, because §6.C.8.iii
+applies Actuarial Guideline IX-A's Constant Extra Death loading *before* the
+factor — so the two multiply different rates and are not comparable, the
+RFC-055 rule again. And 6.11's *male* columns fall from the 21–30 band to the
+≥31 band at attained ages 2 to 6 and nowhere else in any of the three tables.
+Both are the shape of finding that gets a correct transcription "corrected"
+until it agrees with the intuition; both are asserted.
+
+**A refusal whose difference has emptied out needs its mechanism asserted
+directly.** `fx_factor` refuses a category §6.C.8 covers and this module has
+not transcribed, and the test looped over `set(FX_CATEGORIES) -
+set(FX_CATEGORIES_CARRIED)`. That set is now empty and the loop asserts
+nothing while continuing to pass — the same trap as a parametrised test over
+an empty list. The carried set is now narrowed inside the test and the
+refusal has to still fire, with the "category the section does not have at
+all" case asserted alongside so the narrowing cannot collapse the two errors
+into one.
+
+**On method.** The coordinate reader was calibrated against Tables 6.7 and
+6.8 before it was trusted on anything uncarried — it reproduces
+`_FX_ACCUMULATION` and `_FX_PAYOUT` cell for cell — and every page was
+required to repeat its own banner and band headers, because each of these
+tables spans four PDF pages and two of those pages carry the tail of one
+table and the head of the next. A second, independent read by word
+x-position agrees on all 312 rows; its first, naive version disagreed on 25,
+every one of them on those two shared pages.

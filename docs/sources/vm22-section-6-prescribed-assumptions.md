@@ -83,39 +83,138 @@ none of this is a reserve floor at year-end 2026, and that is a real reason
 to sequence it behind reserve arithmetic. It is *not* a reason to call the
 question closed, and conflating the two is the error this file corrects.
 
-## Seven of the eleven are now carried
+## Ten of the eleven are now carried
 
-`engine/report/vm22_prescribed.py` (RFC-067) carries **Tables 6.1, 6.2, 6.3,
-6.4, 6.6, 6.7 and 6.8**, all transcribed from the primary text above and checked
-against it, together with §6.C.2's expense rule and §6.C.8.i's mortality
-formula. `tests/test_vm22_prescribed.py` asserts the values against the text
-rather than against the module's own constants.
+`engine/report/vm22_prescribed.py` carries **Tables 6.1, 6.2, 6.3, 6.4, 6.6,
+6.7 and 6.8** (RFC-067) and **Tables 6.9, 6.10 and 6.11** (RFC-071), all
+transcribed from the primary text above and checked against it, together with
+§6.C.2's expense rule and §6.C.8's mortality formula.
+`tests/test_vm22_prescribed.py` asserts the values against the text rather
+than against the module's own constants.
 
 Both bracketed figures are carried as `Provisional`, which is the mechanism
 this file's earlier note said the dated-set pattern lacked.
 
-**The remaining four are still recorded and not carried**, and `fx_factor`
-refuses a category whose table is absent rather than serving the one that is
-present. Those six each carry a *second* dimension — an age band crossed with
-a surrender-charge duration, or a contract-year band crossed with sex — and a
-table whose second dimension is read wrongly is a plausible number in every
-cell rather than an obviously missing one. The reason is transcription risk, not effort: each table needs
-reading against the primary text before it is worth having, and a
-mis-transcribed prescribed factor is worse than an absent one because it
-looks authoritative.
+**Table 6.5 is the one that remains recorded and not carried**, for the
+specific reason set out below, and `fx_factor` still refuses a category whose
+table is absent rather than serving the one that is present — §6.C.8 can grow
+a category, and the refusal is exercised by narrowing the carried set inside
+a test rather than by a loop over a now-empty difference.
 
-One thing the transcription found. **Table 6.7 is not monotone.** Every
-column troughs in the early-to-mid sixties and the male columns drop below
-100% — a male at 62 takes 95% of the 2012 IAM Basic rate without a
-guaranteed living benefit and 78% with one. Below 100% means the prescribed
-basis expects those lives to die more slowly than the base table, which is
-the conservative direction for a benefit that pays while they are alive. A
-test written to the obvious shape — high at young ages, grading to 100% —
-fails against the real table, and it did.
+Three things the transcription found.
+
+**Table 6.7 is not monotone.** Every column troughs in the early-to-mid
+sixties and the male columns drop below 100% — a male at 62 takes 95% of the
+2012 IAM Basic rate without a guaranteed living benefit and 78% with one.
+Below 100% means the prescribed basis expects those lives to die more slowly
+than the base table, which is the conservative direction for a benefit that
+pays while they are alive. A test written to the obvious shape — high at
+young ages, grading to 100% — fails against the real table, and it did.
+
+**The structured-settlement tables do not band their second axis the same
+way.** Table 6.9 uses contract years 1–5 / 6–10 / ≥11 (six value columns);
+Tables 6.10 and 6.11 use 1–10 / 11–20 / 21–30 / ≥31 (eight). The two
+boundaries they share, 1 and **11**, are the trap rather than the
+reassurance: contract year 11 opens Table 6.9's *third* band and the
+substandard tables' *second*. A band index computed against the wrong list
+stays in range and reads a real cell — for a female aged 62 in contract year
+11, 170% instead of 225%.
+
+**And they floor at attained age 2, not 50.** Structured settlements are
+written on claimants and a claimant can be an injured child, so `FX_MIN_AGE`
+cannot be reused: clamping a five-year-old to the age-50 row returns 198%
+where Table 6.9 says 318%.
 
 The standard projection amount itself is still unbuilt: §3.C makes it
 disclosure-only for year-end 2026, which is why the assumptions land before
 the calculation.
+
+
+## §6.C.8.iii projects a different table, from a different year
+
+Recorded here because it is invisible in the arithmetic. §6.C.8.i and .ii
+read
+
+> the mortality rate for a contract holder age x in year (2012 + n) shall be
+> calculated using the following formula, where q<sub>x</sub> denotes
+> mortality from the **2012 IAM Basic Mortality Table**, as defined in VM-M
+> Section 2.C
+
+and §6.C.8.iii reads
+
+> For Structured Settlement contracts for Standard lives, the mortality rate
+> for an annuitant age x in year **(2011 + n)** shall be calculated using the
+> following formula, where q<sub>x</sub> denotes mortality from the **1983 IAM
+> Table 'a'**, as defined in VM-M **Section 1.M**
+
+Same formula, different base table *and* a base year one earlier. At a 2026
+valuation *n* is 14 for an accumulation contract and **15** for a structured
+settlement; using the accumulation offset applies one improvement year too
+few, which overstates mortality and understates an annuity reserve — and
+`q (1 − G2)^n × F` returns an ordinary-looking number either way. The module
+carries the pairing as data (`FX_MORTALITY_BASIS`) and derives the offset
+from it (`projection_offset`) rather than leaving the subtraction to the call
+site.
+
+Two more distinctions from the same subsection, both easy to lose:
+
+- §6.C.8.ii covers the Payout Annuity Reserving Category **"other than
+  Structured Settlement Contracts"**. Structured settlements sit inside that
+  category and are carved out of Table 6.8; `category="payout_annuity"` in
+  the module means the carve-out, not the category.
+- **The substandard factors are lower than the standard ones** — 55% against
+  300% at the youngest ages — which reads backwards until the text is read:
+  substandard mortality reflects "the inclusion of the 'Constant Extra Death'
+  (CED) methodology described in Actuarial Guideline IX-A. The CED shall be
+  applied prior to the application of multiplicative F<sub>x</sub> factor."
+  The impairment is already in the rate before the factor touches it, so the
+  two sets multiply different quantities and are not comparable. This is the
+  kind of finding that gets a correct transcription "fixed" until it agrees
+  with the intuition.
+
+One more shape note, asserted in the tests because it would otherwise look
+like a transcription slip: **Table 6.11 is not monotone across its contract
+year bands.** Every other column set rises with duration; 6.11's *male*
+columns fall from the 21–30 band to the ≥31 band at attained ages 2 to 6
+(75% → 70% at age 2, 79% → 78% at 6) and nowhere else. From age 7 upward its
+male and female columns are identical.
+
+### How these three were read
+
+The reader is kept, in
+[`scripts/extract_fx_structured.py`](scripts/extract_fx_structured.py) —
+standalone, no repo imports, and the thing to point at the 2027 edition:
+
+```bash
+pip install pymupdf
+curl -sSLo vm.pdf https://content.naic.org/sites/default/files/pbr_data_valuation_manual_current_edition.pdf
+python docs/sources/scripts/extract_fx_structured.py vm.pdf
+```
+
+It prints the three tables in the form the module stores them, and **exits
+non-zero rather than printing anything** if either of its two self-checks
+fails.
+
+Coordinate-based extraction (PyMuPDF `page.find_tables()`), calibrated first
+against Tables 6.7 and 6.8, which are already carried: parsing them by the
+same code path reproduces `_FX_ACCUMULATION` and `_FX_PAYOUT` cell for cell,
+55 rows each — the script asserts this by digest, and refuses to print
+anything if it fails, because a reader that disagrees with a hand-checked
+transcription has demonstrated it should not be believed about a table
+nothing can check it against. Every page was then checked to carry its own
+banner
+("Structured Settlements – Standard Lives", …) and its own band headers in
+order, so a continuation page cannot be attributed to the wrong table; ages
+were required to run 2 to 105 contiguously with exactly one "≤2" and one
+"≥105" row. A second, independent read by word x-position clustering —
+bounded at the next table's heading on pages 269 and 272, which each carry
+the tail of one table and the head of the next — agrees on all 312 rows.
+Locations in the 2026 edition (SHA-256 `6613dea5…`): 6.9 at PDF pages
+266–269, 6.10 at 269–272, 6.11 at 272–275 — found by heading, never by page
+number, because **VM-21 has its own Tables 6.5 to 6.9**. Its "Table 6.7:
+Standard Table B for Hybrid GMIB Annuitization" is on PDF page 177 and its
+Table 6.9 — a wholly different *F<sub>x</sub>*, for variable annuities with
+guaranteed living benefits — is on 179.
 
 
 ## Table 6.5 contradicts itself, and the reading is exonerated
