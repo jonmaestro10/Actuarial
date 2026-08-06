@@ -48,7 +48,7 @@ reserve too *small*.
 | 5.A.2.b.i–ii | starting assets on the ceded portion | **out of scope** | acceptable approaches documented; an input, computed nowhere |
 | 5.A.3 | the bases may differ on the exclusion test's outcome | **implemented** | V3: a method per basis on `ReservingGroup` |
 | 5.A.4 | pre-ceded standard projection amount | **out of scope** | follows the SPA, disclosure-only per 3.C |
-| 6 | Standard Projection Amount | **out of scope** | disclosure-only per 3.C |
+| 6 | Standard Projection Amount | **out of scope** | disclosure-only per 3.C — but §6.C's eleven prescribed tables *are* carryable dated data, see [`vm22-section-6-prescribed-assumptions.md`](vm22-section-6-prescribed-assumptions.md) |
 | 7.A–7.B | exclusion routes: ratio test, demonstration, certification | **implemented** | all three `EXCLUSION_BASES` |
 | 7.C | SERT: `(b−a)/c` < lesser of 6.0% and materiality | **implemented** | corrected this pass; `c` is the PV of benefits |
 | 7.D | Stochastic Exclusion Demonstration Test | **out of scope** | a documented demonstration, not a calculation |

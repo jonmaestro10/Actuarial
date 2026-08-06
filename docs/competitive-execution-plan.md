@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,157
+   naive implementation otherwise. The suite (`pytest`, currently 2,193
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -104,7 +104,7 @@ what any incumbent ships rather than merely reaching parity.
 | Pensions / longevity as products | ✅ shipped (C3, RFC-041): `PensionBuyout` on the payout-annuity chassis (deferment, revaluation, escalation, reversion) and `LongevitySwap` as a pooled model | Buy-in/buy-out, longevity swap templates | Same — here, that the two templates land in *different* executor equivalence classes, and that the class is a property of the product rather than the chassis | C3 |
 | US health / LTC | ❌ | LTC template on the multi-state engine | Same | C4 |
 | Regulatory track record / evidence | 🟡 evidence pack shipped (F1, RFC-049): test inventory, run equivalence attestation, coverage, parity records, digest-identical rebuild in CI | — | Machine-generated validation **evidence pack** — the closest software can get to a track record | F1 |
-| Vendor library update cadence | ❌ (not software) | — | Regulation-as-dated-sets diff reports (generalize the 2015/35 vs 2026/269 pattern) | F2 |
+| Vendor library update cadence | ✅ shipped (F2, RFC-050): `engine/report/regdiff.py` | — | Regulation-as-dated-sets diff reports — per-module deltas, per-clause forward *and* backward drivers, and a named residual, because the clauses provably do not add up | F2 |
 | Exact-decimal audit mode (PLAN §3.4 promise) | ❌ | — | Decimal sign-off executor; no incumbent offers one | F3 |
 | General insurance beyond chain-ladder LIC | 🟡 | Reserve variability (Mack, ODP bootstrap) + premium-liability template | Reserve *ranges* reproduced against published triangles in CI — Igloo/ResQ assert them, we prove them | C5 |
 | Takaful | ❌ | Wakala/mudarabah template on the with-profits chassis | Surplus distribution and qard hasan golden-tested in the open | C6 |
@@ -633,12 +633,48 @@ the direct counter to "the incumbents are audited and regulator-familiar"
 base for SII internal-model validation and VM-G governance. Accept: pack
 builds in CI; rebuilding without code changes is digest-identical.
 
-### F2 — Regulation diff reports (RFC-050) — effort S
+### F2 — Regulation diff reports (RFC-050) — effort S — **done**
 Generalize the dated-sets pattern (market risk already carries 2015/35 *and*
 2026/269): `engine/report/regdiff.py` runs one block under two dated texts
 and reports per-module SCR deltas with drivers. The open answer to the
 vendors' quarterly-library-update moat: regulation changes become a diffable,
 testable artifact.
+
+**Outcome (RFC-050).** Shipped, pulled forward from §8 after VM-22's
+remediation raised it a third time. `regulation_diff` runs one block under
+two dated texts and attributes the movement clause by clause — and the
+design point is that **it does not add up**. RFC-026's measurement survives:
+2026/269's clauses move a block by +1.35 one at a time and +6.49 together,
+so `interaction` is a first-class number, `reconciles()` asserts clauses plus
+interaction equal the total exactly, and `driver` returns `None` where the
+interaction exceeds every clause — because naming the largest row there
+reports an artefact of the decomposition as a fact about the text. Forward
+and backward one-at-a-time effects are both reported, since their gap is a
+clause's interaction with the rest and the case worth surfacing is the clause
+that is inert alone and material in company.
+
+**It answered half of the open question it was pulled forward for, in the
+negative.** VM-20 Appendix 1.F was read: it does not give 16 scenarios, it
+gives 16 descriptions of shocks to the **prescribed economic scenario
+generator**, every one a function of the valuation-date yield curve and of
+that generator's own state variables and standard errors. There is no table
+to carry as a dated set; carrying them means implementing the generator,
+which is a different and much larger item. Recorded in
+`docs/sources/vm20-appendix-1f-scenarios.md`.
+`engine/report/vm22.stochastic_exclusion_test` is unchanged and was already
+the right shape — it takes the baseline and the adverse set as inputs.
+
+**The other half stays open, and is the buildable one.** The question named
+the prescribed *assumption sets* as well as the scenarios, and those are the
+opposite answer: VM-22 §6.C prescribes eleven numeric tables and a
+closed-form mortality basis, all dated and all exactly the shape
+`DELEGATED_2015`/`DELEGATED_2026` already has. See
+`docs/sources/vm22-section-6-prescribed-assumptions.md`. Two constraints for
+whoever builds it: the NAIC's own square brackets around `[1.025]` and
+`[2.5%]` mark figures still under discussion, so the dated-set pattern needs
+a way to say *provisional*; and §3.C makes the standard projection amount
+disclosure-only for year-end 2026, which is why it sequences behind reserve
+arithmetic.
 
 ### F3 — Exact-decimal audit mode (RFC-051) — effort M
 PLAN §3.4's unbuilt promise: the interpreted executor over
@@ -780,7 +816,7 @@ order unless there is a concrete reason not to.
 ---
 
 *Next action for the implementing agent: C4 (§10, US health / LTC,
-RFC-042) is the next item — `engine/library/long_term_care.py` on the
+RFC-042) — `engine/library/long_term_care.py` on the
 multi-state engine, with `engine/library/income_protection.py` as the
 pattern. Two things C3 leaves on the record. First, the executor
 classification note below has now been exercised and it holds: `PensionBuyout`
@@ -794,13 +830,41 @@ one reason: the RFC-032 request schema cannot express an assumption object.
 That is now the largest single gap in the pack's coverage and it is a schema
 item, not a library one.
 
-One dated-set gap is on record from C1 and C2 and neither closed it: the
-prescribed assumption sets and scenario paths (VM-22's Standard Projection
-Amount, the prescribed cash-flow-testing scenarios). VM-22's remediation
-plan closed V1–V4 and its open question is the same one — the 16 prescribed
-economic scenarios belong with F2. B1 (§4) remains unstarted and carries a
+The dated-set gap that C1 and C2 both left on the record is now **half
+answered and half scoped**. F2 is built (RFC-050). VM-20 Appendix 1.F was
+read and does not contain scenario data at all — it prescribes shocks to a
+generator, so carrying it means building the generator. But the prescribed
+**assumption sets** are carryable dated data: VM-22 §6.C holds eleven
+numeric tables and a closed-form mortality basis, and building them is the
+next real dated-set item. See
+`docs/sources/vm22-section-6-prescribed-assumptions.md`. It sits inside the
+Standard Projection Amount, which §3.C makes disclosure-only for 2026. B1 (§4) remains unstarted and carries a
 written assessment of why. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4
 (RFC-036) — milestone M1 — F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044,
 RFC-045, RFC-046) — milestone M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) —
-milestone M4 — and C1, C2, C3 (RFC-039, RFC-040, RFC-041), with VM-22's
-remediation V1–V4 (RFC-062, RFC-063).*
+milestone M4 — C1, C2, C3 (RFC-039, RFC-040, RFC-041) and F2 (RFC-050),
+with VM-22's remediation V1–V4 (RFC-062, RFC-063).
+
+**One unplanned item, identified and built this run: E5 (RFC-066).** C3
+added two templates that could carry no worked example, taking the count to
+eight of sixteen unavailable over HTTP and therefore invisible to the
+evidence pack's specimen set. The request schema now takes a `kind` and
+carries a `ValuationBasis` — and two of them, for the swap — with ISO-8601
+dates coerced at the HTTP boundary rather than inside `from_dicts`. Eleven
+specimens, up from eight. What remains out of scope is now one category
+rather than two: a bound scenario set (three templates), a
+`TransitionMatrix`, and an index-crediting rule. **C4 will hit the
+`TransitionMatrix` half of that** — `IncomeProtection` is already there for
+the same reason — so it is worth deciding before C4 starts whether the
+multi-state assumption object gets the same treatment.*
+
+### E5 — Assumption objects in the request schema (RFC-066) — effort S — **done**
+Unplanned, and raised by C3. The RFC-032 request schema carried scalars and
+a flat mortality table, which kept the whole `ValuationBasis` chassis — half
+the catalogue — off the API and out of the evidence pack's specimen set.
+`assumptions` is now a discriminated union on `kind`, defaulting to
+`"scalar"` so no existing request changes meaning; that default is asserted
+by fingerprint rather than by type, because a silent revaluation is what it
+exists to prevent. Dates are coerced at the HTTP boundary on an exact
+ISO-8601 match, and a string in that shape which is not a valid date is
+refused rather than passed through.

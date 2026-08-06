@@ -153,3 +153,88 @@ def test_the_standard_errors_are_recorded_but_nothing_computes_them_yet():
             f"{absent} exists now — C5 has landed, so wire it to "
             f"PUBLISHED_STANDARD_ERROR_PCT and delete this test"
         )
+
+
+# --------------------------------------------------------------------------
+# Solvency II: Article 164(3)'s market risk correlation matrix
+# --------------------------------------------------------------------------
+
+#: Article 164(3) as published, order (interest, equity, property, spread,
+#: concentration, currency), with the direction-dependent cells written as
+#: ``None`` and supplied separately — they are parameter *A*, and writing a
+#: number there would be recording one direction as though it were the rule.
+#: See docs/sources/solvency2-market-correlation.md for the two published
+#: reproductions this is transcribed from.
+PUBLISHED_MARKET_CORRELATION = (
+    (1.00, None, None, None, 0.00, 0.25),
+    (None, 1.00, 0.75, 0.75, 0.00, 0.25),
+    (None, 0.75, 1.00, 0.50, 0.00, 0.25),
+    (None, 0.75, 0.50, 1.00, 0.00, 0.25),
+    (0.00, 0.00, 0.00, 0.00, 1.00, 0.00),
+    (0.25, 0.25, 0.25, 0.25, 0.00, 1.00),
+)
+
+#: "The parameter A shall be equal to 0 where the capital requirement for
+#: interest rate risk set out in Article 165 is the capital requirement
+#: referred to in point (a) of that Article" — the upward shock — "In all
+#: other cases, the parameter A shall be equal to 0,5."
+PUBLISHED_PARAMETER_A = {"up": 0.0, "down": 0.5}
+
+
+def test_the_market_correlation_matrix_is_the_regulations():
+    """Article 164(3), cell by cell, in both interest directions.
+
+    The check `docs/sources/solvency2-market-correlation.md` could not
+    support while EUR-Lex returned an empty body to every automated fetch.
+    The matrix has since been read from the UK Government's reproduction of
+    the Regulation as adopted, with EIOPA's Single Rulebook independently
+    confirming parameter A's definition.
+
+    Asserted against the *published* table rather than against the module's
+    own constants — restating the module's numbers back at it would only
+    check that they had been typed twice, which is the failure mode this
+    whole file exists to avoid.
+    """
+    from engine.report.market_risk import (
+        DELEGATED_2015, MARKET_RISKS, market_correlation,
+    )
+
+    assert MARKET_RISKS == ("interest", "equity", "property", "spread",
+                            "concentration", "currency")
+    for direction, a in PUBLISHED_PARAMETER_A.items():
+        matrix = market_correlation(DELEGATED_2015,
+                                    interest_direction=direction)
+        for i, row in enumerate(PUBLISHED_MARKET_CORRELATION):
+            for j, published in enumerate(row):
+                expected = a if published is None else published
+                assert matrix.matrix[i][j] == pytest.approx(
+                    expected, rel=0, abs=1e-12), (
+                    f"{MARKET_RISKS[i]}/{MARKET_RISKS[j]} is "
+                    f"{matrix.matrix[i][j]} on the {direction} scenario; "
+                    f"Article 164(3) publishes {expected}")
+
+
+def test_only_the_spread_cell_moves_under_the_amending_regulation():
+    """2026/269 splits Article 164(3)'s spread cell out of *A* as a separate
+    parameter *B*, and leaves *A* against equity and property alone.
+
+    "The amendment changed Article 164(3)" reads as though the whole row
+    moved. It did not, and a source file that recorded the amendment without
+    saying which cell it touched would leave a reader to assume the wider
+    change.
+    """
+    from engine.report.market_risk import (
+        DELEGATED_2015, DELEGATED_2026, MARKET_RISKS, market_correlation,
+    )
+
+    interest, spread = (MARKET_RISKS.index("interest"),
+                        MARKET_RISKS.index("spread"))
+    equity = MARKET_RISKS.index("equity")
+    before = market_correlation(DELEGATED_2015, interest_direction="down")
+    after = market_correlation(DELEGATED_2026, interest_direction="down")
+
+    assert before.matrix[interest][spread] == pytest.approx(0.50)
+    assert after.matrix[interest][spread] == pytest.approx(0.25)
+    # A, against equity and property, is 0.5 under both texts.
+    assert after.matrix[interest][equity] == pytest.approx(
+        before.matrix[interest][equity]) == pytest.approx(0.50)

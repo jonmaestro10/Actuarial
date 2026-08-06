@@ -18,19 +18,68 @@ A deployment that needs more passes its own builder to
 the risk margin's run-off driver and RFC-027 for the deferred tax
 demonstration: where the right answer is somebody else's, take it as an
 input rather than ship a guess.
+
+The one assumption *object* that is worth the format
+----------------------------------------------------
+That reasoning held for twenty-odd rich objects and stopped holding for one
+of them. Half the catalogue runs on a
+:class:`~engine.data.basis.ValuationBasis` — a mortality basis and a yield
+curve — and every one of those templates was unavailable over HTTP and
+therefore invisible to the evidence pack's specimen set, which walks
+``EXAMPLES``. The chassis is not exotic; it is where the library has been
+growing, and each new template on it widened the same gap.
+
+So ``assumptions`` is now a **discriminated union** on ``kind``:
+
+- ``"scalar"`` (the default, and what every existing request already is) —
+  the flat table and the scalar basis, unchanged in every particular;
+- ``"valuation_basis"`` — a :class:`~engine.data.mortality.MortalityBasis`
+  and a :class:`~engine.data.rates.YieldCurve`;
+- ``"longevity_swap_basis"`` — two of the above, one per leg.
+
+``kind`` defaults to ``"scalar"``, so no existing request changes meaning.
+That default is load-bearing rather than merely convenient: a request that
+omitted ``kind`` and got a different basis than it did last week would be a
+silent revaluation, which is the one failure this whole layer exists to
+prevent.
+
+What is still out of scope is unchanged and is now the *whole* of what is
+out of scope: a bound scenario set, a ``TransitionMatrix``, and an
+index-crediting rule. Those are five templates, and each needs a format
+invented for a moving class rather than a format for two settled ones.
+
+Dates arrive as strings, and are coerced here rather than in the core
+-------------------------------------------------------------------
+JSON has no date. :func:`~engine.data.modelpoints.from_dicts` does not
+coerce one — a string arrives as a string and the template asks it for a
+year — and it should not start, because it is a core function with callers
+who pass real objects and would not thank it for guessing.
+
+So the coercion lives in :func:`build_run`, at the HTTP boundary where the
+strings actually come from, and it is deliberately narrow: a value that is
+*exactly* an ISO-8601 ``YYYY-MM-DD`` string becomes a
+:class:`datetime.date`, and nothing else is touched. A model point field
+holding exactly that and needing to stay a string is a case nobody has, and
+the alternative it replaces — an ``AttributeError`` from inside a
+projection naming ``year`` — is the failure this exists to remove.
 """
 
 from __future__ import annotations
 
+import datetime as _dt
 import importlib
 import inspect
 import pkgutil
+import re
 from typing import Any, Callable
 
 import engine.library as library
 from engine.core.model import Model
 from engine.data.assumptions import Assumptions, MortalityTable
+from engine.data.basis import ValuationBasis
 from engine.data.modelpoints import from_dicts
+from engine.data.mortality import MortalityBasis
+from engine.data.rates import YieldCurve
 
 #: The assumption fields a request may set. Everything else on
 #: :class:`Assumptions` is an object rather than a scalar and is out of
@@ -42,6 +91,16 @@ SCALAR_ASSUMPTIONS = (
 )
 
 EXECUTORS = ("auto", "vectorized", "interpreted", "stochastic")
+
+#: What ``assumptions.kind`` may say. ``"scalar"`` is the default and is
+#: what every request written before this existed already means.
+ASSUMPTION_KINDS = ("scalar", "valuation_basis", "longevity_swap_basis")
+
+#: A model-point value in exactly this shape becomes a ``datetime.date``.
+#: Anchored at both ends on purpose: a partial or prefixed match is a
+#: string that resembles a date, and guessing at those is how a coercion
+#: rule stops being a rule.
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class UnknownModelError(LookupError):
@@ -71,17 +130,149 @@ def catalogue() -> dict:
     return dict(sorted(found.items()))
 
 
-def build_assumptions(spec: Any) -> Assumptions:
-    """An :class:`Assumptions` from the request's ``assumptions`` object.
+def _ages(table: Any, where: str) -> dict:
+    """``{age: rate}`` from a JSON object, whose keys are strings."""
+    if not isinstance(table, dict):
+        raise InvalidRequestError(f"{where} must be an age-to-rate object")
+    try:
+        return {int(age): float(rate) for age, rate in table.items()}
+    except (TypeError, ValueError) as exc:
+        raise InvalidRequestError(f"{where}: {exc}") from exc
 
-    ``mortality`` is either a number — a flat rate at every age — or a
-    mapping of age to rate, which is what
-    :class:`~engine.data.assumptions.MortalityTable` takes and which it
-    already validates for contiguity and range.
+
+def _by_sex(spec: Any, where: str) -> dict:
+    """``{sex: {age: rate}}``, the layout every published table comes in."""
+    if not isinstance(spec, dict) or not spec:
+        raise InvalidRequestError(
+            f"{where} must be a non-empty object keyed by sex code"
+        )
+    return {str(sex): _ages(table, f"{where}.{sex}")
+            for sex, table in spec.items()}
+
+
+def build_mortality_basis(spec: Any) -> MortalityBasis:
+    """A :class:`~engine.data.mortality.MortalityBasis` from JSON.
+
+    ``rates`` is ``{sex: {age: q}}`` and ``year_start`` is required, because
+    a generational basis without the year its rates are quoted at is a table
+    that means something different every year it is used.
+    """
+    if not isinstance(spec, dict):
+        raise InvalidRequestError("mortality must be an object for this kind")
+    spec = dict(spec)
+    rates = spec.pop("rates", None)
+    if rates is None:
+        raise InvalidRequestError("mortality.rates is required")
+    year_start = spec.pop("year_start", None)
+    if not isinstance(year_start, int) or isinstance(year_start, bool):
+        raise InvalidRequestError(
+            "mortality.year_start is required and must be an integer: a "
+            "generational basis without the year its rates are quoted at "
+            "means something different every year it is used"
+        )
+    improvement = spec.pop("improvement", None)
+    unknown = sorted(set(spec) - {"use_improvement", "calc",
+                                  "actual_daycount", "omega"})
+    if unknown:
+        raise InvalidRequestError(f"unsupported mortality fields {unknown}")
+    try:
+        return MortalityBasis(
+            _by_sex(rates, "mortality.rates"), year_start=year_start,
+            improvement=(None if improvement is None
+                         else _by_sex(improvement, "mortality.improvement")),
+            **spec,
+        )
+    except (TypeError, ValueError) as exc:
+        raise InvalidRequestError(f"mortality: {exc}") from exc
+
+
+def build_curve(spec: Any) -> YieldCurve:
+    """A :class:`~engine.data.rates.YieldCurve` from JSON.
+
+    ``rates`` is a list of period rates — one entry is a flat curve, which
+    is the common case and needs no special form.
+    """
+    if not isinstance(spec, dict):
+        raise InvalidRequestError("curve must be an object")
+    spec = dict(spec)
+    rates = spec.pop("rates", None)
+    if isinstance(rates, (int, float)) and not isinstance(rates, bool):
+        rates = [float(rates)]
+    if not isinstance(rates, list) or not rates:
+        raise InvalidRequestError(
+            "curve.rates must be a number or a non-empty list of rates"
+        )
+    unknown = sorted(set(spec) - {"freq", "horizon_years"})
+    if unknown:
+        raise InvalidRequestError(f"unsupported curve fields {unknown}")
+    try:
+        return YieldCurve([float(r) for r in rates], **spec)
+    except (TypeError, ValueError) as exc:
+        raise InvalidRequestError(f"curve: {exc}") from exc
+
+
+def build_valuation_basis(spec: dict) -> ValuationBasis:
+    """A :class:`~engine.data.basis.ValuationBasis` from JSON."""
+    spec = dict(spec)
+    spec.pop("kind", None)
+    mortality = spec.pop("mortality", None)
+    curve = spec.pop("curve", None)
+    if mortality is None or curve is None:
+        raise InvalidRequestError(
+            "a valuation_basis needs both assumptions.mortality and "
+            "assumptions.curve; it is a mortality basis and a discount "
+            "curve, and neither stands in for the other"
+        )
+    unknown = sorted(set(spec) - {"revalue_every"})
+    if unknown:
+        raise InvalidRequestError(f"unsupported basis fields {unknown}")
+    try:
+        return ValuationBasis(mortality=build_mortality_basis(mortality),
+                              curve=build_curve(curve), **spec)
+    except (TypeError, ValueError) as exc:
+        raise InvalidRequestError(f"assumptions: {exc}") from exc
+
+
+def build_assumptions(spec: Any) -> Any:
+    """The assumption object a request asks for, by ``kind``.
+
+    ``kind`` defaults to ``"scalar"``, which is what every request written
+    before the other kinds existed already means — and the default is
+    load-bearing rather than convenient, because a request that omitted it
+    and quietly got a different basis than it did last week would be a
+    silent revaluation.
     """
     if not isinstance(spec, dict):
         raise InvalidRequestError("assumptions must be an object")
+    kind = spec.get("kind", "scalar")
+    if kind not in ASSUMPTION_KINDS:
+        raise InvalidRequestError(
+            f"assumptions.kind must be one of {list(ASSUMPTION_KINDS)}, got "
+            f"{kind!r}"
+        )
+    if kind == "valuation_basis":
+        return build_valuation_basis(spec)
+    if kind == "longevity_swap_basis":
+        from engine.library.longevity_swap import LongevitySwapBasis
+
+        legs = {name: spec.get(name) for name in ("projection", "fixed")}
+        missing = sorted(n for n, v in legs.items() if not isinstance(v, dict))
+        if missing:
+            raise InvalidRequestError(
+                f"a longevity_swap_basis needs a valuation basis under each "
+                f"of 'projection' and 'fixed'; {missing} is missing. The two "
+                f"legs are two different survival schedules, which is the "
+                f"whole content of the contract."
+            )
+        try:
+            return LongevitySwapBasis(
+                projection=build_valuation_basis(legs["projection"]),
+                fixed=build_valuation_basis(legs["fixed"]))
+        except (TypeError, ValueError) as exc:
+            raise InvalidRequestError(f"assumptions: {exc}") from exc
+
     spec = dict(spec)
+    spec.pop("kind", None)
     mortality = spec.pop("mortality", None)
     if mortality is None:
         raise InvalidRequestError("assumptions.mortality is required")
@@ -162,13 +353,44 @@ def build_run(request: dict, models: dict | None = None) -> dict:
 
     return {
         "model_cls": models[name],
-        "modelpoints": from_dicts(rows),
+        "modelpoints": from_dicts(coerce_dates(rows)),
         "assumptions": build_assumptions(request.get("assumptions", {})),
         "proj_len": proj_len,
         "outputs": outputs,
         "executor": executor,
         "code_version": request.get("code_version"),
     }
+
+
+def coerce_dates(rows: list) -> list:
+    """ISO-8601 ``YYYY-MM-DD`` strings in model points become dates.
+
+    Applied at the HTTP boundary rather than inside
+    :func:`~engine.data.modelpoints.from_dicts`, which has callers passing
+    real :class:`datetime.date` objects and should not start guessing at
+    strings on their behalf. Narrow on purpose: an exact match and nothing
+    else, so the rule stays a rule.
+
+    A string that looks like a date and is not a real one — ``2021-13-01`` —
+    is refused rather than left as a string, because a caller who wrote it
+    meant a date and silently getting a string back is the outcome this
+    function exists to prevent.
+    """
+    coerced = []
+    for i, row in enumerate(rows):
+        out = {}
+        for field, value in row.items():
+            if isinstance(value, str) and _ISO_DATE.match(value):
+                try:
+                    value = _dt.date.fromisoformat(value)
+                except ValueError as exc:
+                    raise InvalidRequestError(
+                        f"modelpoints[{i}].{field}: {value!r} is shaped like "
+                        f"a date and is not one ({exc})"
+                    ) from exc
+            out[field] = value
+        coerced.append(out)
+    return coerced
 
 
 def builder(models: dict | None = None) -> Callable[[dict], dict]:

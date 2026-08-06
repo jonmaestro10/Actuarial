@@ -22,37 +22,39 @@ template's shape. ``tests/test_api_demo.py`` asserts all three, and asserts
 that every example supplies every field its model requires — so an example
 cannot rot into a lie while the template moves under it.
 
-Half the templates have no example, which is the more interesting half
-----------------------------------------------------------------------
-The catalogue offers sixteen and eight of them are here. The eight missing
-are missing for one reason with two faces, and it is
-:mod:`engine.api.catalogue`'s documented limit rather than an oversight:
+Five templates have no example, and they now want one thing
+-----------------------------------------------------------
+The catalogue offers sixteen and eleven of them are here. It used to be
+eight, and the three that joined — ``PayoutAnnuity``, ``PensionBuyout`` and
+``LongevitySwap`` — were kept out by the **request schema** rather than by
+anything about the templates: they need a
+:class:`~engine.data.basis.ValuationBasis` (``LongevitySwap`` needs two, one
+per leg) and their model points carry dates. Both limits are closed —
+:func:`~engine.api.catalogue.build_assumptions` takes a ``kind``, and
+:func:`~engine.api.catalogue.coerce_dates` turns an ISO-8601 string into a
+:class:`datetime.date` at the HTTP boundary.
 
-* ``IncomeProtection`` needs a ``TransitionMatrix``,
-  ``FixedIndexedAnnuity`` an index-crediting rule, ``UnitLinkedGMDB`` and
-  ``UnitLinkedGMxB`` a bound scenario set. Each is an **object** on
-  :class:`~engine.data.assumptions.Assumptions`, and the request schema
-  carries scalars plus a mortality table, on purpose.
-* ``PayoutAnnuity``, ``VariablePayoutAnnuity``, ``PensionBuyout`` and
-  ``LongevitySwap`` need a :class:`~engine.data.basis.ValuationBasis` —
-  ``LongevitySwap`` needs two, one per leg — and their model points carry
-  ``dob`` and ``valuation`` as :class:`datetime.date` objects. JSON has no
-  date, and :func:`~engine.data.modelpoints.from_dicts` does not coerce
-  one — a string arrives as a string and the template asks it for a year.
+That mattered beyond the demonstration. The evidence pack's specimen set
+walks ``EXAMPLES``, so a template with no example is invisible to it, and
+half the catalogue was in that position for one reason with two faces.
 
-That whole chassis is therefore invisible to the evidence pack's specimen
-set, which walks ``EXAMPLES``. It is a limit of the **request schema**, not
-of the templates, and closing it means teaching the schema to express an
-assumption object rather than adding rows here.
+What is left is one category rather than two: ``IncomeProtection`` needs a
+``TransitionMatrix``, ``FixedIndexedAnnuity`` an index-crediting rule, and
+``UnitLinkedGMDB``, ``UnitLinkedGMxB`` and ``VariablePayoutAnnuity`` a bound
+scenario set. Each is an **object** on
+:class:`~engine.data.assumptions.Assumptions` whose serialisation would have
+to be invented for a class that is still moving, which is the reasoning
+:mod:`engine.api.catalogue`'s docstring gives and which still holds for
+these five.
 
 :data:`UNAVAILABLE` records that, per template, so ``GET /models`` can say
 which of the sixteen a caller can actually run here and why the rest are
 not. A catalogue that lists a model it cannot run and does not say so is
-worse than one that lists eight.
+worse than one that lists eleven.
 
-The way to run the other eight is the same as it has always been: pass your
+The way to run the other five is the same as it has always been: pass your
 own ``build`` to :func:`engine.api.app.create_app`, which is where an
-assumption basis richer than a scalar belongs.
+assumption basis richer than these belongs.
 """
 
 from __future__ import annotations
@@ -94,6 +96,37 @@ def _gompertz(ages: range, a: float = 0.0004, b: float = 1.09,
 
 #: The specimen table the life examples share.
 MORTALITY = _gompertz(range(18, 111))
+
+
+def _gompertz_by_sex(ages: range) -> dict:
+    """The same curve for two sexes, the layout a real table comes in.
+
+    :class:`~engine.data.mortality.MortalityBasis` is keyed by sex code
+    because published tables are, and the female rates here are a flat 85%
+    of the male ones — which is roughly the right shape and is emphatically
+    not anybody's calibration. Same caveat as :func:`_gompertz`.
+    """
+    return {"M": _gompertz(ages),
+            "F": {age: round(q * 0.85, 8)
+                  for age, q in _gompertz(ages).items()}}
+
+
+def _improvement(ages: range, rate: float = 0.01) -> dict:
+    """A flat improvement scale, which is the simplest shape the basis
+    accepts and enough to show that the axis exists."""
+    return {sex: {str(age): rate for age in ages} for sex in ("M", "F")}
+
+
+#: The basis-chassis specimens' mortality, in the ``{sex: {age: q}}`` layout
+#: the request schema now carries.
+BASIS_MORTALITY = {
+    "rates": _gompertz_by_sex(range(18, 116)),
+    "year_start": 2014,
+    "improvement": _improvement(range(18, 116)),
+}
+
+#: A flat 4% annual curve, long enough for an annuitant to run off on.
+BASIS_CURVE = {"rates": 0.04, "freq": 1, "horizon_years": 60}
 
 
 #: One runnable request per template, keyed by model name. Each is a
@@ -273,6 +306,73 @@ EXAMPLES: dict = {
             ],
         },
     },
+    "PayoutAnnuity": {
+        "note": "Three annuities in payment on the valuation basis — a "
+                "level life annuity, one with a ten-year guarantee, and a "
+                "joint life with a 60% reversion to the spouse.",
+        "request": {
+            "model": "PayoutAnnuity",
+            "proj_len": 45,
+            "outputs": ["payments", "lives_if", "survivor_lives",
+                        "survival", "age", "v"],
+            "assumptions": {
+                "kind": "valuation_basis",
+                "mortality": BASIS_MORTALITY, "curve": BASIS_CURVE,
+            },
+            "modelpoints": [
+                {"id": 'A1', "dob": '1956-01-01', "sex": 'M', "valuation": '2021-01-01', "annual_payment": 12000.0, "init_lives": 1.0, "certain_years": 0.0, "joint_percent": 0.0, "spouse_dob": '1958-06-30', "spouse_sex": 'F'},
+                {"id": 'A2', "dob": '1946-06-30', "sex": 'F', "valuation": '2021-01-01', "annual_payment": 6000.0, "init_lives": 3.0, "certain_years": 10.0, "joint_percent": 0.0, "spouse_dob": '1948-03-02', "spouse_sex": 'M'},
+                {"id": 'A3', "dob": '1960-02-29', "sex": 'M', "valuation": '2021-01-01', "annual_payment": 24000.0, "init_lives": 1.0, "certain_years": 0.0, "joint_percent": 0.6, "spouse_dob": '1962-11-15', "spouse_sex": 'F'},
+            ],
+        },
+    },
+    "PensionBuyout": {
+        "note": "A small scheme bought out: two pensioners, one with 3% "
+                "escalation, and a deferred member twelve years from "
+                "retirement whose pension revalues at 2.5% until then.",
+        "request": {
+            "model": "PensionBuyout",
+            "proj_len": 50,
+            "outputs": ["payments", "member_payments", "spouse_payments",
+                        "pension_amount", "lives_if", "in_payment", "v"],
+            "assumptions": {
+                "kind": "valuation_basis",
+                "mortality": BASIS_MORTALITY, "curve": BASIS_CURVE,
+            },
+            "modelpoints": [
+                {"id": 'P1', "dob": '1956-01-01', "sex": 'M', "valuation": '2021-01-01', "annual_pension": 12000.0, "init_lives": 1.0, "deferred_years": 0.0, "revaluation_rate": 0.0, "escalation_rate": 0.0, "spouse_percent": 0.0, "spouse_dob": '1958-06-30', "spouse_sex": 'F', "contract": 'buy_out'},
+                {"id": 'P2', "dob": '1946-06-30', "sex": 'F', "valuation": '2021-01-01', "annual_pension": 6000.0, "init_lives": 3.0, "deferred_years": 0.0, "revaluation_rate": 0.0, "escalation_rate": 0.03, "spouse_percent": 0.0, "spouse_dob": '1948-03-02', "spouse_sex": 'M', "contract": 'buy_out'},
+                {"id": 'P3', "dob": '1975-02-28', "sex": 'M', "valuation": '2021-01-01', "annual_pension": 24000.0, "init_lives": 1.0, "deferred_years": 12.0, "revaluation_rate": 0.025, "escalation_rate": 0.02, "spouse_percent": 0.5, "spouse_dob": '1977-05-04', "spouse_sex": 'F', "contract": 'buy_out'},
+            ],
+        },
+    },
+    "LongevitySwap": {
+        "note": "The same scheme hedged: the fixed leg is written on a "
+                "heavier improvement scale than the projection basis, so "
+                "the contracted schedule runs longer than the expected "
+                "benefits and the swap values negative at inception — "
+                "which is the price of the hedge, not a mispricing.",
+        "request": {
+            "model": "LongevitySwap",
+            "proj_len": 50,
+            "outputs": ["floating_leg", "fixed_leg", "net_settlement",
+                        "expected_payment", "contracted_payment", "v"],
+            "assumptions": {
+                "kind": "longevity_swap_basis",
+                "projection": {"mortality": BASIS_MORTALITY,
+                               "curve": BASIS_CURVE},
+                "fixed": {"mortality": {**BASIS_MORTALITY,
+                                        "improvement": _improvement(
+                                            range(18, 116), 0.03)},
+                          "curve": BASIS_CURVE},
+            },
+            "modelpoints": [
+                {"id": 'P1', "dob": '1956-01-01', "sex": 'M', "valuation": '2021-01-01', "annual_pension": 12000.0, "init_lives": 1.0, "deferred_years": 0.0, "revaluation_rate": 0.0, "escalation_rate": 0.0, "spouse_percent": 0.0, "spouse_dob": '1958-06-30', "spouse_sex": 'F'},
+                {"id": 'P2', "dob": '1946-06-30', "sex": 'F', "valuation": '2021-01-01', "annual_pension": 6000.0, "init_lives": 3.0, "deferred_years": 0.0, "revaluation_rate": 0.0, "escalation_rate": 0.03, "spouse_percent": 0.0, "spouse_dob": '1948-03-02', "spouse_sex": 'M'},
+                {"id": 'P3', "dob": '1975-02-28', "sex": 'M', "valuation": '2021-01-01', "annual_pension": 24000.0, "init_lives": 1.0, "deferred_years": 12.0, "revaluation_rate": 0.025, "escalation_rate": 0.02, "spouse_percent": 0.5, "spouse_dob": '1977-05-04', "spouse_sex": 'F'},
+            ],
+        },
+    },
 }
 
 
@@ -292,20 +392,10 @@ UNAVAILABLE: dict = {
     "UnitLinkedGMxB":
         "needs a bound scenario set for the fund return, and rider fees "
         "beyond the scalars the request schema carries",
-    "PayoutAnnuity":
-        "needs a ValuationBasis, and its model points carry dob, valuation "
-        "and sex — JSON has no date and from_dicts does not coerce one",
     "VariablePayoutAnnuity":
-        "needs a ValuationBasis and a scenario set for the pool return, and "
-        "its model points carry dates",
-    "PensionBuyout":
-        "needs a ValuationBasis, and its model points carry dob, valuation "
-        "and sex — the same reason PayoutAnnuity is not here, since it is "
-        "the same chassis",
-    "LongevitySwap":
-        "needs two ValuationBasis objects, one per leg, and its model points "
-        "carry dates. It is also pooled, so a demonstration over one model "
-        "point would be a hedge over a scheme of one — see RFC-061",
+        "needs a bound scenario set for the pool return — the valuation "
+        "basis and the dates its model points carry are now expressible, "
+        "and the scenario format is not",
 }
 
 

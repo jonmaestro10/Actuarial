@@ -172,7 +172,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 |---|---|---|---|---|
 | Modelling paradigm | Declarative vars, proprietary IDE | Procedural, compiled | Configured, closed code | ✅ Declarative `@var` graph in plain Python, procedural escape hatch |
 | Models in version control / CI | ❌ binary formats | 🟡 partial | ❌ n/a | ✅ git-native, CI on every commit |
-| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 2,157 tests, closed forms, bitwise dual-executor equivalence, parity harness, and checks against **published** figures (docs/sources/ — Mack's Taylor–Ashe reserves reproduced to the rounding he printed) |
+| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 2,193 tests, closed forms, bitwise dual-executor equivalence, parity harness, and checks against **published** figures (docs/sources/ — Mack's Taylor–Ashe reserves reproduced to the rounding he printed) |
 | Vectorised execution across policies × scenarios | ❌ largely per-policy | ❌ | 🟡 | ✅ core design; ~40× interpreter, 100k×60y in seconds |
 | Compiled kernels / GPU | ✅ compiled C | ✅ C++ | ✅ | ❌ planned (graph + forward loop in place, "nothing is compiled yet") |
 | Grid / cross-machine scale-out | ✅ Enterprise grid | ✅ | ✅ GridLink | 🟡 multi-core sharding with bitwise guarantee; no cross-machine dispatch |
