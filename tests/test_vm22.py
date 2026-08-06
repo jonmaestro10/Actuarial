@@ -30,6 +30,7 @@ import pytest
 from engine.report.pbr import cte, scenario_reserves
 from engine.report.vm22 import (
     LONGEVITY_FLOOR_RATE,
+    MAV_RULES,
     METHODS,
     RESERVING_CATEGORIES,
     SERT_CAP,
@@ -38,6 +39,7 @@ from engine.report.vm22 import (
     AggregationGap,
     BasisPair,
     Contract,
+    ContractRecord,
     Exclusion,
     ModelSegment,
     ReservingGroup,
@@ -45,6 +47,8 @@ from engine.report.vm22 import (
     VM22Error,
     aggregate_stochastic_reserve,
     aggregation_decomposition,
+    allocate_aggregate_reserve,
+    apv_scenario,
     floor_outside_reserve,
     segment_group,
     segment_scenario_reserves,
@@ -1006,3 +1010,353 @@ def test_the_reported_dictionary_carries_both_bases_everywhere():
                                             "pre_ceded": "ratio_test"}
     for pair in out["by_method"].values():
         assert set(pair) == {"pre_ceded", "post_ceded"}
+
+
+# --------------------------------------------------------------------------
+# V4 — §13: the aggregate reserve, back down to the contracts
+# --------------------------------------------------------------------------
+
+def account_value(id, apv, csv, **kw):
+    return ContractRecord(id=id, scenario_apv=apv, category="accumulation",
+                          cash_surrender_value=csv, **kw)
+
+
+def test_the_contract_reserve_is_the_mav_plus_the_allocated_excess():
+    """§13.A: "The contract-level reserve for each contract shall be the sum
+    of … the contract's minimum allocation value (MAV) … [and] the
+    contract's allocated excess reserve (AER)", with §13.D.1 sharing the
+    excess "in proportion to the excess of the Scenario APV over the MAV".
+
+    Two account-value contracts with equal surrender values and unequal
+    Scenario APVs: the MAVs tie and the excess splits on the risk measure,
+    which is the whole design intent — "an indexed annuity contract with a
+    high benefit GLWB will typically have a larger allocated excess
+    reserve"."""
+    records = [account_value("A", apv=140.0, csv=100.0),
+               account_value("B", apv=120.0, csv=100.0)]
+    # MAVs are the surrender values (§13.C.2): 200 in aggregate.
+    # Excess 60 splits on excess APV 40 : 20.
+    got = allocate_aggregate_reserve(records, 260.0)
+    assert got.rule == "13.D.1"
+    assert got.amounts == {"A": 140.0, "B": 120.0}
+    assert got.aggregate_mav == 200.0 and got.excess == 60.0
+    assert got.total == 260.0 and got.reconciles
+
+
+def test_the_allocation_sums_to_the_aggregate_reserve_exactly():
+    """The property §3.H's allocation exists to have: what is allocated is
+    the reserve, not a number near it. Asserted on an awkward split rather
+    than a round one, because thirds are where a proportional allocation
+    would show its drift."""
+    records = [account_value("A", apv=317.0, csv=11.0),
+               account_value("B", apv=53.0, csv=7.0),
+               account_value("C", apv=101.0, csv=3.0)]
+    got = allocate_aggregate_reserve(records, 1_000.0 / 3.0)
+    assert got.rule == "13.D.1"
+    assert got.total == pytest.approx(1_000.0 / 3.0, rel=0, abs=1e-12)
+    assert got.reconciles
+
+
+def test_a_payout_group_can_never_reach_the_proportional_rule():
+    """**The structural finding.** §13.C.1 makes a payout contract's MAV
+    "the greater of … the Scenario APV … or … the cash surrender value", so
+    its excess Scenario APV is zero by construction and §13.D.1 can never
+    bind. §13.D.3 — "if all contracts in the group have an excess Scenario
+    APV that is floored at zero, then use the MAV to allocate" — is not a
+    fallback for this category; it is the rule.
+
+    A test that only exercised an accumulation group would never see it,
+    and a reader would reasonably assume §13.D.3 was an edge case."""
+    records = [ContractRecord("P1", scenario_apv=300.0,
+                              category="payout_annuity"),
+               ContractRecord("P2", scenario_apv=100.0,
+                              category="payout_annuity")]
+    assert all(r.excess_apv == 0.0 for r in records)
+
+    got = allocate_aggregate_reserve(records, 480.0)
+    assert got.rule == "13.D.3"
+    # MAVs 300 and 100; excess 80 split 3:1 on the MAVs.
+    assert got.amounts == {"P1": 360.0, "P2": 120.0}
+    assert got.total == 480.0
+
+
+def test_the_mav_is_a_different_rule_for_each_reserving_category():
+    """§13.C's three cases are §3.F.1's three Reserving Categories, with
+    §13.C.2's "Account Value Based Annuity" the chapter's undefined name for
+    the Accumulation category. Getting the rule from the category is what
+    makes the classification a calculation input a third time — after
+    §3.F.1's pooling rule and §4.B.1's floor."""
+    payout = ContractRecord("P", scenario_apv=90.0, category="payout_annuity",
+                            cash_surrender_value=70.0)
+    assert payout.mav == 90.0                      # §13.C.1: the greater
+    lean = ContractRecord("P2", scenario_apv=50.0, category="payout_annuity",
+                          cash_surrender_value=70.0)
+    assert lean.mav == 70.0
+
+    accum = account_value("A", apv=500.0, csv=80.0)
+    assert accum.mav == 80.0                       # §13.C.2: the CSV alone
+
+    longevity = ContractRecord("L", scenario_apv=10.0,
+                               category="longevity_reinsurance",
+                               longevity_benefits_12m=1_000.0)
+    assert longevity.mav == 20.0                   # §13.C.3: 2% of benefits
+    assert set(MAV_RULES) == set(RESERVING_CATEGORIES)
+
+
+def test_the_scenario_apv_is_floored_at_the_mav_before_it_is_a_weight():
+    """§13.D.2: "If the Scenario APV for any contract is less than the MAV,
+    then the excess Scenario APV to be used for allocating the excess
+    aggregate reserve to that contract shall be floored at zero."
+
+    Without the floor a contract whose APV sits below its surrender value
+    would take a *negative* share of the excess, which is a transfer of
+    reserve from a weak contract to a strong one."""
+    records = [account_value("rich", apv=200.0, csv=100.0),
+               account_value("poor", apv=20.0, csv=100.0)]
+    assert records[1].excess_apv == 0.0
+    got = allocate_aggregate_reserve(records, 300.0)
+    assert got.amounts == {"rich": 200.0, "poor": 100.0}
+
+
+def test_a_group_with_no_excess_apv_anywhere_allocates_on_the_mav():
+    """§13.D.3, reached by an accumulation group this time: every contract
+    is under water against its surrender value, so there is no risk measure
+    to allocate on and the MAV stands in for one."""
+    records = [account_value("A", apv=10.0, csv=100.0),
+               account_value("B", apv=20.0, csv=300.0)]
+    got = allocate_aggregate_reserve(records, 480.0)
+    assert got.rule == "13.D.3"
+    assert got.amounts == {"A": 120.0, "B": 360.0}   # 80 split 1:3
+
+
+def test_the_shortfall_goes_to_the_life_contingent_contracts_alone():
+    """§13.D.4: "If a group's aggregate reserve is less than the group's
+    aggregate MAV, that difference should be allocated to life contingent
+    contracts in proportion to each life contingent contract's MAV to the
+    sum of the life contingent contracts MAV."
+
+    The term-certain contract keeps its MAV untouched; the whole shortfall
+    lands on the contracts whose obligation runs on a life."""
+    records = [
+        ContractRecord("LC1", scenario_apv=200.0, category="payout_annuity",
+                       life_contingent=True),
+        ContractRecord("LC2", scenario_apv=100.0, category="payout_annuity",
+                       life_contingent=True),
+        ContractRecord("TC", scenario_apv=100.0, category="payout_annuity"),
+    ]
+    got = allocate_aggregate_reserve(records, 340.0)   # aggregate MAV is 400
+    assert got.rule == "13.D.4" and got.excess == -60.0
+    assert got.amounts == {"LC1": 160.0, "LC2": 80.0, "TC": 100.0}
+    assert got.total == 340.0 and got.reconciles
+
+
+def test_a_shortfall_with_nothing_life_contingent_to_carry_it_is_refused():
+    """§13.D.4 names the contracts the shortfall goes to and this group has
+    none of them. Spreading it over the term-certain contracts instead
+    would be a reserve nobody prescribed, which is worse than stopping."""
+    records = [ContractRecord("TC", scenario_apv=100.0,
+                              category="payout_annuity")]
+    with pytest.raises(VM22Error, match="nowhere the text puts it"):
+        allocate_aggregate_reserve(records, 40.0)
+
+
+def test_the_surrender_floor_under_a_shortfall_breaks_the_reconciliation():
+    """§13.D.4 ends "All contracts are floored at their cash surrender
+    value" — applied *after* the shortfall is allocated, so the amounts
+    need no longer sum to the aggregate reserve. §13's preamble promises
+    the allocation holds every contract at its surrender value, and the
+    only way to keep that promise is to stop reconciling.
+
+    Reported rather than reconciled away: a module that scaled the result
+    back down would be breaking the guarantee the floor exists to keep, and
+    one that stayed silent would leave the break to be found in a
+    reconciliation."""
+    records = [
+        ContractRecord("LC", scenario_apv=200.0, category="payout_annuity",
+                       cash_surrender_value=190.0, life_contingent=True),
+        ContractRecord("TC", scenario_apv=100.0, category="payout_annuity",
+                       cash_surrender_value=100.0),
+    ]
+    # Aggregate MAV 300, reserve 250: the 50 shortfall all falls on LC,
+    # taking it to 150 — below its 190 surrender value, which floors it.
+    got = allocate_aggregate_reserve(records, 250.0)
+    assert got.rule == "13.D.4"
+    assert got.amounts == {"LC": 190.0, "TC": 100.0}
+    assert got.total == 290.0
+    assert not got.reconciles                    # and the module says so
+    assert got.below_cash_surrender_value == ()  # the floor did its job
+
+
+def test_a_payout_contract_can_finish_below_the_apv_the_preamble_promises():
+    """§13's preamble: "the reserve held for a Payout Annuity contract
+    (whether life-contingent or not) will be no less than the present value
+    of the liability cash flows provided under the contract … discounted
+    using the NAER" — its Scenario APV.
+
+    §13.D.4's arithmetic floors at the cash surrender value and nothing
+    else, so a payout contract absorbing a shortfall lands under its APV.
+    The preamble and the prescribed method disagree, and this module
+    implements the method and reports the disagreement."""
+    records = [
+        ContractRecord("LC", scenario_apv=200.0, category="payout_annuity",
+                       life_contingent=True),
+        ContractRecord("TC", scenario_apv=100.0, category="payout_annuity"),
+    ]
+    got = allocate_aggregate_reserve(records, 240.0)
+    assert got.amounts["LC"] == 140.0            # against a 200 APV
+    assert got.below_scenario_apv == ("LC",)
+    assert got.below_cash_surrender_value == ()
+
+
+def test_a_longevity_mav_carries_no_surrender_floor_and_the_module_says_so():
+    """§13.C.3 sets the MAV to 2% of the next twelve months' scheduled
+    benefits full stop — no "greater of", unlike §13.C.1. A longevity
+    contract with a surrender value above that finishes below the preamble's
+    first guarantee, which is worth reporting because such contracts
+    normally have no surrender value at all and the case is easy to miss."""
+    record = ContractRecord("L", scenario_apv=5.0,
+                            category="longevity_reinsurance",
+                            longevity_benefits_12m=1_000.0,
+                            cash_surrender_value=50.0)
+    assert record.mav == 20.0 < 50.0
+    got = allocate_aggregate_reserve([record], 20.0)
+    assert got.amounts == {"L": 20.0}
+    assert got.below_cash_surrender_value == ("L",)
+
+
+def test_the_excluded_contracts_are_kept_out_of_the_allocation():
+    """§13: contracts passing §7.A's stochastic exclusion test "will not be
+    included in the allocation of the aggregate reserve"; §3.H has them
+    "calculated on a seriatim basis" instead. Including one would allocate
+    a reserve it is not part of to a contract that already has its own."""
+    records = [account_value("A", apv=140.0, csv=100.0),
+               account_value("X", apv=50.0, csv=40.0,
+                             stochastically_excluded=True)]
+    with pytest.raises(VM22Error, match="seriatim basis"):
+        allocate_aggregate_reserve(records, 300.0)
+
+
+def test_a_dr_contract_is_allocated_but_not_alongside_an_sr_one():
+    """§13 keeps §7.E's DR contracts in — "contracts that have passed the
+    Single Scenario Test … are subject to the allocation methodology
+    described in this section" — while requiring that "allocation
+    calculations shall be done separately for the DR and SR"."""
+    dr = [account_value("D1", apv=140.0, csv=100.0, carries_dr=True),
+          account_value("D2", apv=120.0, csv=100.0, carries_dr=True)]
+    assert allocate_aggregate_reserve(dr, 260.0).total == 260.0
+
+    mixed = [dr[0], account_value("S1", apv=120.0, csv=100.0)]
+    with pytest.raises(VM22Error, match="separately for the DR and SR"):
+        allocate_aggregate_reserve(mixed, 260.0)
+
+
+def test_the_allocation_is_separated_by_category_and_by_model_segment():
+    """§13: "separately … for different reserving categories that have not
+    been aggregated pursuant to Section 3.F.2. To the extent that
+    aggregation is done across multiple model segments, the allocation
+    calculations shall be done separately for each model segment."
+
+    Both refusals, and §3.F.2's attestation opening the one exception the
+    text allows — the same rule §3.F.1 applies one level up."""
+    payout = ContractRecord("P", scenario_apv=100.0,
+                            category="payout_annuity")
+    accum = account_value("A", apv=100.0, csv=50.0)
+    longevity = ContractRecord("L", scenario_apv=1.0,
+                               category="longevity_reinsurance",
+                               longevity_benefits_12m=100.0)
+    with pytest.raises(VM22Error, match="different reserving categories"):
+        allocate_aggregate_reserve([payout, accum], 200.0)
+    assert allocate_aggregate_reserve(
+        [payout, accum], 200.0, combined_payout_accumulation=True).total \
+        == 200.0
+    with pytest.raises(VM22Error, match="different reserving categories"):
+        allocate_aggregate_reserve([payout, longevity], 200.0,
+                                   combined_payout_accumulation=True)
+
+    with pytest.raises(VM22Error, match="each model segment"):
+        allocate_aggregate_reserve(
+            [account_value("A", apv=100.0, csv=50.0, model_segment="one"),
+             account_value("B", apv=100.0, csv=50.0, model_segment="two")],
+            300.0)
+
+
+def test_the_allocation_runs_once_per_basis_and_not_once_on_a_pair():
+    """§13 allocates "for both the pre- and post-reinsurance ceded
+    reserves", and §13.C's inputs are themselves stated "after
+    consideration of any reinsurance" — so the records differ by basis too.
+    Running one set of contracts against both halves of a `BasisPair` would
+    allocate the pre-ceded reserve over post-ceded contracts."""
+    records = [account_value("A", apv=140.0, csv=100.0)]
+    with pytest.raises(VM22Error, match="once per basis"):
+        allocate_aggregate_reserve(records,
+                                   BasisPair(pre_ceded=300.0,
+                                             post_ceded=200.0))
+
+
+def test_an_unclassified_contract_has_no_mav_rule_and_is_refused():
+    """§13.C gives one rule per Reserving Category and none for anything
+    else. Unclassified contracts aggregate freely for the *reserve* (§3.F.1
+    documents that as not a VM-22 reserve); for the allocation there is no
+    such latitude, because there would be no MAV to compute."""
+    with pytest.raises(VM22Error, match="§13.C"):
+        ContractRecord("X", scenario_apv=1.0, category=None)
+    with pytest.raises(VM22Error, match="belongs to 'longevity_reinsurance'"):
+        ContractRecord("Y", scenario_apv=1.0, category="accumulation",
+                       longevity_benefits_12m=10.0)
+
+
+def test_an_allocation_with_nothing_to_allocate_on_is_refused():
+    """A group of zero-MAV contracts with no excess Scenario APV gives
+    §13.D.3 no proportion to work with. Spreading the excess evenly is not
+    what §13.D says, so the module stops rather than inventing a rule."""
+    records = [ContractRecord("A", scenario_apv=0.0, category="accumulation"),
+               ContractRecord("B", scenario_apv=0.0, category="accumulation")]
+    with pytest.raises(VM22Error, match="no proportion to allocate on"):
+        allocate_aggregate_reserve(records, 100.0)
+    with pytest.raises(VM22Error, match="there are no contracts"):
+        allocate_aggregate_reserve([], 100.0)
+    with pytest.raises(VM22Error, match="contract ids repeat"):
+        allocate_aggregate_reserve([account_value("A", apv=1.0, csv=1.0),
+                                    account_value("A", apv=1.0, csv=1.0)],
+                                   10.0)
+
+
+def test_the_apv_scenario_is_the_closest_one_not_above_the_reserve():
+    """§13.B.1: "the scenario that produces the aggregate scenario reserve
+    for the group that is closest to, but not greater than the SR defined
+    in Section 3.D."
+
+    A prescribed selection, so the module makes it rather than taking the
+    Scenario APV entirely on faith. Scenario 2 at 140 is the closest below
+    the SR of 150; scenario 3 at 200 is closer in absolute terms and is not
+    eligible, which is the half of the rule an argmin would get wrong."""
+    reserves = np.array([50.0, 90.0, 140.0, 200.0])
+    assert apv_scenario(reserves, 150.0) == 2
+    assert apv_scenario(reserves, 140.0) == 2      # "not greater than"
+    assert apv_scenario(reserves, 139.0) == 1
+    # Ties take the lowest index, so the choice does not depend on a sort.
+    assert apv_scenario(np.array([90.0, 90.0, 200.0]), 150.0) == 0
+
+
+def test_the_apv_scenario_and_the_reserve_have_to_belong_to_each_other():
+    """A CTE is never below the minimum it averages over, so an SR below
+    every scenario reserve did not come from those reserves. Refused rather
+    than clamped to the smallest, which would silently pick a scenario the
+    text did not choose."""
+    reserves = np.array([100.0, 200.0, 300.0])
+    with pytest.raises(VM22Error, match="not the reserves that SR came from"):
+        apv_scenario(reserves, 50.0)
+    with pytest.raises(VM22Error, match="there are none"):
+        apv_scenario([], 10.0)
+
+
+def test_the_selected_scenario_is_the_one_the_prescribed_path_produces():
+    """End to end against §3.F.5.a: the aggregate scenario reserves come
+    from `segment_scenario_reserves` and the SR is their CTE, so §13.B.1's
+    selection is made against the same numbers the reserve was made from
+    rather than a second computation of them."""
+    segment = ModelSegment("S", [[0.0, 40.0, 100.0, 200.0]])
+    reserves = segment_scenario_reserves([segment])
+    sr = segment_stochastic_reserve([segment], basis=HALF)
+    assert sr == 150.0                              # CTE(50) of 100 and 200
+    assert apv_scenario(reserves, sr) == 2          # the 100 scenario

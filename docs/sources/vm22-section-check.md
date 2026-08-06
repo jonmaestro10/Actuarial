@@ -32,6 +32,7 @@ reserve too *small*.
 | 3.F.3 | DR groups shall not aggregate with non-DR groups | **implemented** | V2: `ModelSegment.carries_dr`, refused in `check_segments_aggregable` |
 | 3.F.4 | a category may be one model segment | **implemented** | the single-group case |
 | 3.F.5.a.ii | combine PVs across segments, **then** take the greatest | **implemented** | V2: `ModelSegment` + `segment_scenario_reserves` |
+| 3.H | allocate the aggregate reserve, VM-A/C/M/V seriatim | **implemented** | V4: the carve-out is a refusal |
 | 4.A | project accumulated deficiencies | **implemented** | RFC-016's roll |
 | 4.B.1.a | scenario reserve = starting assets − PIMR + greatest PV | **implemented** | PIMR added this pass |
 | 4.B.1.a note | the greatest PV **can be negative** | **implemented** | V1: `floor_at_zero=False` for VM-22, `True` for VM-20/21 |
@@ -55,7 +56,10 @@ reserve too *small*.
 | 8 | scenario generation (VM-20 App. 1.F, 16 scenarios) | **out of scope** | prescribed dated data — belongs with F2 |
 | 9 | hedge modelling | **out of scope** | as 4.C–4.E |
 | 10–12 | prudent estimate assumptions, margins, mortality | **out of scope** | assumption-setting, not reserve arithmetic |
-| 13 | allocation of the aggregate reserve to contracts | **gap** | `AggregateReserve` reports composition by group; nothing allocates to contracts |
+| 13.A–13.D | MAV plus allocated excess reserve | **implemented** | V4: `allocate_aggregate_reserve` |
+| 13.B.1 | the scenario "closest to, but not greater than the SR" | **implemented** | V4: `apv_scenario`, a prescribed selection |
+| 13.B.1.a–b | NAER by the direct iteration method | **out of scope** | earned rates are an input, as at 4.B.2 |
+| 13.E | worked example | n/a | two tables the extraction does not carry |
 
 ## The three new findings
 
@@ -116,10 +120,12 @@ outcomes on the exclusion test — so a group carries a method per basis.
 
 ## Where this leaves the chapter
 
-Of thirteen sections: **eight are out of scope by design** and stated as
-such (scenario generation, hedge modelling, assumption-setting, the
-standard projection method, the DR's own tests); **five carry reserve
-arithmetic**, and those five have now been read line by line.
+Of thirteen sections: **six are out of scope by design** and stated as such
+(scenario generation, hedge modelling, assumption-setting, the standard
+projection method, the DR's own tests); **seven carry reserve arithmetic**,
+and all seven have now been read line by line. §5 and §13 joined that count
+when the remediation plan read them — both had been assumed to be out of
+scope, and neither was.
 
 Remaining open against the sections the module *does* implement:
 
@@ -127,6 +133,24 @@ Remaining open against the sections the module *does* implement:
 |---|---|---|
 | ~~§4.B.1 longevity 2% floor~~ | understates for that category | **done (V2)** |
 | ~~§3.B/§5 pre- and post-ceded~~ | not comparable | **done (V3)** |
-| §13 allocation to contracts | n/a | medium |
+| ~~§13 allocation to contracts~~ | n/a | **done (V4)** |
 
-Nothing else in the five arithmetic sections disagrees with the module.
+Nothing else in the arithmetic sections disagrees with the module, and
+every gap this read opened is now closed.
+
+## What §13 added, once read
+
+§13 was the last unread section and the plan refused to guess at it. Two
+things justified that.
+
+**§13.D.1 is unreachable for a Payout Annuity group.** §13.C.1 makes that
+category's MAV the greater of the Scenario APV and the surrender value, so
+the excess Scenario APV §13.D.1 allocates on is zero by construction and
+§13.D.3 is the operative rule rather than a fallback.
+
+**§13's preamble states two guarantees its own arithmetic does not always
+keep** — no contract below its surrender value, no payout contract below
+its Scenario APV. §13.D.4 breaks the second and rescues the first with a
+floor applied after the allocation, which costs the reconciliation to the
+aggregate reserve. Recorded and reported by `Allocation` rather than
+patched, because the patch would break the guarantee the floor exists for.

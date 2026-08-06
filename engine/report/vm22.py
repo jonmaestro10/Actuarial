@@ -118,6 +118,42 @@ to the pre-ceded projection, so it arrives here already made. Likewise
 explicitly not otherwise; charging one always would be the natural instinct
 and is not what the text says.
 
+Down again: §13's allocation, and the guarantee it does not keep
+---------------------------------------------------------------
+§3.H requires the aggregate reserve to be allocated back to contracts, and
+§13 prescribes the method: a **minimum allocation value** per contract
+(§13.C, one rule per Reserving Category) plus an **allocated excess
+reserve** (§13.D, the group's excess over its aggregate MAV shared out in
+proportion to each contract's excess Scenario APV). It is a risk measure,
+deliberately: the section expects "an indexed annuity contract with a high
+benefit GLWB [to] typically have a larger allocated excess reserve than an
+otherwise identical indexed annuity contract with a low benefit GLWB".
+
+Two things fall out of reading it that reading a summary would not give.
+
+**§13.D.1 can never reach a Payout Annuity group.** §13.C.1 sets a payout
+contract's MAV to the *greater* of its Scenario APV and its surrender
+value, so its excess Scenario APV is zero by construction — and §13.D.3's
+"if all contracts in the group have an excess Scenario APV that is floored
+at zero, then use the MAV to allocate" is therefore not a fallback for that
+category but the operative rule. §13.D.1's risk-proportional allocation is
+an accumulation-category mechanism, which is exactly the category the
+preamble's GLWB example belongs to.
+
+**§13's preamble promises what §13.D's arithmetic does not always
+deliver.** "the reserve held for any contract will be no less than the cash
+surrender value provided under that contract … Additionally, the reserve
+held for a Payout Annuity contract … will be no less than the present value
+of the liability cash flows". Under §13.D.4 — where the aggregate reserve
+falls short of the aggregate MAV — the shortfall is spread over
+life-contingent contracts and only then are "all contracts … floored at
+their cash surrender value", which restores the first guarantee, breaks the
+second, and applies the floor *after* the allocation so the amounts need no
+longer sum to the aggregate reserve. And §13.C.3's longevity MAV carries no
+surrender-value floor at all. :class:`Allocation` reports all three facts —
+which rule ran, whether it reconciles, and which contracts finished under a
+guarantee — rather than adding floors the text does not prescribe.
+
 Known deviations from the text, still open
 -----------------------------------------
 Two places where this module is **knowingly not what §4 says**. Both are
@@ -187,6 +223,17 @@ RESERVING_CATEGORIES = ("payout_annuity", "longevity_reinsurance",
 
 #: The only pair §3.F.2 allows to be combined, and only on attestation.
 COMBINABLE = frozenset({"payout_annuity", "accumulation"})
+
+#: §13.C keys the minimum allocation value off the contract type, and its
+#: three cases are §3.F.1's three Reserving Categories with the middle one
+#: renamed: §13.C.2's "Account Value Based Annuity" appears nowhere else in
+#: the chapter and is not defined in it. §3.F.1.c makes the identification
+#: safe — the Accumulation Reserving Category is "all annuities within
+#: scope of VM-22 that are not in the Payout … or Longevity Reinsurance"
+#: category, which is what an account-value-based annuity is.
+MAV_RULES = {"payout_annuity": "§13.C.1",
+             "accumulation": "§13.C.2",
+             "longevity_reinsurance": "§13.C.3"}
 
 #: §3.B's two bases, on both of which every component must be determined.
 #: The held reserve is the post-reinsurance-ceded one; the
@@ -1243,3 +1290,387 @@ def aggregation_decomposition(contracts: Sequence[Contract], *,
         diversification_effect=midpoint - outside,
         floor_binds=total_floor >= pooled,
     )
+
+
+# --------------------------------------------------------------------------
+# §13 — allocating the aggregate reserve back to contracts
+# --------------------------------------------------------------------------
+
+#: Which of §13.D's rules produced an allocation. Reported rather than
+#: inferred, because §13.D.3 and §13.D.4 are not edge cases — the first is
+#: the *only* rule a payout group can ever reach, and the second breaks the
+#: reconciliation §13.D.1 guarantees.
+ALLOCATION_RULES = ("13.D.1", "13.D.3", "13.D.4")
+
+
+def apv_scenario(scenario_reserve: Sequence[float],
+                 stochastic_reserve: float) -> int:
+    """§13.B.1: which scenario the Scenario APV is taken from.
+
+    "the scenario that produces the aggregate scenario reserve for the
+    group that is **closest to, but not greater than** the SR defined in
+    Section 3.D."
+
+    A prescribed *selection*, and therefore computable here rather than
+    taken on faith: the caller supplies the aggregate scenario reserves it
+    already computed for §3.F.5.a.iii and the SR that came out of them, and
+    this returns the index whose liability cash flows §13.B.1 wants
+    discounted. Ties take the lowest index, so the choice is deterministic
+    rather than dependent on the sort.
+
+    There is always such a scenario when the SR is the CTE of these very
+    reserves — a conditional tail expectation is never below the minimum it
+    averages over — so a refusal here means the two arguments do not belong
+    to each other. §13.B.2's DR case needs none of this: there the single
+    scenario used to calculate the reserve *is* the scenario.
+    """
+    values = np.asarray(list(scenario_reserve), dtype=np.float64).ravel()
+    if values.size == 0:
+        raise VM22Error("§13.B.1 selects a scenario from the aggregate "
+                        "scenario reserves, and there are none")
+    eligible = values <= float(stochastic_reserve)
+    if not eligible.any():
+        raise VM22Error(
+            f"§13.B.1 wants the scenario closest to but not greater than the "
+            f"SR, and every one of {values.size} aggregate scenario reserves "
+            f"exceeds {float(stochastic_reserve):,.2f}. A CTE is never below "
+            f"the minimum it averages, so these are not the reserves that SR "
+            f"came from."
+        )
+    return int(np.flatnonzero(eligible & (values == values[eligible].max()))[0])
+
+
+@dataclass(frozen=True)
+class ContractRecord:
+    """One contract's facts, as §13 needs them.
+
+    Separate from :class:`Contract` because they are different objects:
+    :class:`Contract` carries a scenario reserve, one value per scenario,
+    and feeds the aggregate reserve; this carries a **Scenario APV**, one
+    number taken from the single scenario §13.B selects, and receives the
+    aggregate reserve back. The reserve is computed over a book and
+    allocated to contracts, and the two directions do not share a record.
+
+    ``scenario_apv`` is §13.B's "discounted liability cash flows at the
+    NAER … for the scenario that produces the aggregate scenario reserve
+    for the group that is closest to, but not greater than the SR" —
+    :func:`apv_scenario` names that scenario. §13.B.3 requires the same
+    liability assumptions used for the SR.
+
+    ``life_contingent`` matters only in §13.D.4's shortfall, which is
+    allocated to life-contingent contracts alone. ``stochastically_excluded``
+    marks a contract §13 keeps out of the allocation entirely.
+    """
+
+    id: str
+    scenario_apv: float
+    category: str
+    cash_surrender_value: float = 0.0
+    #: §13.C.3's input: the scheduled longevity benefits payable by the
+    #: benefit provider within the next 12 months. The same quantity
+    #: §4.B.1 floors the scenario reserve with, one level down.
+    longevity_benefits_12m: float = 0.0
+    life_contingent: bool = False
+    #: §13's first paragraph: contracts passing §7.A's stochastic exclusion
+    #: test "will not be included in the allocation of the aggregate
+    #: reserve"; §3.H has them "calculated on a seriatim basis" instead.
+    stochastically_excluded: bool = False
+    #: §13: allocation is done separately for the DR and the SR.
+    carries_dr: bool = False
+    #: §13: "To the extent that aggregation is done across multiple model
+    #: segments, the allocation calculations shall be done separately for
+    #: each model segment."
+    model_segment: str | None = None
+
+    def __post_init__(self):
+        for name in ("scenario_apv", "cash_surrender_value",
+                     "longevity_benefits_12m"):
+            object.__setattr__(self, name, float(getattr(self, name)))
+        if self.category not in RESERVING_CATEGORIES:
+            raise VM22Error(
+                f"contract {self.id!r} declares category "
+                f"{self.category!r}; §13.C gives a minimum allocation value "
+                f"per Reserving Category and has no rule for anything else. "
+                f"They are {list(RESERVING_CATEGORIES)}."
+            )
+        if self.longevity_benefits_12m and \
+                self.category != "longevity_reinsurance":
+            raise VM22Error(
+                f"contract {self.id!r} carries a twelve-month longevity "
+                f"benefit but is category {self.category!r}; §13.C.3's "
+                f"minimum allocation value belongs to "
+                f"'longevity_reinsurance'"
+            )
+
+    @property
+    def mav(self) -> float:
+        """§13.C's minimum allocation value, by Reserving Category.
+
+        - **§13.C.1**, Payout Annuity: "the greater of … the Scenario APV
+          for the contract, or … the cash surrender value provided under
+          the contract, if any."
+        - **§13.C.2**, Account Value Based Annuity: "the cash surrender
+          value provided under the contract, if any, otherwise zero" — so
+          the Scenario APV does *not* enter, which is what leaves room for
+          §13.D's risk-proportional allocation to do any work.
+        - **§13.C.3**, Longevity Reinsurance: "2% of the scheduled
+          longevity benefits payable by the benefit provider within the
+          next 12 months", and **not** floored at the cash surrender value,
+          which the section's own preamble promises. See
+          :class:`Allocation`.
+        """
+        if self.category == "payout_annuity":
+            return max(self.scenario_apv, self.cash_surrender_value)
+        if self.category == "longevity_reinsurance":
+            return LONGEVITY_FLOOR_RATE * self.longevity_benefits_12m
+        return self.cash_surrender_value
+
+    @property
+    def excess_apv(self) -> float:
+        """§13.D.1–2's weight: the Scenario APV over the MAV, floored at 0.
+
+        §13.D.2: "If the Scenario APV for any contract is less than the
+        MAV, then the excess Scenario APV to be used for allocating the
+        excess aggregate reserve to that contract shall be floored at
+        zero."
+        """
+        return max(self.scenario_apv - self.mav, 0.0)
+
+    def __fingerprint__(self):
+        return {"id": self.id, "scenario_apv": self.scenario_apv,
+                "category": self.category,
+                "cash_surrender_value": self.cash_surrender_value,
+                "longevity_benefits_12m": self.longevity_benefits_12m,
+                "life_contingent": self.life_contingent,
+                "stochastically_excluded": self.stochastically_excluded,
+                "carries_dr": self.carries_dr,
+                "model_segment": self.model_segment}
+
+
+@dataclass(frozen=True)
+class Allocation:
+    """§13.A's contract-level reserves, and what the arithmetic could not
+    promise.
+
+    §13.A: "The contract-level reserve for each contract shall be the sum
+    of … the contract's minimum allocation value (MAV) … [and] the
+    contract's allocated excess reserve (AER)."
+
+    §13's preamble states two guarantees about its own method — "the
+    reserve held for any contract will be no less than the cash surrender
+    value provided under that contract", and for a Payout Annuity contract
+    no less than "the present value of the liability cash flows …
+    discounted using the NAER", which is its Scenario APV. **The prescribed
+    arithmetic does not always deliver them**, and this class reports where
+    rather than quietly adding floors the text does not prescribe:
+
+    - Under §13.D.4, where the aggregate reserve falls short of the
+      aggregate MAV, the shortfall is spread over life-contingent contracts
+      and only then are "all contracts … floored at their cash surrender
+      value". A payout contract can finish below its Scenario APV, and the
+      cash-surrender floor is applied *after* the allocation, so the
+      allocated amounts need no longer sum to the aggregate reserve.
+    - §13.C.3's longevity MAV is 2% of the next twelve months' scheduled
+      benefits with no cash-surrender floor, so a longevity contract whose
+      surrender value exceeds that can land below it.
+
+    ``reconciles`` is therefore reported and not assumed. Under §13.D.1 and
+    §13.D.3 the sum is exact by construction, which is asserted rather than
+    trusted.
+    """
+
+    amounts: dict
+    rule: str
+    aggregate_reserve: float
+    aggregate_mav: float
+    below_cash_surrender_value: tuple
+    below_scenario_apv: tuple
+
+    @property
+    def total(self) -> float:
+        return float(sum(self.amounts.values()))
+
+    @property
+    def excess(self) -> float:
+        """§13.D.1's "excess … of the group's aggregate reserve over the
+        group's aggregate MAV". Negative is §13.D.4's case."""
+        return self.aggregate_reserve - self.aggregate_mav
+
+    @property
+    def reconciles(self) -> bool:
+        """Whether the contract-level reserves still add to the aggregate."""
+        scale = max(1.0, abs(self.aggregate_reserve))
+        return abs(self.total - self.aggregate_reserve) <= 1e-9 * scale
+
+    def to_dict(self) -> dict:
+        return {"amounts": dict(self.amounts), "rule": self.rule,
+                "total": self.total,
+                "aggregate_reserve": self.aggregate_reserve,
+                "aggregate_mav": self.aggregate_mav,
+                "excess": self.excess, "reconciles": self.reconciles,
+                "below_cash_surrender_value":
+                    list(self.below_cash_surrender_value),
+                "below_scenario_apv": list(self.below_scenario_apv)}
+
+    def __fingerprint__(self):
+        return self.to_dict()
+
+
+def _check_allocation_group(records: Sequence[ContractRecord], *,
+                            combined_payout_accumulation: bool) -> None:
+    """§13's four separations, before any arithmetic happens.
+
+    "Allocation calculations shall be done separately for the DR and SR,
+    and for different reserving categories that have not been aggregated
+    pursuant to Section 3.F.2. To the extent that aggregation is done
+    across multiple model segments, the allocation calculations shall be
+    done separately for each model segment." Plus the scope carve-out in
+    the same paragraph.
+    """
+    if not records:
+        raise VM22Error("§13 allocates a reserve to contracts, and there "
+                        "are no contracts")
+    ids = [r.id for r in records]
+    if len(set(ids)) != len(ids):
+        raise VM22Error(
+            f"contract ids repeat in the allocation: {sorted(ids)}. Two "
+            f"records with one id is either a double allocation or a "
+            f"contract that never received one."
+        )
+    excluded = [r.id for r in records if r.stochastically_excluded]
+    if excluded:
+        raise VM22Error(
+            f"contracts {sorted(excluded)} passed §7.A's stochastic "
+            f"exclusion test, and §13 says they "
+            f"\"will not be included in the allocation of the aggregate "
+            f"reserve\"; §3.H has them calculated on a seriatim basis "
+            f"instead. Contracts that passed §7.E's Single Scenario Test "
+            f"and carry a DR *are* allocated — set carries_dr."
+        )
+    declared = {r.category for r in records}
+    if len(declared) > 1 and not (declared == COMBINABLE
+                                  and combined_payout_accumulation):
+        raise VM22Error(
+            f"§13 allocates "
+            f"\"separately … for different reserving categories that have "
+            f"not been aggregated pursuant to Section 3.F.2\", and these "
+            f"span {sorted(declared)}. Only {sorted(COMBINABLE)} may be "
+            f"combined, and only on §3.F.2's criteria — pass "
+            f"combined_payout_accumulation=True to attest them."
+        )
+    if len({r.carries_dr for r in records}) > 1:
+        raise VM22Error(
+            "§13: \"Allocation calculations shall be done separately for "
+            "the DR and SR\". These records mix contracts that carry a DR "
+            "with contracts that do not; allocate each group to its own "
+            "reserve."
+        )
+    segments = {r.model_segment for r in records if r.model_segment is not None}
+    if len(segments) > 1:
+        raise VM22Error(
+            f"§13: \"To the extent that aggregation is done across multiple "
+            f"model segments, the allocation calculations shall be done "
+            f"separately for each model segment\". These records span "
+            f"{sorted(segments)}."
+        )
+
+
+def allocate_aggregate_reserve(records: Sequence[ContractRecord],
+                               aggregate_reserve, *,
+                               combined_payout_accumulation: bool = False
+                               ) -> Allocation:
+    """§13: the aggregate reserve, back down to the contracts.
+
+    §13.A's contract-level reserve is the MAV (§13.C) plus the allocated
+    excess reserve (§13.D), and §13.D.1 allocates "the excess, if any, of
+    the group's aggregate reserve over the group's aggregate MAV to the
+    contract **in proportion to the excess of the Scenario APV over the
+    MAV** for such contract" — a risk measure, which is why the section's
+    preamble expects "an indexed annuity contract with a high benefit GLWB
+    [to] typically have a larger allocated excess reserve than an otherwise
+    identical indexed annuity contract with a low benefit GLWB or no GLWB".
+
+    Three rules, and which one applies is structural rather than
+    exceptional:
+
+    - **§13.D.1**, proportional to the excess Scenario APV.
+    - **§13.D.3**, "If all contracts in the group have an excess Scenario
+      APV that is floored at zero, then use the MAV to allocate". For a
+      **Payout Annuity group this is always the rule**: §13.C.1 sets the
+      MAV to the greater of the Scenario APV and the surrender value, so no
+      payout contract can ever have a positive excess Scenario APV. §13.D.1
+      cannot reach a pure payout group at all.
+    - **§13.D.4**, where the aggregate reserve falls short of the aggregate
+      MAV: the difference goes to life-contingent contracts in proportion
+      to their MAV, and "all contracts are floored at their cash surrender
+      value".
+
+    ``aggregate_reserve`` is one basis's figure. §13's first paragraph says
+    the allocation "should be done for both the pre- and post-reinsurance
+    ceded reserves", and both the Scenario APV and the cash surrender value
+    are stated "after consideration of any reinsurance" — so the *records*
+    differ by basis too, and a :class:`BasisPair` here is refused rather
+    than run twice against one set of contracts.
+    """
+    if isinstance(aggregate_reserve, BasisPair):
+        raise VM22Error(
+            "§13's allocation runs once per basis, not once on a pair: the "
+            "Scenario APV and the cash surrender value are both stated "
+            "\"after consideration of any reinsurance\", so the contract "
+            "records differ between the bases as well as the reserve. Call "
+            "this twice, with each basis's own records."
+        )
+    _check_allocation_group(
+        records, combined_payout_accumulation=combined_payout_accumulation)
+    reserve = float(aggregate_reserve)
+    mavs = {r.id: r.mav for r in records}
+    total_mav = float(sum(mavs.values()))
+    excess = reserve - total_mav
+
+    if excess >= 0.0:
+        weights = {r.id: r.excess_apv for r in records}
+        rule = "13.D.1"
+        if sum(weights.values()) == 0.0:            # §13.D.3
+            weights = dict(mavs)
+            rule = "13.D.3"
+        total_weight = float(sum(weights.values()))
+        if total_weight == 0.0:
+            raise VM22Error(
+                f"§13.D.3 falls back to allocating the excess aggregate "
+                f"reserve of {excess:,.2f} in proportion to the MAV, and "
+                f"every contract's MAV is zero. There is no proportion to "
+                f"allocate on, and spreading it evenly is not what §13.D "
+                f"says."
+            )
+        amounts = {r.id: mavs[r.id] + excess * weights[r.id] / total_weight
+                   for r in records}
+    else:                                            # §13.D.4
+        rule = "13.D.4"
+        contingent = [r for r in records if r.life_contingent]
+        contingent_mav = float(sum(mavs[r.id] for r in contingent))
+        if not contingent or contingent_mav == 0.0:
+            raise VM22Error(
+                f"§13.D.4 allocates the {abs(excess):,.2f} by which the "
+                f"aggregate reserve falls short of the aggregate MAV "
+                f"\"to life contingent contracts in proportion to each life "
+                f"contingent contract's MAV\", and this group has no life "
+                f"contingent contract carrying one. The shortfall has "
+                f"nowhere the text puts it."
+            )
+        amounts = {}
+        for r in records:
+            amount = mavs[r.id]
+            if r.life_contingent:
+                amount += excess * mavs[r.id] / contingent_mav
+            # "All contracts are floored at their cash surrender value."
+            amounts[r.id] = max(amount, r.cash_surrender_value)
+
+    below_csv = tuple(r.id for r in records
+                      if amounts[r.id] < r.cash_surrender_value)
+    below_apv = tuple(r.id for r in records
+                      if r.category == "payout_annuity"
+                      and amounts[r.id] < r.scenario_apv)
+    return Allocation(amounts=amounts, rule=rule, aggregate_reserve=reserve,
+                      aggregate_mav=total_mav,
+                      below_cash_surrender_value=below_csv,
+                      below_scenario_apv=below_apv)
