@@ -614,9 +614,9 @@ def test_the_remaining_unavailable_templates_all_want_the_same_thing():
         "VariablePayoutAnnuity",
     }
     for name in ("PayoutAnnuity", "PensionBuyout", "LongevitySwap",
-                 "IncomeProtection"):
+                 "IncomeProtection", "LongTermCare"):
         assert name in EXAMPLES and name not in UNAVAILABLE
-    assert len(EXAMPLES) == 12 and len(catalogue()) == 16
+    assert len(EXAMPLES) == 13 and len(catalogue()) == 17
     # Every remaining reason is the same one: a scenario set, or a rule that
     # reads one. That is a single format to invent, not four.
     for reason in UNAVAILABLE.values():

@@ -214,16 +214,35 @@ def test_every_template_that_traces_from_a_common_point_settles():
     check under a heading that says "every template" and then tests one —
     naming the scope is the difference between evidence and a claim.
     """
-    checked = []
+    checked, skipped = [], {}
     for cls in _template_classes():
         try:
             settled = graph_is_settled(cls, POINT, ASSUMPTIONS)
         except AttributeError:
-            continue  # needs a product-specific model point
+            skipped[cls.__name__] = "model point"
+            continue
+        except ValueError as exc:
+            # A second legitimate reason, named rather than folded into the
+            # first: a multi-state template needs a transition matrix, and
+            # the generic assumption set has none. Any *other* ValueError is
+            # a real failure and is re-raised.
+            if "transition matrix" not in str(exc):
+                raise
+            skipped[cls.__name__] = "assumptions"
+            continue
         checked.append(cls.__name__)
         assert settled, cls.__name__
     assert len(checked) >= 5
     assert "TermLife" in checked and "WithProfitsEndowment" in checked
+    # The multi-state skip is asserted by name, so widening the except
+    # clause cannot quietly start swallowing templates it was not meant to.
+    # Both multi-state templates are unreachable from a generic point, but
+    # for *different* reasons and that is worth pinning: `IncomeProtection`
+    # fails first on its model point, while `LongTermCare` gets as far as
+    # the assumptions because its setup needs nothing product-specific.
+    assert {n for n, why in skipped.items() if why == "assumptions"} \
+        == {"LongTermCare"}
+    assert skipped["IncomeProtection"] == "model point"
 
 
 # --------------------------------------------------------------------------
