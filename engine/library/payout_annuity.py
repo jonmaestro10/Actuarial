@@ -24,9 +24,20 @@ Model point fields: ``dob`` (date), ``sex``, ``valuation`` (date),
 ``joint_percent``, ``spouse_dob``, ``spouse_sex``.
 Assumption binding: a :class:`~engine.data.basis.ValuationBasis`.
 
-The template runs under the vectorized and stochastic executors. The
-interpreted executor is not supported here: it evaluates one model point at
-a time, which is precisely the per-policy loop the basis exists to avoid.
+The template runs under all three executors, and is in §1.2's **per-policy
+bitwise class**: interpreted and vectorized agree to the last bit, over a
+whole block, asserted in ``tests/test_spouse_binding.py``.
+
+That is a correction rather than a change of design. This docstring used to
+say the interpreted executor "is not supported here", and the evidence pack
+disagreed — it placed the template in the class and tried anyway. The pack
+was right and the sentence was wrong: nothing about a
+:class:`~engine.data.basis.ValuationBasis` prevents a per-policy loop, and
+what actually failed was ``setup()`` zipping ``spouse_dob`` and ``sex``
+without a policy axis (RFC-070). Running a block one policy at a time is
+still the loop the basis exists to *avoid* — it is slow, and the vectorized
+executor is what you should use — but slow is not the same claim as
+unsupported, and only one of the two can be asserted.
 
 Correctness is anchored on Layer 0 rather than restated: the present value
 of these cashflows must equal
@@ -41,6 +52,7 @@ import numpy as np
 from engine.core.dates import DateArray
 from engine.core.model import Model, var
 from engine.core.timeaxis import TimeAxis
+from engine.data.modelpoints import per_policy_field
 
 
 class PayoutAnnuity(Model):
@@ -82,13 +94,17 @@ class PayoutAnnuity(Model):
             spouse_dob = [
                 spouse if percent > 0 else own
                 for spouse, own, percent in zip(
-                    self.mp.spouse_dob, self.mp.dob, joint
+                    per_policy_field(self.mp, "spouse_dob", dtype=object),
+                    per_policy_field(self.mp, "dob", dtype=object),
+                    joint,
                 )
             ]
             spouse_sex = [
                 spouse if percent > 0 else own
                 for spouse, own, percent in zip(
-                    self.mp.spouse_sex, self.mp.sex, joint
+                    per_policy_field(self.mp, "spouse_sex", dtype=object),
+                    per_policy_field(self.mp, "sex", dtype=object),
+                    joint,
                 )
             ]
             self._spouse_survival = basis.survival(axis, spouse_dob, spouse_sex)

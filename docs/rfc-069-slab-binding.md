@@ -110,9 +110,12 @@ to the ones the failing rows carried.
 
 RFC-068's other half stands: `PayoutAnnuity` and `PensionBuyout` fail
 under the interpreted executor with `TypeError: 'datetime.date' object is
-not iterable` — the per-policy path cannot handle a date-valued
-model-point field. That is a real limitation wanting its own decision
-(either the interpreted executor learns dates, or the two templates are
-declared outside the per-policy class with a stated reason), and nothing
-here touches it. The pack now carries exactly those two unattested rows,
-and they mean what they say.
+not iterable`, and nothing here touches it. The pack carries exactly those
+two unattested rows.
+
+**Closed by RFC-070**, which found the reading above wrong: the per-policy
+path handles dates fine and never saw one. Three templates' `setup()`
+zipped model-point fields without a policy axis — the mirror image of this
+RFC's spurious axis, and stacked on the same two templates with a dtype
+disagreement underneath both. The pack now reads 11 of 11 with no
+unattested row.

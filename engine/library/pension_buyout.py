@@ -46,16 +46,22 @@ exist.
 
 Executor class
 --------------
-**Vectorized and stochastic only**, like every template on this chassis and
-for the same reason: the interpreted executor evaluates one model point at a
-time, which is the per-policy loop the basis exists to avoid (see
-:mod:`engine.library.payout_annuity`). This is a stated class, not an
-omission — execution plan §1.2's bitwise equivalence rule applies to the
-annual-step templates, and this one is not in that group. It carries no
-``EXAMPLES`` entry for the same structural reason the rest of the chassis
-does not: the RFC-032 request schema cannot yet express a ``ValuationBasis``,
-so the evidence pack's specimen set does not reach here. RFC-041 says so
-rather than leaving the gap to be inferred from a missing row.
+In §1.2's **per-policy bitwise class**, like every template on this chassis:
+interpreted and vectorized agree bitwise over a whole block, asserted in
+``tests/test_spouse_binding.py``.
+
+RFC-041 wrote this section the other way round — "vectorized and stochastic
+only", offered as a stated class rather than an omission. It was neither. The
+per-policy loop is the thing the basis exists to *avoid* for speed, and
+RFC-041 read that as a statement about correctness; what actually failed was
+``setup()`` zipping ``spouse_dob`` and ``sex`` without a policy axis, and
+only for a member carrying a survivor pension (RFC-070). The exclusion was a
+bug wearing a design decision's clothes, which is worth recording: an
+executor class asserted by a docstring and by nothing else is not asserted.
+
+It carries an ``EXAMPLES`` entry as of RFC-066, which taught the request
+schema a ``ValuationBasis`` — so the evidence pack's specimen set reaches
+here, and it is the pack that caught the above.
 
 Correctness is anchored on Layer 0 rather than restated. A pensioner with
 level increases must reproduce
@@ -71,6 +77,7 @@ import numpy as np
 
 from engine.core.model import Model, var
 from engine.core.timeaxis import TimeAxis
+from engine.data.modelpoints import per_policy_field
 
 #: What ``contract`` may say. Both project the same benefits; see the module
 #: docstring for why that is a finding rather than an omission.
@@ -78,9 +85,11 @@ CONTRACTS = ("buy_in", "buy_out")
 
 
 def _field(mp, name, default):
-    return np.atleast_1d(
-        np.asarray(getattr(mp, name, default), dtype=np.float64)
-    )
+    """Numeric model-point field with a policy axis. See
+    :func:`engine.data.modelpoints.per_policy_field`, which this is now a
+    name for: the object-valued variant lives beside it, and keeping the two
+    apart in three separate modules is how RFC-070's bug survived."""
+    return per_policy_field(mp, name, default)
 
 
 def increase_factors(freq: int, n_periods: int, deferred_years,
@@ -153,9 +162,17 @@ class PensionBuyout(Model):
             # the batch rectangular without a sentinel date. The same trick
             # PayoutAnnuity uses, for the same reason.
             spouse_dob = [s if pct > 0 else own for s, own, pct
-                          in zip(self.mp.spouse_dob, self.mp.dob, spouse)]
+                          in zip(per_policy_field(self.mp, "spouse_dob",
+                                                  dtype=object),
+                                 per_policy_field(self.mp, "dob",
+                                                  dtype=object),
+                                 spouse)]
             spouse_sex = [s if pct > 0 else own for s, own, pct
-                          in zip(self.mp.spouse_sex, self.mp.sex, spouse)]
+                          in zip(per_policy_field(self.mp, "spouse_sex",
+                                                  dtype=object),
+                                 per_policy_field(self.mp, "sex",
+                                                  dtype=object),
+                                 spouse)]
             self._spouse_survival = basis.survival(axis, spouse_dob,
                                                    spouse_sex)
         else:

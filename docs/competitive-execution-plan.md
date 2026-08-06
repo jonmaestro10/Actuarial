@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,373
+   naive implementation otherwise. The suite (`pytest`, currently 2,387
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -933,26 +933,34 @@ order unless there is a concrete reason not to.
 *Next action for the implementing agent: **milestone M5 is reached** — C1–C6
 are all shipped, each with its sharp-edge finding documented, and the
 catalogue's nineteen templates all have a worked example for the first time
-since RFC-032. Three things are open, in descending order of how much they
-cost to leave alone.
+since RFC-032, and the evidence pack's equivalence section is fully attested
+for the first time. Two things are open, plus one standing rule the last
+three RFCs earned.
 
-**1. Two templates the evidence pack cannot attest, needing a decision
-rather than a fix.** RFC-068 read that section closely and found five
-unattested templates that were two findings; RFC-069 (F5, below) discharged
-the larger-looking, smaller one — the shape bug behind `GeneralInsurance`,
-`LongTermCare` and `LongevitySwap`'s single-model-point bridge — and the
-pack now attests all three. What remains is the **real limitation**:
-`PayoutAnnuity` and `PensionBuyout` fail under the interpreted executor
-with `TypeError: 'datetime.date' object is not iterable`, because the
-per-policy path cannot handle a date-valued model-point field. That wants a
-decision, not a patch: either the interpreted executor learns dates, or the
-two templates are declared outside the per-policy class the way pooled ones
-are, with a stated reason. Note before choosing that the second option
-changes what §1.2's per-policy class *means* — these two are on the
-`ValuationBasis` chassis, whose module docstring already says the
-interpreted path is the per-policy loop the basis exists to avoid — so the
-honest declaration may be the right answer, but it should be made on
-purpose.
+**1. The evidence pack's equivalence section is clean — keep it that way.**
+This entry used to name the open work; there is none. RFC-068 read the
+section closely and found five unattested templates that were two findings,
+RFC-069 (F5) discharged the shape bug behind three of them, and RFC-070 (F6)
+discharged the last two — which turned out not to be the "real limitation"
+both earlier RFCs had recorded. **11 of 11 bitwise-identical, no unattested
+row.**
+
+What replaces it is a standing rule the three bugs earned. All of them were
+a `setup()` or an executor written for the batch case and run against the
+single-policy one, and every one produced **equal numbers with an unequal
+contract** — a spurious `(1,)` axis, a missing one, an `int64` where the
+array executors store `float64`. That failure mode is invisible to any test
+that compares values, which is most of them. New per-policy tests should
+assert shape, dtype and value **separately**; `tests/test_slab_binding.py`
+and `tests/test_spouse_binding.py` are the pattern.
+
+And the harder-won rule, from RFC-070: **a class boundary wants a
+mechanism.** RFC-061's pooled class raises `PooledBlockError` and RFC-068's
+scenario class cannot be handed `None`, so both are enforced. The one
+boundary that rested on a docstring sentence — RFC-041's "vectorized and
+stochastic only … a stated class, not an omission" — was wrong for as long
+as it existed, and the pack had been contradicting it the whole time. Where
+a class exclusion cannot be enforced, it is a test, not a paragraph.
 
 **2. The four §6.C tables still uncarried (RFC-067).** Unchanged and still
 needing a human: **Table 6.5 fails one of its own three worked examples**
@@ -964,6 +972,10 @@ plausible number in every cell rather than an obviously missing one. Seven
 of eleven are carried.
 
 **3. B1 (§4) is still unstarted** and carries a written assessment of why.
+When it lands, note that RFC-070's rule applies to it directly: a compiled
+executor joining the bitwise class needs the class boundary enforced by a
+mechanism, and its equality checks want shape and dtype asserted alongside
+value — all three of F5/F6's bugs would have passed a value-only check.
 
 Three notes the last two runs put on the record and this one closes or
 extends.
@@ -1012,8 +1024,8 @@ F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045, RFC-046) — milestone
 M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) — milestone M4 — C1–C6
 (RFC-039, RFC-040, RFC-041, RFC-042, RFC-054, RFC-055) — **milestone M5** —
 and F2 (RFC-050), with VM-22's remediation V1–V4 (RFC-062, RFC-063), the
-two unplanned schema items E5 and E6 (RFC-066, RFC-068), and the slab
-shape fix F5 (RFC-069).*
+two unplanned schema items E5 and E6 (RFC-066, RFC-068), and the two
+equivalence-attestation items F5 and F6 (RFC-069, RFC-070).*
 
 ### E5 — Assumption objects in the request schema (RFC-066) — effort S — **done**
 Unplanned, and raised by C3. The RFC-032 request schema carried scalars and
@@ -1112,3 +1124,58 @@ pass unedited. The pack's equivalence line moves from 7 of 11 to **9 of
 `True`, and `tests/test_slab_binding.py` pins the grant, the trap not
 taken, and both refusals — with value equality asserted separately from
 shape equality, because §1.2 was never breached here, only unprovable.
+
+### F6 — The exclusion that was a bug (RFC-070) — effort S — **done**
+Unplanned, and the last two rows of the same reading. RFC-068 and RFC-069
+both recorded `PayoutAnnuity` and `PensionBuyout` as a **real limitation** —
+`TypeError: 'datetime.date' object is not iterable` under the interpreted
+executor — wanting a decision between teaching the executor dates and
+declaring the two outside the per-policy class. The decision taken was to
+keep the class broad, and the premise turned out to be wrong.
+
+**Outcome (RFC-070).** The interpreted executor handles dates and never
+touched one. Three templates' `setup()` zipped model-point fields directly —
+`zip(self.mp.spouse_dob, self.mp.dob, joint)` — which is an object array over
+a batch and a bare `date` bound to one model point. Dates were incidental;
+`sex` fails on the same line. It survived because the branch is
+**conditional** on `np.any(joint > 0)`, so a policy with no survivor benefit
+never reached it: `PayoutAnnuity`'s A1 and A2 have always run interpreted and
+only A3, with its 60% reversion, failed.
+
+Three things are worth carrying forward.
+
+**An exclusion asserted by prose and by nothing else was not asserted.** Both
+docstrings *stated* the class boundary as a design decision — RFC-041's
+"vectorized and stochastic only … a stated class, not an omission" — and the
+evidence pack disagreed with them the whole time, placing both templates in
+the class and reporting the failure. RFC-041 read a performance argument (the
+per-policy loop is what a `ValuationBasis` exists to avoid) as a correctness
+one. RFC-061's and RFC-068's class boundaries are enforced by a mechanism —
+a raised `PooledBlockError`, a `ScenarioSet` that cannot be `None` — and are
+right; the one that rested on a sentence was wrong for as long as it existed.
+That is now the standard: **a class boundary wants a mechanism, and where
+there is none the claim is a test.**
+
+**One helper, not three.** The repo already had the object-valued idiom in
+`general_insurance.py` and the numeric one in three separate local `_field`
+copies; only the object case was missed, in all three. `per_policy_field`
+now lives in `engine/data/modelpoints.py` with `dtype` keyword-only and no
+safe default for the non-numeric case, so a caller cannot reach for the
+numeric one out of habit without seeing the other exists.
+
+**A dtype was hiding underneath.** Removing the `TypeError` left
+`PayoutAnnuity`'s block digests still unequal with every output equal:
+`age` was `int64` interpreted and `float64` vectorized, because
+`engine/core/vector.py` coerces into a `float64` slab and `runner.py` kept
+whatever the formula returned. RFC-069's failure mode one layer down — the
+executors disagreeing about a *contract* rather than arithmetic — and stacked
+on the same template, which is why neither was visible until the other moved.
+Coerced in `runner.py`, where `vector.py` states the same contract.
+
+The pack's equivalence section now reads **11 of 11 bitwise-identical with no
+unattested row**, for the first time. All three of these bugs have the same
+shape — a `setup()` or an executor written for the batch and run against one
+policy, producing *equal numbers with an unequal contract* — which is
+invisible to any test that compares values. `tests/test_spouse_binding.py`
+and `tests/test_slab_binding.py` both assert shape, dtype and value
+separately for that reason.

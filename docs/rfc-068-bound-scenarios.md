@@ -253,16 +253,23 @@ scalar everywhere else. That half is discharged by **RFC-069**, which keys
 `ModelPointBatch` — rather than off any array's shape, and says why both of
 the placements this section originally named were, as stated, wrong.
 
-**Two of them are a real limitation, and still are.** `PayoutAnnuity` and
-`PensionBuyout` fail under the interpreted executor with
-`TypeError: 'datetime.date' object is not iterable` — the per-policy path
-cannot handle a date-valued model-point field. That is a genuine gap in the
-per-policy class's coverage and wants its own decision: either the
-interpreted executor learns dates, or the two templates are declared outside
-the class the way pooled ones are, with a stated reason.
+**Two of them looked like a real limitation and were not.** `PayoutAnnuity`
+and `PensionBuyout` failed under the interpreted executor with
+`TypeError: 'datetime.date' object is not iterable`, which this section read
+as the per-policy path being unable to handle a date-valued model-point
+field — a genuine gap wanting a decision between teaching the executor dates
+and declaring the two templates outside the class.
 
-Neither was caused by this RFC and neither was fixed by it. They were
+**RFC-070** discharges it and corrects the reading. The executor never
+touched a date; three templates' `setup()` zipped model-point fields without
+a policy axis, and only on the branch a survivor benefit takes. Dates were
+incidental — `sex` fails on the same line. The decision the section asked
+for cost six lines, and it exposed a dtype disagreement underneath that this
+one had been hiding.
+
+None of the five was caused by this RFC and none was fixed by it. They were
 recorded here because §1.2's invariant is load-bearing enough that five
 unexplained reds in the repo's own evidence pack should not sit unnamed —
-and naming them was what shrank the fix: "three of these five are one shape
-bug" turned out to be one RFC's worth of work, not five templates' worth.
+and naming them was what shrank the work: what read as "five templates
+breaking the central invariant" was three shape bugs, one dtype, and no
+breach at all. The section is now empty; the pack reads 11 of 11.
