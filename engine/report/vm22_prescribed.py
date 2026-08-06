@@ -1,4 +1,4 @@
-"""VM-22 §6.C: the prescribed assumptions, and the ones the text brackets.
+r"""VM-22 §6.C: the prescribed assumptions, and the ones the text brackets.
 
 The dated regulatory data half of the open question C1, C2 and VM-22's
 remediation each left on the record. RFC-050 answered the *other* half in the
@@ -34,25 +34,29 @@ because the escalation is unavoidable.
 
 What is carried, and what is refused
 ------------------------------------
-Two of the eleven tables are here, transcribed from the primary text and
+Five of the eleven tables are here, transcribed from the primary text and
 checked against it:
 
 - **Table 6.1**, the base maintenance expense by contract type (§6.C.2.a),
   with §6.C.2.c's $35 for a contract the company does not administer.
-- **Table 6.7**, the *F*\ :sub:`x` mortality factors for individual annuities
-  in the Accumulation Reserving Category (§6.C.8.i).
+- **Tables 6.2 and 6.3**, prescribed partial withdrawal rates for qualified
+  and non-qualified contracts (§6.C.4).
+- **Tables 6.7 and 6.8**, the *F*\ :sub:`x` mortality factors for individual
+  annuities in the Accumulation and Payout Annuity Reserving Categories
+  (§6.C.8.i–ii).
 
-The other nine — partial withdrawals qualified and non-qualified, three sets
-of base lapse rates, and four further *F*\ :sub:`x` sets for payout annuities
-and structured settlements — are **recorded and not carried**, and
-:func:`fx_factor` **refuses** a category whose table is absent rather than
-falling back to one that is present. A mortality factor from the wrong
-category is a plausible number that no test would catch, which is precisely
-the failure mode this chapter has already produced eight times.
+The remaining six — three sets of base lapse rates and three
+*F*\ :sub:`x` sets for structured settlements — are **recorded and not
+carried**, and :func:`fx_factor` **refuses** a category whose table is absent
+rather than falling back to one that is present. A mortality factor from the
+wrong category is a plausible number that no test would catch, which is
+precisely the failure mode this chapter has already produced eight times.
 
-The reason is transcription risk, not effort: each table needs reading against
-the primary text before it is worth having, and a mis-transcribed prescribed
-factor is worse than an absent one because it looks authoritative.
+The reason those six are absent is sharper than transcription effort: each
+crosses a **second dimension** — an age band against a surrender-charge
+duration, or a contract-year band against sex — and a table whose second
+dimension is read wrongly is a plausible number in *every* cell rather than
+an obviously missing one. They need a read of their own.
 
 What this does **not** build
 ----------------------------
@@ -336,7 +340,7 @@ def maintenance_expense(contract_type: str, valuation_year: int,
 
 def fx_factor(age, sex: str, *, category: str = "accumulation",
               guaranteed_living_benefit: bool = False) -> np.ndarray:
-    """Table 6.7's *F*\\ :sub:`x`, the adjustment to the 2012 IAM Basic table.
+    r"""Table 6.7's *F*\ :sub:`x`, the adjustment to the 2012 IAM Basic table.
 
     §6.C.8: the factors "represent adjustments to the 2012 IAM Basic
     Mortality Table brought up to the current period using Projection Scale
@@ -418,7 +422,7 @@ def prescribed_mortality_rate(q_2012, g2, fx, n: int):
     return q * (1.0 - scale) ** n * np.asarray(fx, dtype=np.float64)
 
 
-#: Table 6.8, §6.C.8.ii: *F*\\ :sub:`x` for individual annuities in the Payout
+#: Table 6.8, §6.C.8.ii: *F*\ :sub:`x` for individual annuities in the Payout
 #: Annuity Reserving Category, other than structured settlements.
 #: ``(attained age, female, male)``. Same floor and cap as Table 6.7.
 _FX_PAYOUT = (

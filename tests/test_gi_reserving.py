@@ -32,16 +32,11 @@ from engine.report.incurred_claims import (
     mack_standard_error,
     odp_bootstrap,
 )
-from tests.test_published_sources import (
-    PUBLISHED_STANDARD_ERROR_PCT,
-    PUBLISHED_TOTAL_STANDARD_ERROR_PCT,
-    TAYLOR_ASHE,
-)
 
 
 @pytest.fixture(scope="module")
-def ladder():
-    return ChainLadder(Triangle(TAYLOR_ASHE), method="volume")
+def ladder(published):
+    return ChainLadder(Triangle(published.rows), method="volume")
 
 
 @pytest.fixture(scope="module")
@@ -53,7 +48,7 @@ def mack(ladder):
 # Mack, against the paper
 # --------------------------------------------------------------------------
 
-def test_the_standard_errors_are_macks_table_3(mack):
+def test_the_standard_errors_are_macks_table_3(mack, published):
     """The whole point of C5's first half: reserve *ranges* checked against a
     published source rather than against a second implementation of the same
     formula.
@@ -63,9 +58,9 @@ def test_the_standard_errors_are_macks_table_3(mack):
     second, since the first is fully developed and has no reserve.
     """
     ours = [round(100 * cv) for cv in mack.coefficient_of_variation[1:]]
-    assert tuple(ours) == PUBLISHED_STANDARD_ERROR_PCT
+    assert tuple(ours) == published.standard_error_pct
     assert round(100 * mack.total_coefficient_of_variation) == \
-        PUBLISHED_TOTAL_STANDARD_ERROR_PCT
+        published.total_standard_error_pct
 
 
 def test_the_first_accident_year_has_no_reserve_and_no_error(mack):
@@ -108,22 +103,22 @@ def test_the_last_sigma_is_extrapolated_rather_than_set_to_zero(mack):
     assert sigma2[-1] <= sigma2[-2]
 
 
-def test_simple_average_factors_are_refused():
+def test_simple_average_factors_are_refused(published):
     """The derivation is conditional on the volume-weighted estimator. A
     simple-average triangle has different factors, and σ² is estimated
     *around* ``f_j`` — so these formulae do not describe its error, and
     computing them anyway would return a plausible number for a model
     nobody fitted."""
-    ladder = ChainLadder(Triangle(TAYLOR_ASHE), method="simple")
+    ladder = ChainLadder(Triangle(published.rows), method="simple")
     with pytest.raises(ValueError, match="volume-weighted"):
         mack_standard_error(ladder)
 
 
-def test_a_tail_factor_is_refused():
+def test_a_tail_factor_is_refused(published):
     """A tail's own uncertainty is not in the triangle. Mack's formulae stop
     where the data does, and extending them through a tail would attach an
     error bar to an assumption."""
-    ladder = ChainLadder(Triangle(TAYLOR_ASHE), method="volume", tail=1.05)
+    ladder = ChainLadder(Triangle(published.rows), method="volume", tail=1.05)
     with pytest.raises(ValueError, match="tail"):
         mack_standard_error(ladder)
 
@@ -141,12 +136,12 @@ def test_a_triangle_too_small_for_the_extrapolation_is_refused():
 # The bootstrap, and the range that can be recomputed
 # --------------------------------------------------------------------------
 
-def test_the_same_seed_gives_the_same_range_element_for_element():
+def test_the_same_seed_gives_the_same_range_element_for_element(published):
     """**The claim no reserving tool makes.** A reserve range that cannot be
     reproduced is an opinion. Asserted on the simulations themselves rather
     than on their standard deviation, because two different streams can
     agree on a summary statistic and disagree on every draw."""
-    triangle = Triangle(TAYLOR_ASHE)
+    triangle = Triangle(published.rows)
     first = odp_bootstrap(triangle, n_samples=200, seed=11)
     again = odp_bootstrap(triangle, n_samples=200, seed=11)
     assert np.array_equal(first.reserves, again.reserves)
@@ -156,19 +151,19 @@ def test_the_same_seed_gives_the_same_range_element_for_element():
     assert not np.array_equal(first.reserves, other.reserves)
 
 
-def test_the_over_dispersion_is_the_published_scale():
+def test_the_over_dispersion_is_the_published_scale(published):
     """φ = Σr²/(N − p) on the Taylor–Ashe triangle is 52,601, which is the
     figure the England–Verrall literature quotes for it. It does not depend
     on the seed — it is a property of the fit, not of the resampling — and
     asserting it pins the residual definition and the degrees of freedom
     together."""
-    result = odp_bootstrap(Triangle(TAYLOR_ASHE), n_samples=50, seed=3)
+    result = odp_bootstrap(Triangle(published.rows), n_samples=50, seed=3)
     assert result.scale == pytest.approx(52_601, rel=5e-4)
-    other_seed = odp_bootstrap(Triangle(TAYLOR_ASHE), n_samples=50, seed=99)
+    other_seed = odp_bootstrap(Triangle(published.rows), n_samples=50, seed=99)
     assert other_seed.scale == result.scale
 
 
-def test_estimation_and_prediction_error_are_different_numbers():
+def test_estimation_and_prediction_error_are_different_numbers(published):
     """**The distinction the default protects.** Resampling residuals gives
     the estimation error alone — about 15% here. Mack's 13% is a *prediction*
     error. Quoting one against the other would be comparing two different
@@ -178,7 +173,7 @@ def test_estimation_and_prediction_error_are_different_numbers():
     variance ``φR*``, which takes it to about 16% — and that decomposes
     exactly, which is the check that the process step is the one it claims
     to be rather than extra noise of the right size."""
-    triangle = Triangle(TAYLOR_ASHE)
+    triangle = Triangle(published.rows)
     estimation = odp_bootstrap(triangle, n_samples=4_000, seed=7)
     prediction = odp_bootstrap(triangle, n_samples=4_000, seed=7,
                                process_variance=True)
@@ -194,40 +189,40 @@ def test_estimation_and_prediction_error_are_different_numbers():
     assert combined == pytest.approx(prediction.standard_error, rel=0.02)
 
 
-def test_the_bootstrap_centres_on_the_chain_ladder_reserve():
+def test_the_bootstrap_centres_on_the_chain_ladder_reserve(published):
     """The resampled triangles are built around the fitted one, so their
     reserves have to average out at the point estimate. A bootstrap that
     drifted would be resampling the wrong residuals — which is a mistake
     that shows up in the *mean*, not in the spread, and would leave a
     plausible-looking range around the wrong centre."""
-    result = odp_bootstrap(Triangle(TAYLOR_ASHE), n_samples=4_000, seed=5)
+    result = odp_bootstrap(Triangle(published.rows), n_samples=4_000, seed=5)
     assert result.reserves.mean() / result.point_estimate == \
         pytest.approx(1.0, abs=0.03)
 
 
-def test_the_percentiles_bracket_the_point_estimate():
+def test_the_percentiles_bracket_the_point_estimate(published):
     """What a reserve range is actually asked for. The 75th percentile of a
     right-skewed reserve distribution sits above the point estimate and the
     25th below it, and both are a long way from the mean on a triangle this
     volatile."""
-    result = odp_bootstrap(Triangle(TAYLOR_ASHE), n_samples=2_000, seed=13)
+    result = odp_bootstrap(Triangle(published.rows), n_samples=2_000, seed=13)
     low, high = result.percentile([25, 75])
     assert low < result.point_estimate < high
     assert result.percentile(99) > result.percentile(1)
 
 
-def test_a_bootstrap_with_nothing_to_bootstrap_is_refused():
+def test_a_bootstrap_with_nothing_to_bootstrap_is_refused(published):
     """One sample has no distribution to describe — the standard error would
     be undefined. And a triangle with no degrees of freedom cannot estimate
     the over-dispersion the resampling scales by."""
     with pytest.raises(ValueError, match="no distribution"):
-        odp_bootstrap(Triangle(TAYLOR_ASHE), n_samples=1)
+        odp_bootstrap(Triangle(published.rows), n_samples=1)
     tiny = Triangle([[100.0, 150.0], [120.0]])
     with pytest.raises(ValueError, match="degrees of freedom"):
         odp_bootstrap(tiny, n_samples=10)
 
 
-def test_the_two_methods_disagree_and_are_not_reconciled():
+def test_the_two_methods_disagree_and_are_not_reconciled(published):
     """Mack's 13% and the bootstrap's 16% are two *models*, not two
     estimates of one number, and nothing here averages them or picks one.
 
@@ -236,8 +231,8 @@ def test_the_two_methods_disagree_and_are_not_reconciled():
     or their mean — would be making a modelling choice on the user's behalf
     at exactly the point where the user's judgement is what is wanted."""
     mack_cv = mack_standard_error(
-        ChainLadder(Triangle(TAYLOR_ASHE))).total_coefficient_of_variation
-    bootstrap_cv = odp_bootstrap(Triangle(TAYLOR_ASHE), n_samples=4_000,
+        ChainLadder(Triangle(published.rows))).total_coefficient_of_variation
+    bootstrap_cv = odp_bootstrap(Triangle(published.rows), n_samples=4_000,
                                  seed=7, process_variance=True
                                  ).coefficient_of_variation
     assert mack_cv == pytest.approx(0.131, abs=0.005)
