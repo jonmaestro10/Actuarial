@@ -270,9 +270,16 @@ def test_reading_as_stored_gives_a_different_and_also_correct_answer():
     with arithmetic error held constant — and without both runs a discrepancy
     has two candidate causes and no way to separate them."""
     points, assumptions = build()
-    written = run_exact(FixedAnnuity, points, assumptions, 40, ["v"])
-    stored = run_exact(FixedAnnuity, points, assumptions, 40, ["v"],
+    # Every variable, not just the discount factor. An earlier version of
+    # this test asked only for ``v``, whose body never meets a float literal
+    # — and so it passed while ``as_stored`` returned a bare ``Decimal`` that
+    # could not multiply the ``1.0`` in ``pols_if``. The finding script
+    # caught what the test did not, which is the argument for F4 in one line.
+    written = run_exact(FixedAnnuity, points, assumptions, 40, NAMES)
+    stored = run_exact(FixedAnnuity, points, assumptions, 40, NAMES,
                        reader=as_stored)
+    for name in NAMES:
+        assert all(isinstance(v, Exact) for v in stored.per_mp[0][name]), name
 
     assert written.per_mp[0]["v"][0] == stored.per_mp[0]["v"][0] == 1
     assert written.per_mp[0]["v"][40] != stored.per_mp[0]["v"][40]

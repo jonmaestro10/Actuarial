@@ -122,7 +122,7 @@ def as_written(value) -> "Exact":
     return Exact(value)
 
 
-def as_stored(value) -> Decimal:
+def as_stored(value) -> "Exact":
     r"""The number as the machine holds it: ``Decimal(float)``, exactly.
 
     ``as_stored(0.035)`` is
@@ -133,12 +133,20 @@ def as_stored(value) -> Decimal:
     that use them is precisely the **representation** error, with arithmetic
     error held constant. Without both, a discrepancy has two possible causes
     and no way to tell them apart.
+
+    Returns an :class:`Exact`, not a bare ``Decimal``. The two readers differ
+    in *how a float is read* and in nothing else — a reader that handed back
+    a plain ``Decimal`` would produce values that could not meet the float
+    literals in a ``@var`` body, so ``reader=as_stored`` would fail on the
+    first template it touched while ``as_written`` worked. It did.
     """
-    if isinstance(value, Decimal):
+    if isinstance(value, Exact):
         return value
-    if isinstance(value, (bool,)):
+    if isinstance(value, bool):
         raise ExactError("a bool is not a quantity to convert")
-    return Decimal(float(value))
+    if isinstance(value, Decimal):
+        return Exact(value)
+    return Exact(Decimal(float(value)))
 
 
 class Exact(Decimal):
@@ -392,10 +400,11 @@ def run_exact(
             except TypeError as exc:
                 raise ExactError(
                     f"{model_cls.__name__} cannot run under decimal "
-                    f"arithmetic: {exc}. A template whose body reaches for "
-                    f"NumPy operates on arrays this mode does not produce. "
-                    f"It is outside the coverage, which is stated rather "
-                    f"than worked around by falling back to float."
+                    f"arithmetic: {exc}. Usually this is a basis that hands "
+                    f"back arrays, which a one-policy-at-a-time decimal run "
+                    f"has nothing to apply. It is outside the coverage, "
+                    f"which is stated rather than worked around by falling "
+                    f"back to float."
                 ) from exc
             per_mp.append({name: [Exact(v) for v in values]
                            for name, values in series.items()})

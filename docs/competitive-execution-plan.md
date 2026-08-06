@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,462
-   tests — 2,422 of them without the `[compile]` extra, whose 40 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,482
+   tests — 2,442 of them without the `[compile]` extra, whose 40 are
    RFC-072's bitwise measurement) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -884,7 +884,7 @@ that was a float run wearing a label. The test also asserts **none of the
 three buckets may empty out**, which is RFC-071's trap met from the other
 direction.
 
-### F4 — The findings catalogue (RFC-052) — effort S
+### F4 — The findings catalogue (RFC-052) — effort S — **done**
 The sharp-edge findings (counterparty band cliff, interest-SCR duration
 matching, AoS ordering dependence, LDTI vs IFRS 17 timing, and RFC-061's
 pool of one — a pooled model run per policy returned plausible numbers in
@@ -892,6 +892,37 @@ which every policy's pool was itself) are currently scattered through RFCs. Coll
 finding, each backed by a runnable script under `scripts/findings/` asserted
 in CI — a demonstrable audit-and-review capability, per landscape §4.4, and
 sales collateral that is also a regression suite.
+
+**Outcome (RFC-052).** Six findings catalogued, each a page in
+`docs/findings/` and a script in `scripts/findings/`, with
+`tests/test_findings.py` asserting the correspondence both ways and running
+every demonstration. Two of F4's named findings — interest-SCR duration
+matching (RFC-026) and LDTI versus IFRS 17 timing (RFC-015) — are **not**
+catalogued, and the README says so rather than leaving a reader to notice.
+
+Three things worth carrying forward.
+
+**The claim is asserted in the test, not in the script.** A script that
+asserted its own claim would pass in CI while proving nothing about the
+engine, because the demonstration and the check would share every
+assumption including the wrong ones. So `demonstrate()` computes and returns
+numbers, and the test judges them. The scripts print for a human as well,
+which is what makes them collateral rather than only tests.
+
+**The correspondence fails in both directions.** A page without a script is
+an unbacked claim — the state the catalogue exists to leave — and a script
+without a page is a demonstration nobody can read. `CATALOGUED` pins the
+slug set, because the parametrised cases would otherwise silently stop
+running over anything: RFC-071's emptied-out refusal, met a third time.
+
+**It caught a bug while being built, and the existing test had not.**
+`representation_error.py` failed on its first run because RFC-051's
+`as_stored` returned a bare `Decimal` rather than an `Exact`, so values read
+that way could not meet the float literals in a `@var` body.
+`tests/test_exact.py` covered that path and passed, because it asked only
+for a variable whose body never meets one. The test checked the feature the
+way its author was thinking about it; the demonstration used it the way a
+user would.
 
 ---
 
