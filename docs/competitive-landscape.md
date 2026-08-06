@@ -185,7 +185,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 | Production UI (runs, results explorer, assumption diffing) | ✅ | ✅ | ✅ | 🟡 demo UI only |
 | Governance: RBAC, approval workflows, multi-user | ✅ | ✅ Unify | ✅ | ❌ |
 | Excel integration | ✅ | ✅ | ✅ | ❌ |
-| Incumbent migration tooling (readers + parity reports) | n/a | n/a | n/a | 🟡 parity core (RFC-033: reusable diff engine, Markdown report, registered against both content digests) + Prophet MPF/results readers (RFC-034, dialect-driven, mapping report); ❌ MoSes readers, conversion scaffold |
+| Incumbent migration tooling (readers + parity reports) | n/a | n/a | n/a | 🟡 parity core (RFC-033: reusable diff engine, Markdown report, registered against both content digests), Prophet MPF/results readers (RFC-034, dialect-driven, mapping report) and conversion scaffold (RFC-036); ❌ MoSes readers |
 | Licence / cost model | Heavy, per-core/grid | Heavy | Heavy | Open code; one runtime dependency (NumPy); optional extras |
 | Regulatory track record & support organisation | ✅ decades | ✅ | ✅ | ❌ none |
 

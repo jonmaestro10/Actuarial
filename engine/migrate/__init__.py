@@ -19,8 +19,24 @@ from engine.migrate.prophet import (
     read_results,
     read_table,
 )
+from engine.migrate.scaffold import (
+    DEFAULT_VARIABLE_ALIASES,
+    Scaffold,
+    VariableSuggestion,
+    library_variables,
+    scaffold,
+    scaffold_from_results,
+    suggest,
+)
 
 __all__ = [
+    "DEFAULT_VARIABLE_ALIASES",
+    "Scaffold",
+    "VariableSuggestion",
+    "library_variables",
+    "scaffold",
+    "scaffold_from_results",
+    "suggest",
     "DEFAULT_FIELD_MAP",
     "MPF_DIALECT",
     "RESULTS_DIALECT",

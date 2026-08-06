@@ -63,7 +63,7 @@ what any incumbent ships rather than merely reaching parity.
 
 | Deficiency (landscape §3/§5) | Today | Parity target | Beyond-parity move | Item |
 |---|---|---|---|---|
-| Incumbent migration tooling | 🟡 parity core (A1, RFC-033) + Prophet readers (A2, RFC-034); scaffold and MoSes outstanding | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
+| Incumbent migration tooling | 🟡 M1 shipped: parity core (A1, RFC-033), Prophet readers (A2, RFC-034), scaffold (A4, RFC-036); MoSes readers (A3) on pilot demand | Prophet/MoSes readers + parity reports | Reconciliation report as a content-addressed, registry-verified artifact — a *signed* pilot deliverable no vendor produces | A1–A4 |
 | Compiled kernels | ❌ | Numba forward-loop kernels | Compiled executor joins the **bitwise** equivalence class — incumbents compile but never prove equivalence | B1 |
 | Cross-machine scale-out | 🟡 one machine | Multi-machine dispatch | Bitwise-identical results regardless of grid topology, verified by the registry | B2 |
 | Governance: RBAC, approvals | ❌ | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
@@ -159,7 +159,7 @@ Same shape as A2: `engine/migrate/moses.py`, dialect-driven, fixture-tested,
 feeding the same `ParitySpec`. Lower priority than A2 (Prophet has the larger
 installed base); do after A4 if pilot demand says so.
 
-### A4 — Conversion scaffold (RFC-036) — effort M
+### A4 — Conversion scaffold (RFC-036) — effort M — **shipped**
 
 **Build:** `engine/migrate/scaffold.py`.
 
@@ -176,8 +176,9 @@ installed base); do after A4 if pilot demand says so.
 module that imports, subclasses `Model`, and whose mapping table covers every
 input variable; the emitted `ParitySpec` runs under A1.
 
-**Milestone M1 — "the pilot story":** A1 + A2 + A4 shipped. The landscape
-doc's migration row flips ❌ → 🟡 (✅ once a real estate has been through it).
+**Milestone M1 — "the pilot story":** A1 + A2 + A4 shipped ✅ (RFC-033,
+RFC-034, RFC-036). The landscape doc's migration row is 🟡 (✅ once a real
+estate has been through it).
 
 ---
 
@@ -583,5 +584,6 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: claim RFC-036 and begin A4 (§3),
-following the protocol in §1. A1 shipped as RFC-033, A2 as RFC-034.*
+*Next action for the implementing agent: claim RFC-037 and begin B1 (§4),
+following the protocol in §1. M1 is complete — A1 shipped as RFC-033, A2 as
+RFC-034, A4 as RFC-036.*
