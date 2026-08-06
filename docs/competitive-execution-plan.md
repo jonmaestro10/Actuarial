@@ -44,12 +44,24 @@ them; the acceptance criteria assume them.
      *single-model-point bridge* into the per-policy class, where a pool of
      one is the same reduction either way and both executors agree bitwise.
 
+   **Amended again by RFC-068 — there are three.** A template that reads
+   `self.scenarios` cannot be handed `None`, and both deterministic
+   executors hand it exactly that, so it runs under the stochastic executor
+   and under no other:
+
+   - **scenario class** — for scenario-bound templates: run-to-run
+     determinism plus a *single-scenario bridge*, where `ScenarioSet.single(s)`
+     run alone reproduces column `s` of the `(model point × scenario)` slab
+     bitwise. A template can be in this class *and* the block class —
+     `VariablePayoutAnnuity` is — and the bridge is then the assertion that
+     the pooled reduction sweeps the block and not the slab.
+
    Nothing is weakened to a tolerance. B1's acceptance criterion is read
    against whichever class a template belongs to.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,281
+   naive implementation otherwise. The suite (`pytest`, currently 2,329
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -952,3 +964,47 @@ and every remaining exclusion is the **same** reason — a bound scenario set,
 or an index-crediting rule that reads one — asserted by a test so the list
 cannot be padded with new excuses while staying the same length. C4's LTC
 template lands on the multi-state engine with an example on day one.
+
+### E6 — The bound scenario set in the request schema (RFC-068) — effort S — **done**
+Unplanned, and the last of the reasons E5 left standing. `scenarios` is now
+a **top-level request key** — a discriminated union on `kind` over
+`explicit`, `flat` and `lognormal` — and `assumptions.index_credit` a second
+object-valued field. Eighteen specimens, up from fourteen; `UNAVAILABLE` is
+empty for the first time since RFC-032 wrote it, and is kept rather than
+deleted so the next template to outgrow the schema has somewhere to say so.
+
+**Outcome.** Three things came out of it that the schema work itself did
+not.
+
+First, *where* it goes was the interesting question, and the engine already
+answered it: `record_run` takes `scenarios` as a sibling of `assumptions`
+and `RunRecord` carries `scenarios_digest` beside `assumptions_digest`, so a
+scenario set is neither a `kind` nor an assumption field but a third thing.
+E5's rule extends: a basis is a kind, a field is a field, and a run input
+that is not an assumption is a request key.
+
+Second, **a seed pins less than it looks like it pins**. `ScenarioSet`
+fingerprints its values; `RunStore.identify` fingerprints the request. For a
+generated set those diverge, because NumPy freezes only the legacy
+`RandomState` stream and not `default_rng`'s — so the request digest
+identifies a *recipe*. The run record's `scenarios_digest` is the identity
+safe to cite, and the digest of the specimen set is pinned by a test,
+because a moved stream would revalue four templates with the whole suite
+still green. `scenarios.kind` therefore has **no default**, which is exactly
+where it differs from E5's `assumptions.kind`: there was no prior meaning to
+preserve, and a default would have chosen an identity for the caller.
+
+Third, §1.2 gained a **third equivalence class** (see above). The
+single-scenario bridge was already the test idiom in four modules; RFC-068
+names it and the evidence pack now performs it, reporting eight of the
+scenarios and saying so, rather than reporting the run as an error.
+
+**And it read the pack's equivalence section closely**, which nothing had.
+Five templates it cannot attest turn out to be two findings: three
+(`GeneralInsurance`, `LongTermCare`, `LongevitySwap`'s bridge) are one shape
+bug — a `setup()` slab read through `Model.at` gives a `(1,)` array under
+the interpreted executor and a scalar elsewhere, so the digests differ with
+every number identical — and two (`PayoutAnnuity`, `PensionBuyout`) are a
+real limitation, the interpreted executor not handling a date-valued
+model-point field. Both are pre-existing, neither is fixed here, and both
+are named in RFC-068's last section.

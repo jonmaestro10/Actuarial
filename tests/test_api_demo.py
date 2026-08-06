@@ -203,11 +203,17 @@ def test_the_field_scan_finds_a_branch_a_trace_would_miss():
 
 
 def test_the_listing_says_which_models_can_be_run(client):
+    """Every catalogued model now reports an example and no reason against
+    it. This used to pin `UnitLinkedGMxB` as the unrunnable one; the pair of
+    fields is what is being asserted, not any particular template's place in
+    it, so the assertion is over the whole listing."""
     listing = {m["name"]: m for m in client.get("/models").json()["models"]}
     assert listing["TermLife"]["example"] is True
     assert listing["TermLife"]["unavailable"] is None
-    assert listing["UnitLinkedGMxB"]["example"] is False
-    assert "scenario" in listing["UnitLinkedGMxB"]["unavailable"]
+    assert set(listing) == set(catalogue())
+    for name, entry in listing.items():
+        assert entry["example"] is True, name
+        assert entry["unavailable"] is None, name
 
 
 def test_the_example_endpoint_serves_a_body_that_submits(client):
@@ -221,13 +227,37 @@ def test_a_template_without_an_example_says_why(client, name):
     """404 with a reason, for every template that has none.
 
     Parametrised over `UNAVAILABLE` rather than naming one, because the
-    list shrinks: this test used to pin `IncomeProtection`, which now has an
+    list shrinks: it used to pin `IncomeProtection`, which now has an
     example, and a hard-coded name turns a template becoming *available*
-    into a red test about the wrong thing."""
+    into a red test about the wrong thing. `UNAVAILABLE` is now empty, so
+    this collects nothing — which is why the *mechanism* is asserted
+    separately below rather than only here. A parametrised test over an
+    empty list is not a passing test, it is no test."""
     response = client.get(f"/models/{name}/example")
     assert response.status_code == 404
     assert response.json()["detail"].strip()
+
+
+def test_the_reason_mechanism_still_answers_with_nothing_to_report(client):
+    """`UNAVAILABLE` is empty, so the test above collects no cases at all.
+    That is exactly the shape of a guard rotting into nothing, so the two
+    paths it used to cover are asserted here directly: an unknown model is a
+    404, and `unavailable` returns a reason when there is one to return.
+
+    Patched rather than mocked at the HTTP layer, because what is under test
+    is the lookup the route calls, and a route that stopped calling it would
+    still pass a test that only patched the route."""
+    from engine.api import examples as module
+
     assert client.get("/models/NoSuchModel/example").status_code == 404
+    assert module.unavailable("TermLife") is None
+    module.UNAVAILABLE["Fictional"] = "needs something not carried here"
+    try:
+        assert module.unavailable("Fictional") == (
+            "needs something not carried here")
+        assert module.example("Fictional") is None
+    finally:
+        del module.UNAVAILABLE["Fictional"]
 
 
 def test_describing_a_model_carries_its_model_point_fields(client):
@@ -604,23 +634,26 @@ def test_a_swap_with_one_leg_is_refused():
         build_assumptions({k: v for k, v in good.items() if k != "fixed"})
 
 
-def test_the_remaining_unavailable_templates_all_want_the_same_thing():
-    """What is left out is now **one** reason rather than three: a bound
-    scenario set, or an index-crediting rule that reads one. The
-    valuation-basis and transition-matrix limits are both closed, and this
-    asserts the list shrank rather than the reasons being reworded."""
-    assert set(UNAVAILABLE) == {
-        "FixedIndexedAnnuity", "UnitLinkedGMDB", "UnitLinkedGMxB",
-        "VariablePayoutAnnuity",
-    }
+def test_nothing_is_left_out_and_the_mechanism_that_said_so_survives():
+    """Nothing is unavailable any more. RFC-032 shipped with eight of
+    sixteen templates unrunnable over HTTP, RFC-066 took it to twelve of
+    eighteen, and RFC-068's scenario key and `assumptions.index_credit` take
+    it to all eighteen.
+
+    The guard that matters is not the count but the **partition**: every
+    catalogued template is in exactly one of the two sets. A template that
+    lands on something the schema cannot express has to say so in
+    `UNAVAILABLE` rather than quietly not appearing, and that is what keeps
+    the demonstration honest as the library grows. `UNAVAILABLE` is
+    therefore kept, empty, rather than deleted."""
+    assert UNAVAILABLE == {}
     for name in ("PayoutAnnuity", "PensionBuyout", "LongevitySwap",
-                 "IncomeProtection", "LongTermCare", "GeneralInsurance"):
+                 "IncomeProtection", "LongTermCare", "GeneralInsurance",
+                 "FixedIndexedAnnuity", "UnitLinkedGMDB", "UnitLinkedGMxB",
+                 "VariablePayoutAnnuity"):
         assert name in EXAMPLES and name not in UNAVAILABLE
-    assert len(EXAMPLES) == 14 and len(catalogue()) == 18
-    # Every remaining reason is the same one: a scenario set, or a rule that
-    # reads one. That is a single format to invent, not four.
-    for reason in UNAVAILABLE.values():
-        assert "scenario" in reason or "index" in reason
+    assert len(EXAMPLES) == 18 and len(catalogue()) == 18
+    assert set(EXAMPLES) == set(catalogue())
 
 
 def test_a_transition_matrix_arrives_as_a_transition_matrix():

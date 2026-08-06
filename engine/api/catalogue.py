@@ -43,20 +43,90 @@ omitted ``kind`` and got a different basis than it did last week would be a
 silent revaluation, which is the one failure this whole layer exists to
 prevent.
 
-One object-valued *field* is now carried too. ``IncomeProtection`` binds a
+Two object-valued *fields* are carried too. ``IncomeProtection`` binds a
 :class:`~engine.data.multistate.TransitionMatrix` on
-:class:`~engine.data.assumptions.Assumptions` alongside ``interest``, so it
-needs no new ``kind`` — it needs ``assumptions.transitions``, which the
-scalar kind now takes. The builder is deliberately thin: ``TransitionMatrix``
-already refuses a row that does not sum to one, a probability outside
-``[0, 1]``, and an absorbing state whose row lets the population leave, so
-the schema constructs and lets the class do the arguing. A second validation
-here would be a second opinion about the same matrix.
+:class:`~engine.data.assumptions.Assumptions` alongside ``interest``, and
+``FixedIndexedAnnuity`` binds an
+:class:`~engine.data.index_credit.IndexCredit` in the same place, so neither
+needs a new ``kind`` — they need ``assumptions.transitions`` and
+``assumptions.index_credit``, which the scalar kind now takes. Both builders
+are deliberately thin: ``TransitionMatrix`` already refuses a row that does
+not sum to one, a probability outside ``[0, 1]``, and an absorbing state
+whose row lets the population leave, and ``IndexCredit`` already refuses a
+floor above its cap and a monthly design on an annual step. The schema
+constructs and lets the class do the arguing. A second validation here would
+be a second opinion about the same object, and the two would drift.
 
-What is still out of scope is a **bound scenario set** — three templates —
-and an index-crediting rule. Those are the ones whose serialisation would
-have to be invented for a class that is still moving, which is the original
-reasoning and still holds for them.
+``assumptions.index_credit`` needs no discriminator of its own invention:
+:meth:`engine.data.index_credit.IndexCredit.__fingerprint__` already
+publishes ``{"kind": type(self).__name__, ...}``, so the request says the
+class name the object already says about itself, and the designs are
+*discovered* from the module the same way :func:`catalogue` discovers
+templates.
+
+The scenario set is not an assumption
+-------------------------------------
+Three templates were unavailable for wanting a **bound scenario set** and a
+fourth for wanting an index-crediting rule that reads one. That is now
+carried, and the interesting part is *where*.
+
+RFC-066 left a rule behind: a basis is a ``kind``, a field is a field. A
+scenario set is neither, and the engine already says so.
+:func:`~engine.core.registry.record_run` takes ``scenarios`` as a sibling of
+``assumptions``, and :class:`~engine.core.registry.RunRecord` carries
+``scenarios_digest`` *beside* ``assumptions_digest`` rather than inside it.
+So it is a **top-level request key**, next to ``modelpoints``. Filing it
+under ``assumptions`` would have been a category error the run record
+already refuses to make.
+
+``scenarios`` is a discriminated union on ``kind``:
+
+- ``"explicit"`` — the numbers themselves, one or more named series;
+- ``"flat"`` — a constant rate, which is
+  :meth:`~engine.data.scenarios.ScenarioSet.flat`;
+- ``"lognormal"`` — parameters and a seed, which is
+  :meth:`~engine.data.scenarios.ScenarioSet.lognormal`.
+
+**Two identities, and only one of them is over the numbers.**
+:meth:`engine.data.scenarios.ScenarioSet.__fingerprint__` covers the values;
+:meth:`engine.api.store.RunStore.identify` covers the *request*. For
+``"explicit"`` those are the same question. For a generated set they are
+not: the request digest covers the parameters and the seed, and NumPy does
+not promise that ``default_rng`` produces the same stream across feature
+releases — only the legacy ``RandomState`` is frozen. So a request that
+names a seed is identified by a recipe, and the run record's
+``scenarios_digest`` — which is over the values — is the identity that is
+safe to cite. ``tests/test_api_scenarios.py`` pins the digest of the
+generated set the worked examples use, so a NumPy upgrade that moves the
+stream fails the suite loudly rather than revaluing four templates in
+silence.
+
+**An index is not a return**, and the explicit form can say which it has.
+``values_are`` is ``"return"`` by default and ``"index"`` converts through
+:func:`engine.data.esg.returns_from_index`, which refuses to guess the level
+at time zero. It is not spelled ``kind`` because ``kind`` is already the
+union's discriminator here, and one word answering two questions in the same
+object is how a schema starts lying. A generated set has no such field: a
+generator produces returns by construction.
+
+``source`` is deliberately **not** carried. It is outside
+``ScenarioSet.__fingerprint__`` on purpose — two sets holding the same
+numbers are the same set whatever file they came from — so admitting it
+would let two requests with different digests build one run, which is the
+one thing the request digest exists to prevent.
+
+What is still out of scope, and now for a reason of its own
+-----------------------------------------------------------
+:class:`~engine.data.account.AccountBasis` stays out, and no longer under
+the general heading. It is not one settled class but five —
+``Corridor``, ``SurrenderCharge``, ``CreditingBasis``, ``CostOfInsurance``
+and ``NoLapseGuarantee`` — and a request key spelled ``account`` that
+carried the surrender-charge schedule alone would name the whole basis and
+mean a fifth of one. The default basis is the identity (it deducts nothing
+and credits nothing), so a request omitting it gets a contract with no
+surrender charge — which the ``FixedIndexedAnnuity`` specimen says out loud
+rather than leaving to be discovered from a cash value that equals the
+account.
 
 Dates arrive as strings, and are coerced here rather than in the core
 -------------------------------------------------------------------
@@ -90,6 +160,7 @@ from engine.data.basis import ValuationBasis
 from engine.data.modelpoints import from_dicts
 from engine.data.mortality import MortalityBasis
 from engine.data.rates import YieldCurve
+from engine.data.scenarios import PRIMARY, ScenarioSet
 
 #: The assumption fields a request may set. Everything else on
 #: :class:`Assumptions` is an object rather than a scalar and is out of
@@ -104,13 +175,26 @@ SCALAR_ASSUMPTIONS = (
 #: nonetheless expressible: each is a settled class with a shape a JSON
 #: object maps onto directly. Everything else on :class:`Assumptions` stays
 #: out — see the module docstring.
-OBJECT_ASSUMPTIONS = ("transitions",)
+OBJECT_ASSUMPTIONS = ("transitions", "index_credit")
 
 EXECUTORS = ("auto", "vectorized", "interpreted", "stochastic")
 
 #: What ``assumptions.kind`` may say. ``"scalar"`` is the default and is
 #: what every request written before this existed already means.
 ASSUMPTION_KINDS = ("scalar", "valuation_basis", "longevity_swap_basis")
+
+#: What ``scenarios.kind`` may say. There is **no default**: a request that
+#: bothers to carry a scenario set has already decided whether it is
+#: supplying numbers or a recipe for them, and the two are identified
+#: differently (module docstring). Guessing would pick the identity for the
+#: caller.
+SCENARIO_KINDS = ("explicit", "flat", "lognormal")
+
+#: Whether the explicit form's numbers are per-period returns or a
+#: cumulative index. Spelled ``values_are`` rather than ``kind`` because
+#: ``kind`` is this object's union discriminator; :mod:`engine.data.esg`
+#: calls the same distinction ``kind`` and has no union to collide with.
+SCENARIO_MEASURES = ("return", "index")
 
 #: A model-point value in exactly this shape becomes a ``datetime.date``.
 #: Anchored at both ends on purpose: a partial or prefixed match is a
@@ -271,6 +355,221 @@ def build_transitions(spec: Any) -> "TransitionMatrix":
         raise InvalidRequestError(f"assumptions.transitions: {exc}") from exc
 
 
+def index_credit_designs() -> dict:
+    """Every crediting design :mod:`engine.data.index_credit` ships, by name.
+
+    Discovered rather than listed, the same move :func:`catalogue` makes for
+    templates: a design is exposed by existing. The abstract base is left
+    out — it raises :class:`NotImplementedError` from both of its methods,
+    so a request naming it would build an object that fails at the first
+    anniversary rather than at the boundary.
+    """
+    from engine.data import index_credit as module
+
+    return {
+        name: cls for name, cls in sorted(vars(module).items())
+        if (inspect.isclass(cls) and issubclass(cls, module.IndexCredit)
+            and cls is not module.IndexCredit)
+    }
+
+
+def build_index_credit(spec: Any) -> Any:
+    """An :class:`~engine.data.index_credit.IndexCredit` from JSON.
+
+    ``kind`` is the **class name**, which is what
+    :meth:`~engine.data.index_credit.IndexCredit.__fingerprint__` already
+    publishes as the design's discriminator. Mirroring it means the request
+    and the digest agree about what the thing is called, rather than the
+    schema inventing a second vocabulary for the same three classes.
+
+    Thin, like :func:`build_transitions`. The class refuses a floor above
+    its cap, a non-positive cap or participation rate, a negative spread,
+    and — through
+    :meth:`~engine.data.index_credit.IndexCredit.check_freq`, called from
+    :class:`~engine.data.assumptions.Assumptions` — a monthly design on an
+    annual projection. All of those arrive here as an
+    :class:`InvalidRequestError` with the class's own message.
+    """
+    designs = index_credit_designs()
+    if not isinstance(spec, dict):
+        raise InvalidRequestError("assumptions.index_credit must be an object")
+    spec = dict(spec)
+    kind = spec.pop("kind", None)
+    if kind not in designs:
+        raise InvalidRequestError(
+            f"assumptions.index_credit.kind must be one of {sorted(designs)}, "
+            f"got {kind!r}. The three designs are different products, not "
+            f"parameters of one — a monthly-sum cap is not an annual cap."
+        )
+    unknown = sorted(set(spec) - {"cap", "participation", "spread", "floor"})
+    if unknown:
+        raise InvalidRequestError(
+            f"unsupported index_credit fields {unknown}"
+        )
+    try:
+        return designs[kind](**spec)
+    except (TypeError, ValueError) as exc:
+        raise InvalidRequestError(f"assumptions.index_credit: {exc}") from exc
+
+
+def _rectangle(values: Any, where: str) -> list:
+    """A JSON list-of-lists, checked for being one before NumPy sees it.
+
+    ``np.asarray`` on a ragged list raises a message about inhomogeneous
+    shapes and object dtypes, which describes NumPy rather than the request.
+    """
+    if not isinstance(values, list) or not values:
+        raise InvalidRequestError(
+            f"{where} must be a non-empty list of scenario rows"
+        )
+    widths = set()
+    for i, row in enumerate(values):
+        if not isinstance(row, list) or not row:
+            raise InvalidRequestError(
+                f"{where}[{i}] must be a non-empty list of period values"
+            )
+        widths.add(len(row))
+        for j, value in enumerate(row):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise InvalidRequestError(
+                    f"{where}[{i}][{j}] must be a number, got {value!r}"
+                )
+    if len(widths) != 1:
+        raise InvalidRequestError(
+            f"{where}: every scenario must cover the same number of periods; "
+            f"got lengths {sorted(widths)}"
+        )
+    return values
+
+
+def _explicit_series(spec: dict) -> tuple[dict, str]:
+    """``(series, primary)`` from the explicit form's two accepted shapes.
+
+    ``returns`` is the single-series shorthand every template that reads
+    ``ret(t)`` wants; ``series`` is the general form, and is the only one
+    that can carry a second series at all.
+    """
+    returns = spec.pop("returns", None)
+    series = spec.pop("series", None)
+    if (returns is None) == (series is None):
+        raise InvalidRequestError(
+            "an explicit scenario set needs exactly one of 'returns' (one "
+            "series) or 'series' (an object of named series)"
+        )
+    if returns is not None:
+        return {PRIMARY: _rectangle(returns, "scenarios.returns")}, PRIMARY
+    if not isinstance(series, dict) or not series:
+        raise InvalidRequestError(
+            "scenarios.series must be a non-empty object of name to rows"
+        )
+    built = {name: _rectangle(rows, f"scenarios.series.{name}")
+             for name, rows in series.items()}
+    primary = spec.pop("primary", None)
+    if primary is None:
+        raise InvalidRequestError(
+            f"scenarios.primary is required with named series: it says which "
+            f"of {sorted(built)} the templates' `ret(t)` reads, and there is "
+            f"no sensible guess between an equity and a bond series"
+        )
+    return built, primary
+
+
+def build_scenarios(spec: Any) -> ScenarioSet:
+    """A :class:`~engine.data.scenarios.ScenarioSet` from JSON.
+
+    A discriminated union on ``kind`` with no default — see the module
+    docstring for why, and for the difference between the identity of an
+    explicit set and the identity of a generated one.
+    """
+    if not isinstance(spec, dict):
+        raise InvalidRequestError("scenarios must be an object")
+    spec = dict(spec)
+    kind = spec.pop("kind", None)
+    if kind not in SCENARIO_KINDS:
+        raise InvalidRequestError(
+            f"scenarios.kind must be one of {list(SCENARIO_KINDS)}, got "
+            f"{kind!r}"
+        )
+    try:
+        if kind == "flat":
+            _reject_extra(spec, {"rate", "n_scenarios", "horizon"},
+                          "scenarios")
+            return ScenarioSet.flat(
+                _number(spec, "rate", "scenarios"),
+                _count(spec, "n_scenarios", "scenarios"),
+                _count(spec, "horizon", "scenarios"),
+            )
+        if kind == "lognormal":
+            _reject_extra(
+                spec, {"n_scenarios", "horizon", "drift", "vol", "seed"},
+                "scenarios",
+            )
+            seed = spec.get("seed")
+            if not isinstance(seed, int) or isinstance(seed, bool) or seed < 0:
+                raise InvalidRequestError(
+                    "scenarios.seed is required and must be a non-negative "
+                    "integer: a generated set without one is a different set "
+                    "every time it is submitted, and the run registry would "
+                    "record that as an engine that cannot repeat itself"
+                )
+            return ScenarioSet.lognormal(
+                _count(spec, "n_scenarios", "scenarios"),
+                _count(spec, "horizon", "scenarios"),
+                drift=_number(spec, "drift", "scenarios"),
+                vol=_number(spec, "vol", "scenarios"),
+                seed=seed,
+            )
+        series, primary = _explicit_series(spec)
+        measure = spec.pop("values_are", "return")
+        if measure not in SCENARIO_MEASURES:
+            raise InvalidRequestError(
+                f"scenarios.values_are must be one of "
+                f"{list(SCENARIO_MEASURES)}, got {measure!r}"
+            )
+        index_base = spec.pop("index_base", None)
+        starts_at = spec.pop("starts_at", 1)
+        _reject_extra(spec, set(), "scenarios")
+        if measure == "index":
+            from engine.data.esg import returns_from_index
+
+            series = {
+                name: returns_from_index(rows, index_base=index_base,
+                                         starts_at=starts_at)
+                for name, rows in series.items()
+            }
+        elif index_base is not None or starts_at != 1:
+            raise InvalidRequestError(
+                "scenarios.index_base and scenarios.starts_at only apply to "
+                "values_are='index'; a per-period return has no level at "
+                "time zero to be quoted against"
+            )
+        return ScenarioSet(series=series, primary=primary)
+    except InvalidRequestError:
+        raise
+    except (TypeError, ValueError, KeyError) as exc:
+        raise InvalidRequestError(f"scenarios: {exc}") from exc
+
+
+def _reject_extra(spec: dict, allowed: set, where: str) -> None:
+    unknown = sorted(set(spec) - allowed)
+    if unknown:
+        raise InvalidRequestError(f"unsupported {where} fields {unknown}")
+
+
+def _number(spec: dict, field: str, where: str) -> float:
+    value = spec.get(field)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise InvalidRequestError(f"{where}.{field} must be a number")
+    return float(value)
+
+
+def _count(spec: dict, field: str, where: str) -> int:
+    value = spec.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise InvalidRequestError(f"{where}.{field} must be a positive integer")
+    return value
+
+
 def build_valuation_basis(spec: dict) -> ValuationBasis:
     """A :class:`~engine.data.basis.ValuationBasis` from JSON."""
     spec = dict(spec)
@@ -348,9 +647,12 @@ def build_assumptions(spec: Any) -> Any:
         raise InvalidRequestError(
             "assumptions.mortality must be a number or an age-to-rate object"
         )
-    transitions = spec.pop("transitions", None)
-    if transitions is not None:
-        transitions = build_transitions(transitions)
+    objects = {}
+    for field, build in (("transitions", build_transitions),
+                         ("index_credit", build_index_credit)):
+        value = spec.pop(field, None)
+        if value is not None:
+            objects[field] = build(value)
     unknown = set(spec) - set(SCALAR_ASSUMPTIONS)
     if unknown:
         raise InvalidRequestError(
@@ -358,8 +660,7 @@ def build_assumptions(spec: Any) -> Any:
             f"carries {list(SCALAR_ASSUMPTIONS)} plus mortality and "
             f"{list(OBJECT_ASSUMPTIONS)}"
         )
-    if transitions is not None:
-        spec["transitions"] = transitions
+    spec.update(objects)
     try:
         return Assumptions(mortality=table, **spec)
     except (TypeError, ValueError) as exc:
@@ -417,12 +718,37 @@ def build_run(request: dict, models: dict | None = None) -> dict:
             f"executor must be one of {list(EXECUTORS)}, got {executor!r}"
         )
 
+    scenarios = request.get("scenarios")
+    scenarios = None if scenarios is None else build_scenarios(scenarios)
+    # ``record_run`` refuses both of these too, but it refuses them as a
+    # *failed run* — queued, started, and then broken — where they are plainly
+    # a malformed request. Same rule as everywhere else here: a 422 before
+    # anything is queued beats a run that dies at its first step.
+    if scenarios is not None and executor not in ("auto", "stochastic"):
+        raise InvalidRequestError(
+            f"a bound scenario set runs under the stochastic executor; "
+            f"executor={executor!r} cannot see one. Drop the executor and it "
+            f"is chosen for you."
+        )
+    if scenarios is None and executor == "stochastic":
+        raise InvalidRequestError(
+            "the stochastic executor needs a scenario set; add `scenarios` "
+            "or drop the executor"
+        )
+    if scenarios is not None and scenarios.horizon < proj_len:
+        raise InvalidRequestError(
+            f"scenario horizon {scenarios.horizon} is shorter than proj_len "
+            f"{proj_len}; the projection would run off the end of the "
+            f"scenario set"
+        )
+
     return {
         "model_cls": models[name],
         "modelpoints": from_dicts(coerce_dates(rows)),
         "assumptions": build_assumptions(request.get("assumptions", {})),
         "proj_len": proj_len,
         "outputs": outputs,
+        "scenarios": scenarios,
         "executor": executor,
         "code_version": request.get("code_version"),
     }
