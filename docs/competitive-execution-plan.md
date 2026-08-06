@@ -61,9 +61,10 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,490
-   tests — 2,450 of them without the `[compile]` extra, whose 40 are
-   RFC-072's bitwise measurement) must pass on every commit.
+   naive implementation otherwise. The suite (`pytest`, currently 2,492
+   tests — 2,446 of them without the `[compile]` extra, whose 46 are
+   RFC-072's bitwise measurement and RFC-074's compiled executor)
+   must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
    is an optional extra in `pyproject.toml` (`[api]` fastapi, `[data]`
@@ -229,7 +230,7 @@ Landscape §5.1: the binding constraint for production nested-stochastic. The
 graph and forward loop exist (`engine/core/graph.py`, `vector.py`); PLAN §4.2
 and §4.3 are designed but unbuilt.
 
-### B1 — The compiled executor (RFC-037) — effort L — **in progress**
+### B1 — The compiled executor (RFC-037) — effort L — **done**
 
 **Build:** `engine/core/compiled.py`; optional extra `[compile]` (Numba).
 
@@ -319,9 +320,35 @@ right for the batch it traced and wrong for the next block, which is RFC-070's
 bug exactly — a conditional branch a particular batch never entered, surviving
 three RFCs. It cannot survive a fourth.
 
-Still ahead for B1: the emitter itself (tape → Numba kernel over preallocated
-slabs), the hoist slabs, the kernel cache keyed by graph digest, and joining
-the equivalence suite as a third executor.
+**Shipped (RFC-074).** The emitter, the hoist slabs, the kernel cache and the
+equivalence suite. **13 of the 14 deterministic templates compile and agree
+bitwise** on every variable and period, shape and dtype asserted separately,
+against both a chunked and an unchunked vectorized run. The fourteenth is
+refused because every one of its variables is hoisted, so a kernel would be
+the vectorized executor with extra steps.
+
+**The speed result is two numbers, and both are published.** The kernel alone
+is a median **14.6x** (range 5.4x to 261x), clearing the >=5x target. End to
+end the median is **1.36x** (range 0.92x to 9.94x), and the reason is Amdahl's
+law rather than a defect in the fusion: the hoist pre-pass is a median 55% of
+the vectorized runtime and the kernel cannot remove it. On `PayoutAnnuity` the
+pre-pass is slower than the entire vectorized run and the compiled path is a
+net loss. Reported rather than tuned away — the honest claim is that the fused
+arithmetic is worth an order of magnitude and most templates today spend more
+time outside it than in it.
+
+**The next piece of work is named by the measurement**, not guessed:
+interleave the pre-pass with the kernel per period, so a hoisted variable is
+computed from the kernel's own slabs rather than from a second traversal that
+recomputes the fused variables as dependencies.
+
+Two findings worth carrying forward. **A variable is hoisted whole, never in
+part** — a sub-expression is an anonymous intermediate with no name that
+survives to run time, and fixing that alone took coverage from 2 of 14 to 13
+of 14. And **pooled models are hoisted, not refused**: this is an array
+executor, `pool_sum` classifies as a reduction and is hoisted, so the
+reduction happens in the vectorized executor over the real block. Pooling
+costs fusion, not correctness.
 
 **Accept:** every template in `engine/library/` bitwise-identical across
 interpreted / vectorized / compiled — read against §1.2's two classes, so
