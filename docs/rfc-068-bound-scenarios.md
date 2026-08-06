@@ -239,41 +239,30 @@ derive it.
 
 ## What this does not close
 
-The evidence pack's equivalence section carries five templates it cannot
-attest, and has done since before this RFC. Reading them — which is what
-adding a fourth kind of row to that section forced — they are **two**
-findings, not five.
+The evidence pack's equivalence section carried five templates it could not
+attest, from before this RFC. Reading them — which is what adding a fourth
+kind of row to that section forced — they were **two** findings, not five.
 
-**Three of them are one bug, and it is a shape rather than a number.**
-`GeneralInsurance` and `LongTermCare` disagree between the two executors,
-and `LongevitySwap`'s single-model-point bridge reports `False`. In all
-three the numbers are identical to the last bit. What differs is the shape:
-a template that builds a `(n_mp, n_periods)` slab in `setup()` and reads it
-through `Model.at` gets `slab[..., t]`, which is a `(1,)` array under the
-interpreted executor — where the block is one policy — and a scalar
-everywhere else. `record_run`'s interpreted branch stacks those into
-`(1, n_t, n_mp)` against the vectorized `(n_t, n_mp)`, and `fingerprint`
-sees two different arrays. The affected variables are exactly the ones that
-read a `setup()` slab: `premium_earned` and its four dependants,
-`benefits`/`benefit_maximum`, `expected_payment`/`contracted_payment`.
+**Three of them were one bug, and it was a shape rather than a number** —
+`GeneralInsurance`, `LongTermCare`, and `LongevitySwap`'s
+single-model-point bridge, in all three of which the numbers were identical
+to the last bit and only the array shape differed: a `setup()` slab read
+through `Model.at` gave a `(1,)` array under the interpreted executor and a
+scalar everywhere else. That half is discharged by **RFC-069**, which keys
+`Model.at` off the model's *binding* — a single model point against a
+`ModelPointBatch` — rather than off any array's shape, and says why both of
+the placements this section originally named were, as stated, wrong.
 
-So §1.2 is not broken by these three — but the pack cannot say so, because
-the digest it compares covers the shape as well as the values, and it is
-right to. The fix belongs in one of two places (`Model.at` returning a
-scalar when the block is one policy, or `record_run` squeezing the axis it
-knows it introduced), both of which touch every template and neither of
-which belongs in a schema RFC.
-
-**Two of them are a real limitation.** `PayoutAnnuity` and `PensionBuyout`
-fail under the interpreted executor with
+**Two of them are a real limitation, and still are.** `PayoutAnnuity` and
+`PensionBuyout` fail under the interpreted executor with
 `TypeError: 'datetime.date' object is not iterable` — the per-policy path
 cannot handle a date-valued model-point field. That is a genuine gap in the
 per-policy class's coverage and wants its own decision: either the
 interpreted executor learns dates, or the two templates are declared outside
 the class the way pooled ones are, with a stated reason.
 
-Neither is caused by this RFC and neither is fixed by it. They are recorded
-here because §1.2's invariant is load-bearing enough that five unexplained
-reds in the repo's own evidence pack should not sit unnamed, and because
-"three of these five are one shape bug" is a much smaller thing to fix than
-the section's summary line suggests.
+Neither was caused by this RFC and neither was fixed by it. They were
+recorded here because §1.2's invariant is load-bearing enough that five
+unexplained reds in the repo's own evidence pack should not sit unnamed —
+and naming them was what shrank the fix: "three of these five are one shape
+bug" turned out to be one RFC's worth of work, not five templates' worth.

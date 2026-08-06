@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,362
+   naive implementation otherwise. The suite (`pytest`, currently 2,373
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -936,24 +936,23 @@ catalogue's nineteen templates all have a worked example for the first time
 since RFC-032. Three things are open, in descending order of how much they
 cost to leave alone.
 
-**1. Five templates the evidence pack cannot attest, which turn out to be
-two bugs.** RFC-068 was the first item to read that section closely and the
-summary line has been understating it. `GeneralInsurance`, `LongTermCare`
-and `LongevitySwap`'s single-model-point bridge are **one shape bug**: a
-`setup()` slab read through `Model.at` gives `slab[..., t]`, which is a
-`(1,)` array under the interpreted executor — where the block is one policy
-— and a scalar everywhere else, so `record_run`'s digest assembly compares
-`(1, n_t, n_mp)` with `(n_t, n_mp)` and every number is identical. §1.2 is
-not broken by those three, but the pack cannot say so, and it is right not
-to: the digest covers the shape. The fix is either `Model.at` returning a
-scalar when the block is one policy or `record_run` squeezing the axis it
-knows it introduced, and both touch every template, which is why it is its
-own item. `PayoutAnnuity` and `PensionBuyout` are a **real limitation** —
-`TypeError: 'datetime.date' object is not iterable` under the interpreted
-executor, which cannot handle a date-valued model-point field. That wants a
-decision: either the executor learns dates, or the two templates are
-declared outside the per-policy class the way pooled ones are, with a stated
-reason.
+**1. Two templates the evidence pack cannot attest, needing a decision
+rather than a fix.** RFC-068 read that section closely and found five
+unattested templates that were two findings; RFC-069 (F5, below) discharged
+the larger-looking, smaller one — the shape bug behind `GeneralInsurance`,
+`LongTermCare` and `LongevitySwap`'s single-model-point bridge — and the
+pack now attests all three. What remains is the **real limitation**:
+`PayoutAnnuity` and `PensionBuyout` fail under the interpreted executor
+with `TypeError: 'datetime.date' object is not iterable`, because the
+per-policy path cannot handle a date-valued model-point field. That wants a
+decision, not a patch: either the interpreted executor learns dates, or the
+two templates are declared outside the per-policy class the way pooled ones
+are, with a stated reason. Note before choosing that the second option
+changes what §1.2's per-policy class *means* — these two are on the
+`ValuationBasis` chassis, whose module docstring already says the
+interpreted path is the per-policy loop the basis exists to avoid — so the
+honest declaration may be the right answer, but it should be made on
+purpose.
 
 **2. The four §6.C tables still uncarried (RFC-067).** Unchanged and still
 needing a human: **Table 6.5 fails one of its own three worked examples**
@@ -1012,8 +1011,9 @@ Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 —
 F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045, RFC-046) — milestone
 M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) — milestone M4 — C1–C6
 (RFC-039, RFC-040, RFC-041, RFC-042, RFC-054, RFC-055) — **milestone M5** —
-and F2 (RFC-050), with VM-22's remediation V1–V4 (RFC-062, RFC-063) and the
-two unplanned schema items E5 and E6 (RFC-066, RFC-068).*
+and F2 (RFC-050), with VM-22's remediation V1–V4 (RFC-062, RFC-063), the
+two unplanned schema items E5 and E6 (RFC-066, RFC-068), and the slab
+shape fix F5 (RFC-069).*
 
 ### E5 — Assumption objects in the request schema (RFC-066) — effort S — **done**
 Unplanned, and raised by C3. The RFC-032 request schema carried scalars and
@@ -1078,4 +1078,37 @@ the interpreted executor and a scalar elsewhere, so the digests differ with
 every number identical — and two (`PayoutAnnuity`, `PensionBuyout`) are a
 real limitation, the interpreted executor not handling a date-valued
 model-point field. Both are pre-existing, neither is fixed here, and both
-are named in RFC-068's last section.
+are named in RFC-068's last section. The shape bug became F5 (RFC-069),
+below; the limitation is open item 1 above.
+
+### F5 — The slab read per policy (RFC-069) — effort S — **done**
+Unplanned, and raised by RFC-068's reading of the evidence pack. Three of
+the five templates the pack could not attest were one shape bug: a
+`(n_mp, n_periods)` slab built in `setup()` and read through `Model.at`
+returned a `(1,)` array under the interpreted executor — where the model is
+bound to a single model point and every other variable is a scalar — so
+`record_run` digested `(1, n_t, n_mp)` against the vectorized
+`(n_t, n_mp)` with every number identical.
+
+**Outcome (RFC-069).** Fixed in `Model.at`, and the design point is that
+**the discriminator is the binding, never the shape**. Both placements
+RFC-068 named were, as stated, wrong: squeezing when the leading axis is
+length one collapses the vectorized block of one and the `chunk_size=1`
+chunk — where the `(1,)` slice is *correct*, because the axis is the block
+— and `record_run` never introduced the axis, so it could only squeeze on
+shape (the same trap one level up) while leaving `result.per_mp`
+inconsistent for everything else that reads it, which turned out to be
+real: `RunResult.aggregate` was returning one-element arrays, and so was
+`GeneralInsurance.combined_ratio()` on a directly-built model. `Model.at`
+already keys its scenario branch off model state rather than shape;
+now the model-point branch does too — bound to a `ModelPointBatch` the
+axis stays, bound to a single `ModelPoint` the column comes back as the
+scalar it is, and a slab carrying more than one policy under a
+single-point binding is *refused* with the population named rather than
+read at its first row. No vectorized or stochastic bit moved: the batch
+branch returns the identical object, and the suite's golden `==` tests
+pass unedited. The pack's equivalence line moves from 7 of 11 to **9 of
+11** bitwise, `LongevitySwap`'s single-point bridge from `False` to
+`True`, and `tests/test_slab_binding.py` pins the grant, the trap not
+taken, and both refusals — with value equality asserted separately from
+shape equality, because §1.2 was never breached here, only unprovable.

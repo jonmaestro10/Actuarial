@@ -11,6 +11,7 @@ from collections import defaultdict
 from typing import Any, Callable
 
 from engine.core.graph import CyclicModelError, DependencyGraph
+from engine.data.modelpoints import ModelPointBatch
 
 
 class EvictedValueError(RuntimeError):
@@ -159,9 +160,36 @@ class Model:
         The stochastic executor puts model-point fields in columns so they
         broadcast against per-scenario rows; a slab column has to be shaped
         the same way or it would broadcast against the scenario axis instead.
+
+        Bound to a single model point — the interpreted executor, a direct
+        instantiation, :meth:`trace` — every model-point field is a scalar,
+        so the column is returned as one. The policy axis a template puts on
+        its slab (``np.atleast_1d`` over scalar fields) is spurious there,
+        and keeping it would make these the only ``(1,)``-valued variables
+        in a per-policy projection — same numbers, different shape, and a
+        different ``results_digest`` (RFC-069). The discriminator is the
+        **binding**, never the shape: a vectorized block of one is bound to
+        a :class:`~engine.data.modelpoints.ModelPointBatch` and keeps its
+        axis, because there the axis is the block.
         """
         value = slab[..., t]
-        return value[..., None] if self.scenarios is not None else value
+        if self.scenarios is not None:
+            return value[..., None]
+        if isinstance(self.mp, ModelPointBatch):
+            return value
+        # Bound per policy. The leading axis, if the slab has one, is the
+        # policy axis for a block of exactly one; anything wider is a slab
+        # built for a block this model is not bound to.
+        if getattr(value, "ndim", 0) == 0:
+            return value
+        if value.shape[0] != 1:
+            raise ValueError(
+                f"this model is bound to a single model point, but the slab "
+                f"carries {value.shape[0]} policies at t={t}. A per-policy "
+                f"model cannot read a block's slab; run the block under "
+                f"run_vectorized instead."
+            )
+        return value[0]
 
     def pool_sum(self, values):
         """Total across the model-point axis, leaving any scenario axis alone.
