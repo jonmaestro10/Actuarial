@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,492
-   tests — 2,446 of them without the `[compile]` extra, whose 46 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,508
+   tests — 2,462 of them without the `[compile]` extra, whose 46 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
@@ -360,7 +360,7 @@ marketing = engineering). If any op resists bitwise reproduction under Numba,
 the RFC documents the op and the replacement chosen — the tolerance does not
 move (§1.2).
 
-### B2 — Cross-machine dispatch (RFC-038) — effort L
+### B2 — Cross-machine dispatch (RFC-038) — effort L — **mostly done**
 
 **Build:** `engine/core/dispatch.py`, `engine/api/worker.py`.
 
@@ -382,9 +382,41 @@ run vs the same run dispatched across ≥2 local worker processes (spawned in
 the test, marked slow); a killed worker's shard is retried and the final
 digest is unchanged; registry shows the shard tree.
 
+**Outcome (RFC-075).** Built, and the claim above needed correcting. A
+dispatched run is bitwise identical to an undispatched one at every shard
+count — tested at 1, 2, 3, 5, 8 and 37 shards over 37 model points. But
+"**any topology**" is wrong: RFC-072 measured that the transcendental library
+is implementation-defined to within an ulp, so a shard on an AVX-512 worker
+and one on an older core can disagree in the last bit, and the concatenated
+answer would then depend on which worker got which shard.
+
+So the guarantee is now stated where it holds — **bitwise across workers that
+attest the same arithmetic** — and enforced rather than caveated. Every worker
+digests what its floating-point unit does to a fixed probe, and the
+coordinator compares before reducing; unlike workers raise
+`ArithmeticMismatch` naming the shards. Two digests, not one, because they
+fail differently: `exact` (IEEE-754 §5, must agree) and `transcendental`
+(§9.2, does not). Reproduced end to end with AVX-512 dispatch disabled: the
+exact digest is identical and the transcendental one is not.
+
+**The bug it nearly shipped with is the finding.** The first probe was nine
+values and agreed with AVX-512 on and off — because NumPy dispatches its SIMD
+kernels only above a length threshold, and the scalar path below it is the one
+that does *not* vary. An attestation that agrees everywhere is the same as no
+attestation, and it would have shipped looking like a safeguard. `PROBE_LENGTH`
+is now 4096 with a test holding it above 1024.
+
+**Not built:** the registry's shard tree. `DispatchReport` carries the shard
+digests, attempt counts and attestations, but they are not yet written under a
+parent run record. Small work against `engine/core/registry.py`.
+
 **Milestone M2 — "the unanswerable benchmark":** B1 + B2. Publish the
 nested-stochastic numbers (the 20M-inner-cell benchmark, compiled, across
 N workers) with the bitwise-reproducibility statement no incumbent can make.
+**Not claimed yet** — B2's registry half is outstanding, and the statement
+itself has changed shape: it is now "bitwise across workers that attest
+alike", which is still a claim no incumbent makes and should be published in
+those words rather than the original ones.
 
 ### B3 — GPU kernels (RFC-053) — effort L
 

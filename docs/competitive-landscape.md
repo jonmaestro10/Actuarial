@@ -172,10 +172,10 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 |---|---|---|---|---|
 | Modelling paradigm | Declarative vars, proprietary IDE | Procedural, compiled | Configured, closed code | ✅ Declarative `@var` graph in plain Python, procedural escape hatch |
 | Models in version control / CI | ❌ binary formats | 🟡 partial | ❌ n/a | ✅ git-native, CI on every commit |
-| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 2,492 tests, closed forms, bitwise dual-executor equivalence, parity harness, and checks against **published** figures (docs/sources/ — Mack's Taylor–Ashe reserves reproduced to the rounding he printed) |
+| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 2,508 tests, closed forms, bitwise dual-executor equivalence, parity harness, and checks against **published** figures (docs/sources/ — Mack's Taylor–Ashe reserves reproduced to the rounding he printed) |
 | Vectorised execution across policies × scenarios | ❌ largely per-policy | ❌ | 🟡 | ✅ core design; ~40× interpreter, 100k×60y in seconds |
 | Compiled kernels / GPU | ✅ compiled C | ✅ C++ | ✅ | 🟡 compiled CPU kernels (RFC-074) — bitwise-identical to the array executor, 13 of 14 templates, kernel median 14.6×; GPU not started |
-| Grid / cross-machine scale-out | ✅ Enterprise grid | ✅ | ✅ GridLink | 🟡 multi-core sharding with bitwise guarantee; no cross-machine dispatch |
+| Grid / cross-machine scale-out | ✅ Enterprise grid | ✅ | ✅ GridLink | 🟡 dispatch to remote engine instances (RFC-075), bitwise across workers that **attest the same arithmetic** — and refused otherwise, which no incumbent checks at all |
 | Stochastic / nested stochastic | ✅ | ✅ | ✅ | ✅ incl. exact mid-life restart (bitwise) and batched inner runs |
 | Proxy models (LSMC) with error estimates | 🟡 add-ons | 🟡 | 🟡 | ✅ with the honest finding that in-sample fit statistics cannot license a proxy |
 | Life savings/protection product library | ✅ broad, vendor-maintained | ✅ | ✅ | ✅ term, WL/endowment, UL (§7702, NLG), FIA (index crediting, GLWB), unit-linked GMxB, payout & variable-payout annuities, income protection (multi-state), with-profits, group & credit life — each with golden tests |
