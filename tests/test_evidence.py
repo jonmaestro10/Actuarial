@@ -298,7 +298,8 @@ def test_the_pack_is_written_content_addressed(pack, tmp_path):
     written = {path.name for path in directory.iterdir()}
     assert written == {"index.md", "manifest.json", "environment.json",
                        "tests.json", "identities.json", "equivalence.json",
-                       "coverage.json", "parity.json", "benchmarks.json"}
+                       "coverage.json", "parity.json", "audit.json",
+                       "benchmarks.json"}
 
     manifest = json.loads((directory / "manifest.json").read_text())
     assert manifest["pack_digest"] == pack.digest

@@ -67,7 +67,7 @@ what any incumbent ships rather than merely reaching parity.
 | Compiled kernels | ❌ | Numba forward-loop kernels | Compiled executor joins the **bitwise** equivalence class — incumbents compile but never prove equivalence | B1 |
 | Cross-machine scale-out | 🟡 one machine | Multi-machine dispatch | Bitwise-identical results regardless of grid topology, verified by the registry | B2 |
 | Governance: RBAC, approvals | 🟡 token auth + four roles (D1, RFC-043) and digest-bound 4-eyes approval (D2, RFC-044) shipped | Roles + 4-eyes assumption approval | Approvals bind to content digests, not labels — an approval can never silently drift | D1–D2 |
-| Production run operations | ❌ | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
+| Production run operations | 🟡 digest-chained audit log + declarative run calendar shipped (D3, RFC-045) | Audit log + run calendar | Append-only audit log digest-chained like the registry | D3 |
 | Results warehouse | ❌ | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
 | Excel integration | ❌ | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet | E2 |
 | Production UI | 🟡 demo only | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have | E3 |
@@ -372,7 +372,7 @@ point to state in the RFC: approval binds to the *digest*, so an identical
 re-derived assumption set stays approved and any change — however small —
 un-approves. That is stronger than every incumbent's label-based workflow.
 
-### D3 — Audit log and run calendar (RFC-045) — effort S
+### D3 — Audit log and run calendar (RFC-045) — effort S — **shipped**
 Append-only, digest-chained audit log of API mutations (submit, approve,
 principal change) — same tamper-evidence discipline as the registry. A
 production run calendar: scheduled runs defined declaratively (cron
@@ -599,6 +599,7 @@ order unless there is a concrete reason not to.
 *Next action for the implementing agent: B1 (§4) is unstarted and carries a
 written assessment of why — read it before picking the item up, and expect an
 array-expression compiler rather than a wrapper. Everything else on §10's
-path is open; D3 (§6) is the next item in sequence. Shipped so far: A1
-(RFC-033), A2 (RFC-034), A4 (RFC-036) — milestone M1 — F1 (RFC-049), D1
-(RFC-043) and D2 (RFC-044).*
+path is open; E1 (§7, the results warehouse) is the next item in sequence
+and the last one M3 waits on. Shipped so far: A1 (RFC-033), A2 (RFC-034),
+A4 (RFC-036) — milestone M1 — F1 (RFC-049), D1 (RFC-043), D2 (RFC-044) and
+D3 (RFC-045).*

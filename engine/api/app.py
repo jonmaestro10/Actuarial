@@ -90,6 +90,7 @@ from engine.api.ui import UI_FILES, media_type, read_asset
 from engine.core.approvals import (
     ApprovalRegistry, ApprovalRequired, assumptions_digest, check_approved,
 )
+from engine.core.audit import AuditLog
 from engine.core.modeldoc import document, graph_is_settled, modelpoint_fields
 from engine import __version__ as ENGINE_VERSION
 
@@ -136,7 +137,8 @@ def create_app(models: dict | None = None, *,
                ui: bool = True,
                principals: Any = None,
                approvals: Any = None,
-               require_approval: bool = False) -> "FastAPI":
+               require_approval: bool = False,
+               audit: Any = None) -> "FastAPI":
     """Build the application.
 
     ``models`` restricts the catalogue; ``build`` replaces the whole
@@ -157,6 +159,11 @@ def create_app(models: dict | None = None, *,
     mapping in the same shape. ``None`` — the default — leaves the API
     exactly as it was, which is the right default for a library and the
     wrong one for a deployment. ``GET /health`` says which mode it is in.
+
+    ``audit`` is RFC-045's digest-chained log — an
+    :class:`~engine.core.audit.AuditLog` or a path to one. Every mutation
+    the API performs is recorded in it; reads are not, because a log that
+    records everything is a log nobody reads.
 
     ``approvals`` is RFC-044's approval log — an
     :class:`~engine.core.approvals.ApprovalRegistry` or a path to one — and
@@ -182,6 +189,31 @@ def create_app(models: dict | None = None, *,
             )
         if approval_log is None:
             approval_log = ApprovalRegistry()
+    audit_path = None
+    if isinstance(audit, AuditLog) or audit is None:
+        audit_log = audit
+    else:
+        audit_path = Path(audit)
+        audit_log = (AuditLog.from_json(audit_path) if audit_path.is_file()
+                     else AuditLog())
+
+    def _record(request: "Request", action: str, subject: str = "",
+                **detail) -> None:
+        """Append one mutation to the audit log, if there is one.
+
+        The actor is the authenticated principal, or ``anonymous`` on a
+        deployment with no principals — which is honest rather than useful,
+        and is why RFC-045 says an audit log without RFC-043 records what
+        happened but not who did it.
+        """
+        if audit_log is None:
+            return
+        who = principal_of(request)
+        audit_log.append(who.name if who else "anonymous", action, subject,
+                         detail)
+        if audit_path is not None:
+            audit_log.to_json(audit_path)
+
     reads = require(Role.VIEWER)
     runs = require(Role.RUNNER)
     approves = require(Role.APPROVER)
@@ -206,6 +238,7 @@ def create_app(models: dict | None = None, *,
     app.state.models = resolved
     app.state.principals = identities
     app.state.approvals = approval_log
+    app.state.audit = audit_log
 
     @app.get("/health")
     def health() -> dict:
@@ -240,6 +273,29 @@ def create_app(models: dict | None = None, *,
         you = principal_of(request)
         return {"principals": identities.summary(),
                 "you": you.summary() if you else None}
+
+    @app.get("/audit", dependencies=[Depends(administers)])
+    def read_audit(limit: int = Query(default=100, ge=1, le=10_000)) -> dict:
+        """The chained log of mutations, newest last, verified on the way out.
+
+        ``head`` is the value worth copying somewhere this deployment does
+        not control: the chain catches an edited entry, and only a published
+        head catches a deleted one.
+        """
+        if audit_log is None:
+            raise HTTPException(404, "this deployment keeps no audit log")
+        try:
+            verified = audit_log.verify()
+            problem = None
+        except Exception as exc:
+            verified, problem = False, str(exc)
+        return {
+            "entries": [e.to_dict() for e in audit_log.events[-limit:]],
+            "total": len(audit_log),
+            "head": audit_log.head,
+            "verified": verified,
+            "problem": problem,
+        }
 
     # --- the model catalogue, and PLAN §7's documentation -----------------
 
@@ -462,6 +518,7 @@ def create_app(models: dict | None = None, *,
             )
         entry = log.approve(digest, who.name, (body or {}).get("note", ""))
         _save_approvals()
+        _record(request, "assumptions.approve", digest, note=entry.note)
         return entry.to_dict()
 
     @app.delete("/approvals/{digest}", dependencies=[Depends(approves)])
@@ -479,6 +536,7 @@ def create_app(models: dict | None = None, *,
             )
         entry = log.revoke(digest, who.name)
         _save_approvals()
+        _record(request, "assumptions.revoke", digest)
         return entry.to_dict()
 
     # --- runs -------------------------------------------------------------
@@ -519,6 +577,10 @@ def create_app(models: dict | None = None, *,
         summary = run.summary()
         if approved_by is not None:
             summary["approved_by"] = approved_by
+        _record(request, "run.submit", run.run_id,
+                model=payload.get("model"),
+                assumptions_digest=assumptions_digest(built["assumptions"]),
+                approved_by=approved_by)
         return summary
 
     @app.get("/runs", dependencies=[Depends(reads)])

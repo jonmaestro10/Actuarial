@@ -20,6 +20,9 @@ something that already exists in the repo and is checkable by the reader:
   ``results_digest`` values are compared;
 - **docstring coverage**, measured off the library;
 - the **parity reports on record** (RFC-033) and their two digests each;
+- the **audit chain's head digest** (RFC-045), verified — the pack is where
+  that head gets published, because a chain catches an edited entry and only
+  an externally recorded head catches a deleted one;
 - **benchmark numbers**, if the caller supplies them, and a plain statement
   that there are none if not.
 
@@ -343,6 +346,35 @@ def parity_reports(registry: ArtifactRegistry | None = None) -> Section:
     )
 
 
+def audit_chain(log=None) -> Section:
+    """The audit log's head digest, verified — RFC-045's external anchor.
+
+    A hash chain catches an edited entry and cannot catch a deleted one; the
+    only thing that catches a deletion is a head digest recorded somewhere
+    the editor does not control. This is that somewhere: the pack is
+    content-addressed and dated, so a head published here is a head somebody
+    can hold a later log against.
+    """
+    if log is None:
+        return Section(
+            "audit", "Audit chain",
+            "No audit log supplied; this pack anchors nothing.",
+            {"available": False},
+        )
+    try:
+        verified, problem = log.verify(), None
+    except Exception as exc:
+        verified, problem = False, str(exc)
+    return Section(
+        "audit", "Audit chain",
+        f"{len(log):,} entries, head `{log.head}`, chain "
+        + ("verified." if verified else f"**BROKEN**: {problem}"),
+        {"available": True, "entries": len(log), "head": log.head,
+         "verified": verified, "problem": problem,
+         "actions": sorted({event.action for event in log})},
+    )
+
+
 def benchmarks(records: Sequence[Mapping[str, Any]] | None = None) -> Section:
     """Benchmark numbers, if somebody measured some.
 
@@ -570,6 +602,7 @@ def build_pack(*, root: Path | str = ".",
                specimens: Iterable[Mapping[str, Any]] | None = None,
                registry: ArtifactRegistry | None = None,
                benchmark_records: Sequence[Mapping[str, Any]] | None = None,
+               audit_log=None,
                code_version: str | None = None,
                collect_tests: bool = True) -> EvidencePack:
     """Build the whole pack.
@@ -588,6 +621,7 @@ def build_pack(*, root: Path | str = ".",
         executor_equivalence(specimens),
         docstring_coverage(),
         parity_reports(registry),
+        audit_chain(audit_log),
         benchmarks(benchmark_records),
     )
     return EvidencePack(

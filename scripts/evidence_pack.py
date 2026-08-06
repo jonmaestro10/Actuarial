@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from engine.core.audit import AuditLog  # noqa: E402
 from engine.core.registry import ArtifactRegistry  # noqa: E402
 from engine.report.evidence import build_pack  # noqa: E402
 
@@ -41,6 +42,9 @@ def main() -> int:
     parser.add_argument("--benchmarks", default=None,
                         help="JSON list of benchmark records to include; "
                              "including any makes the pack machine-specific")
+    parser.add_argument("--audit", default=None,
+                        help="audit log JSON whose head digest this pack "
+                             "should anchor (RFC-045)")
     parser.add_argument("--no-tests", action="store_true",
                         help="skip the pytest collection step")
     args = parser.parse_args()
@@ -52,7 +56,8 @@ def main() -> int:
     benchmark_records = (json.loads(Path(args.benchmarks).read_text())
                          if args.benchmarks else None)
 
-    pack = build_pack(root=args.root, registry=registry,
+    audit_log = (AuditLog.from_json(args.audit) if args.audit else None)
+    pack = build_pack(root=args.root, registry=registry, audit_log=audit_log,
                       benchmark_records=benchmark_records,
                       collect_tests=not args.no_tests)
     directory = pack.write(args.out)
