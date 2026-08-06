@@ -12,8 +12,8 @@ commit per item, tests asserting refusals as well as grants.*
 |---|---|---|---|---|
 | ~~**V1** unfloored greatest present value~~ | 4.B.1.a note | overstates | S | **done** |
 | ~~**V2** model segments, aggregation order, category floors~~ | 3.F.5.a.ii, 4.B.1, 3.F.3 | overstates (order), understates (floor) | M | **done** |
-| **V3** the ceded basis | 3.B, 5 | not comparable | M | V2 (segments are what get two bases) |
-| **V4** allocation to contracts | 13 | n/a | M | V2 |
+| ~~**V3** the ceded basis~~ | 3.B, 5 | not comparable | M | **done** |
+| ~~**V4** allocation to contracts~~ | 13 | n/a | M | **done** |
 
 V1 first because it is small, independent, and touches shared code — doing
 it while the reasoning is fresh is cheaper than doing it after V2 has moved
@@ -129,7 +129,7 @@ blocked on the same abstraction.
 
 ---
 
-## V3 — every component, both ceded and not
+## V3 — every component, both ceded and not — **done**
 
 **The text.** §3.B: "All components in the aggregate reserve shall be
 determined **post-reinsurance ceded and pre-reinsurance ceded** as outlined
@@ -190,9 +190,31 @@ number on both bases, so the pair collapses where it should.
 **Risk.** Medium-high — it doubles every output and changes the reserve's
 public shape. Worth doing deliberately rather than at the end of a session.
 
+**Outcome.** Shipped, RFC-062. `BasisPair` is the shape everywhere a float
+used to be, and `AggregateReserve.value` is that pair; `.post_ceded` is the
+held reserve. `stochastic_group` and the new `segment_group` take a second
+projection rather than deriving one basis from the other, and a caller who
+supplies none has said the group cedes nothing — the pair collapses, which
+is the acceptance criterion and not a fallback. `ReservingGroup.formulaic`
+is the single place one basis is computed from the other, per §5.A.1, and it
+takes the **pre**-ceded amount because §5.A.3 says that is what the VM-A/C/M/V
+methodology produces.
+
+The reading turned up one thing this plan had not carried, and it changed
+the design: **§5.A.3 lets the two bases disagree about the method** — a
+group can pass the exclusion test pre-ceded and fail it post-ceded. So a
+group carries a method *per basis*, not one method and two numbers, and
+`by_method()` splits the bases independently. Without that, a group would be
+reported under a method it was not valued by on one of its two bases.
+
+§5.A.2.a.iv's charge lands post-ceded only, on the reading that a basis
+defined as ignoring reinsurance ceded cannot also carry a reinsurance
+charge. The text does not name a basis; the reading is stated in the module
+docstring rather than inferred from the arithmetic.
+
 ---
 
-## V4 — allocation of the aggregate reserve to contracts
+## V4 — allocation of the aggregate reserve to contracts — **done**
 
 **The text.** §13, "Allocation of Aggregate Reserves to the Contract
 Level", with §3.H requiring it and carving out the VM-A/C/M/V contracts,
@@ -208,6 +230,39 @@ The allocation method is prescribed and this plan does not guess at it.
 seriatim carve-out is respected; the method matches §13 with quotations.
 
 **Risk.** Low technically, unknown until §13 is read.
+
+**Outcome.** Shipped, RFC-063. §13 is now read. The method is fully
+prescribed — §13.A's contract-level reserve is §13.C's minimum allocation
+value plus §13.D's allocated excess reserve — and two of its properties are
+not ones a sensible design would have had, which is why the plan was right
+to refuse to guess.
+
+**§13.D.1 can never reach a Payout Annuity group.** §13.C.1 defines that
+category's MAV as the *greater* of the Scenario APV and the surrender
+value, so §13.D.1's weight — the excess of the APV over the MAV, floored at
+zero by §13.D.2 — is zero by construction. §13.D.3 is not a fallback there;
+it is the rule, and §13.D.1's risk-proportional allocation is an
+accumulation-category mechanism. A suite exercising only an accumulation
+group would never have seen it.
+
+**§13's preamble promises what §13.D.4's arithmetic does not deliver.** The
+section opens by stating that no contract is held below its surrender value
+and no payout contract below its Scenario APV. Under §13.D.4 — the group's
+aggregate reserve short of its aggregate MAV — a payout contract absorbing
+the shortfall finishes below its APV, and the surrender-value floor that
+rescues the first guarantee is applied *after* the allocation, so the
+amounts no longer sum to the aggregate reserve. §13.C.3's longevity MAV
+carries no surrender floor at all. `Allocation` implements the prescribed
+arithmetic and reports all of it — which rule ran, whether it reconciles,
+and which contracts finished under a guarantee — rather than adding floors
+the text does not prescribe or scaling the result until it reconciles.
+
+§13.B.1's scenario — "closest to, but not greater than the SR" — is a
+prescribed *selection* over numbers the module already has, so
+`apv_scenario` makes it rather than taking the Scenario APV on trust. And
+§13.C.2's "Account Value Based Annuity" is defined nowhere in the chapter;
+`MAV_RULES` records its identification with the Accumulation Reserving
+Category and the reasoning from §3.F.1.c.
 
 ---
 

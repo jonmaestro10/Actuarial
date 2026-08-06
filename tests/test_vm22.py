@@ -30,13 +30,16 @@ import pytest
 from engine.report.pbr import cte, scenario_reserves
 from engine.report.vm22 import (
     LONGEVITY_FLOOR_RATE,
+    MAV_RULES,
     METHODS,
     RESERVING_CATEGORIES,
     SERT_CAP,
     VM22_2026,
     AggregateReserve,
     AggregationGap,
+    BasisPair,
     Contract,
+    ContractRecord,
     Exclusion,
     ModelSegment,
     ReservingGroup,
@@ -44,7 +47,10 @@ from engine.report.vm22 import (
     VM22Error,
     aggregate_stochastic_reserve,
     aggregation_decomposition,
+    allocate_aggregate_reserve,
+    apv_scenario,
     floor_outside_reserve,
+    segment_group,
     segment_scenario_reserves,
     segment_stochastic_reserve,
     seriatim_reserve,
@@ -200,9 +206,11 @@ def test_the_aggregate_reserve_adds_its_groups_rather_than_maximising():
                        exclusion=Exclusion(basis="ratio_test", ratio=0.01,
                                            threshold=SERT_CAP)),
     ])
-    assert reserve.value == 225.0                 # not max(...) == 140
-    assert reserve.by_method() == {"stochastic": 140.0,
-                                   "deterministic": 60.0, "formulaic": 25.0}
+    assert reserve.post_ceded == 225.0            # not max(...) == 140
+    assert reserve.by_method() == {
+        "stochastic": BasisPair.flat(140.0),
+        "deterministic": BasisPair.flat(60.0),
+        "formulaic": BasisPair.flat(25.0)}
     assert reserve.largest == "modelled"
     assert set(METHODS) == {"stochastic", "deterministic", "formulaic"}
 
@@ -245,8 +253,8 @@ def test_a_stochastic_group_is_built_from_contracts_with_the_floor_inside():
     contracts = block([0.0, 0.0, 100.0, 200.0], floors=[150.0])
     group = stochastic_group("payout", contracts, basis=HALF)
     assert group.method == "stochastic" and group.exclusion is None
-    assert group.amount == 175.0
-    assert AggregateReserve([group], basis=HALF).value == 175.0
+    assert group.amount == BasisPair.flat(175.0)
+    assert AggregateReserve([group], basis=HALF).post_ceded == 175.0
 
 
 # --------------------------------------------------------------------------
@@ -396,12 +404,12 @@ def annuity_block(seed=3, periods=25, scenarios=500, n_contracts=4):
 def test_a_projected_annuity_block_reserves_end_to_end():
     contracts, _ = annuity_block()
     reserve = AggregateReserve([stochastic_group("payout", contracts)])
-    assert reserve.value > 0.0
+    assert reserve.post_ceded > 0.0
     assert reserve.by_method()["stochastic"] == reserve.value
 
     scenario = sum(c.scenario_reserve for c in contracts)
     floors = sum(c.cash_surrender_value for c in contracts)
-    assert reserve.value == cte(np.maximum(scenario, floors), 0.70)
+    assert reserve.post_ceded == cte(np.maximum(scenario, floors), 0.70)
 
 
 def test_the_contract_helper_is_rfc_016s_scenario_reserves():
@@ -442,7 +450,7 @@ def test_a_library_template_feeds_the_reserve_without_an_adapter():
     contract = Contract.from_cashflows("FA1", net, rates,
                                        cash_surrender_value=50_000.0)
     reserve = AggregateReserve([stochastic_group("payout", [contract])])
-    assert reserve.value >= 50_000.0            # the floor is a floor
+    assert reserve.post_ceded >= 50_000.0       # the floor is a floor
     assert np.array_equal(contract.scenario_reserve,
                           scenario_reserves(net, rates))
 
@@ -793,3 +801,562 @@ def test_segments_that_disagree_about_the_projection_are_refused():
                                    ModelSegment("B", [[1.0]])])
     with pytest.raises(VM22Error, match="at least one model segment"):
         segment_scenario_reserves([])
+
+
+# --------------------------------------------------------------------------
+# V3 — §3.B and §5: every component on both bases
+# --------------------------------------------------------------------------
+
+def test_a_block_that_cedes_nothing_reports_one_number_twice():
+    """§3.B requires both bases of every component. Where there is no
+    treaty the two coincide, and the pair has to collapse — a module whose
+    pre- and post-ceded figures differed on a block with no reinsurance
+    would be reporting an artefact of its own plumbing."""
+    contracts = block([0.0, 0.0, 100.0, 200.0], floors=[150.0])
+    group = stochastic_group("payout", contracts, basis=HALF)
+    assert group.amount == BasisPair(pre_ceded=175.0, post_ceded=175.0)
+    assert group.amount.collapsed and group.amount.ceded_credit == 0.0
+
+    reserve = AggregateReserve([group], basis=HALF)
+    assert reserve.post_ceded == reserve.pre_ceded == 175.0
+
+
+def test_the_two_bases_are_two_projections_and_not_an_adjustment():
+    """§5.A.2.a determines the post-ceded SR "reflecting the effects of
+    reinsurance treaties … including … all projected reinsurance premiums
+    or other costs and all reinsurance recoveries"; §5.A.2.b determines the
+    pre-ceded one "ignoring the effects of reinsurance ceded within the
+    projections".
+
+    So the pre-ceded figure is *run*, not derived. This asserts the module
+    takes a second projection and reports what it computed, rather than
+    scaling or grossing up the first."""
+    ceded = block([0.0, 0.0, 100.0, 200.0])          # net of recoveries
+    gross = block([0.0, 0.0, 260.0, 400.0])          # the same block, gross
+    group = stochastic_group("annuity", ceded, pre_ceded_contracts=gross,
+                             basis=HALF)
+    assert group.amount.post_ceded == 150.0          # CTE(50) of the ceded
+    assert group.amount.pre_ceded == 330.0           # and of the gross
+    assert group.amount.ceded_credit == 180.0
+    assert not group.amount.collapsed
+
+
+def test_the_segment_path_carries_both_bases_too():
+    """The prescribed order (§3.F.5.a) and the two bases (§3.B) are
+    independent requirements, and a module that had one without the other
+    would satisfy neither section fully."""
+    ceded = [ModelSegment("S", [[0.0, 0.0, 100.0, 200.0]])]
+    gross = [ModelSegment("S", [[0.0, 0.0, 150.0, 300.0]])]
+    group = segment_group("seg", ceded, pre_ceded_segments=gross, basis=HALF)
+    assert group.amount.post_ceded == 150.0
+    assert group.amount.pre_ceded == 225.0
+    assert group.method == "stochastic"
+
+
+def test_the_formulaic_component_subtracts_the_reinsurance_credit():
+    """§5.A.1: "for the reserve amount valued using requirements in VM-A,
+    VM-C, VM-M, and VM-V, the post-reinsurance ceded reserve is determined
+    by subtracting the reinsurance reserve credit."
+
+    The one component where the bases *are* a number and an adjustment —
+    and §5.A.3 says which way round: the methodology "produces reserves on
+    a pre-reinsurance ceded basis", so the stated amount is the gross one
+    and the credit comes off it."""
+    excluded = Exclusion(basis="ratio_test", ratio=0.01, threshold=SERT_CAP)
+    group = ReservingGroup.formulaic("vm-a", 500.0, exclusion=excluded,
+                                     reinsurance_reserve_credit=120.0)
+    assert group.amount == BasisPair(pre_ceded=500.0, post_ceded=380.0)
+    assert group.amount.ceded_credit == 120.0
+    assert group.method == "formulaic"
+
+
+def test_a_credit_bigger_than_the_reserve_it_relieves_is_refused():
+    """A reserve credit cannot exceed the reserve ceded. Subtracting one
+    that does would report a negative statutory reserve, which is the
+    silently-wrong number this module exists to refuse."""
+    excluded = Exclusion(basis="ratio_test", ratio=0.01, threshold=SERT_CAP)
+    with pytest.raises(VM22Error, match="cannot exceed the reserve ceded"):
+        ReservingGroup.formulaic("vm-a", 100.0, exclusion=excluded,
+                                 reinsurance_reserve_credit=150.0)
+    with pytest.raises(VM22Error, match="is not negative"):
+        ReservingGroup.formulaic("vm-a", 100.0, exclusion=excluded,
+                                 reinsurance_reserve_credit=-10.0)
+    # The boundary is allowed: a fully ceded block reserves zero, not less.
+    full = ReservingGroup.formulaic("vm-a", 100.0, exclusion=excluded,
+                                    reinsurance_reserve_credit=100.0)
+    assert full.amount.post_ceded == 0.0
+
+
+def test_the_non_qualifying_treaty_charge_is_added_and_not_netted():
+    """§5.A.2.a.iv: where a treaty "does not qualify for credit for
+    reinsurance but treating [it] as if it did so qualify would result in a
+    reduction to the company's surplus, then the company shall increase the
+    aggregate reserve by the absolute value of such reductions in surplus."
+
+    **Additive**, and on the aggregate reserve rather than inside a
+    projection — no first-principles design would have contained this term,
+    which is why §5 had to be read rather than paraphrased. It lands
+    post-ceded only: the pre-ceded basis ignores reinsurance ceded by
+    construction (§5.A.2.b), so a reinsurance charge there would contradict
+    the basis's own definition."""
+    group = ReservingGroup("g", "stochastic", 1_000.0)
+    plain = AggregateReserve([group])
+    charged = AggregateReserve([group], non_qualifying_surplus_reduction=75.0)
+
+    assert charged.post_ceded == plain.post_ceded + 75.0
+    assert charged.pre_ceded == plain.pre_ceded == 1_000.0
+    # It increases the reserve. A netting would have reduced it.
+    assert charged.post_ceded > charged.pre_ceded
+
+
+def test_the_surplus_charge_will_not_be_taken_as_a_relief():
+    """"the absolute value of such reductions" is a charge. A negative one
+    would relieve the reserve, which is the direction the text forbids and
+    the direction a sign error takes."""
+    with pytest.raises(VM22Error, match="§5.A.2.a.iv"):
+        AggregateReserve([ReservingGroup("g", "stochastic", 10.0)],
+                         non_qualifying_surplus_reduction=-5.0)
+
+
+def test_the_charge_is_not_attributed_to_any_method():
+    """§5.A.2.a.iv's charge is not a group's reserve and has no §3.A method
+    to belong to, so `by_method` sums to the group total and `value` sits
+    above it. Asserted because the gap is exactly the sort of thing a
+    reconciliation would otherwise chase."""
+    reserve = AggregateReserve(
+        [ReservingGroup("g", "stochastic", 200.0)],
+        non_qualifying_surplus_reduction=30.0)
+    split = reserve.by_method()
+    assert sum(p.post_ceded for p in split.values()) == 200.0
+    assert reserve.group_total.post_ceded == 200.0
+    assert reserve.value.post_ceded == 230.0
+
+
+def test_the_two_bases_may_disagree_about_the_method():
+    """§5.A.3: "it is possible that the pre-reinsurance-ceded reserves would
+    pass the relevant exclusion test … while the post-reinsurance-ceded
+    reserves might not, or vice versa."
+
+    So the pair is not two numbers from one valuation — it is two
+    valuations, and `by_method` has to split the bases independently or it
+    reports a group under a method it was not valued by on that basis."""
+    excluded = Exclusion(basis="ratio_test", ratio=0.01, threshold=SERT_CAP)
+    group = ReservingGroup(
+        "mixed", "stochastic", BasisPair(pre_ceded=90.0, post_ceded=140.0),
+        pre_ceded_method="formulaic", pre_ceded_exclusion=excluded)
+    assert group.methods == {"post_ceded": "stochastic",
+                             "pre_ceded": "formulaic"}
+
+    split = AggregateReserve([group]).by_method()
+    assert split["stochastic"] == BasisPair(pre_ceded=0.0, post_ceded=140.0)
+    assert split["formulaic"] == BasisPair(pre_ceded=90.0, post_ceded=0.0)
+
+
+def test_each_basis_must_state_its_own_reason_for_leaving_the_sr_out():
+    """The §7 rule — a component omitted on a stated basis, or computed —
+    applies to each basis separately once §5.A.3 lets them differ. A
+    pre-ceded formulaic valuation with nobody's exclusion behind it is the
+    same silent omission the post-ceded check already refuses."""
+    with pytest.raises(VM22Error, match="on the pre-ceded basis"):
+        ReservingGroup("g", "stochastic", 10.0, pre_ceded_method="formulaic")
+    with pytest.raises(VM22Error, match="name the method it applies to"):
+        ReservingGroup("g", "stochastic", 10.0,
+                       pre_ceded_exclusion=Exclusion(
+                           basis="certification", certified_by="A. Actuary"))
+    with pytest.raises(VM22Error, match="not a VM-22 method"):
+        ReservingGroup("g", "stochastic", 10.0, pre_ceded_method="guesswork")
+
+
+def test_the_pair_adds_basis_by_basis_across_groups():
+    """§3.A's sum happens twice, once per basis, and never mixes them."""
+    excluded = Exclusion(basis="ratio_test", ratio=0.01, threshold=SERT_CAP)
+    reserve = AggregateReserve([
+        ReservingGroup("modelled", "stochastic",
+                       BasisPair(pre_ceded=300.0, post_ceded=140.0)),
+        ReservingGroup.formulaic("excluded", 100.0, exclusion=excluded,
+                                 reinsurance_reserve_credit=25.0),
+    ])
+    assert reserve.value == BasisPair(pre_ceded=400.0, post_ceded=215.0)
+    assert reserve.value.ceded_credit == 185.0
+    assert BasisPair(1.0, 2.0) + BasisPair(10.0, 20.0) == BasisPair(11.0, 22.0)
+
+
+def test_the_ceded_credit_may_be_negative_because_a_treaty_can_cost():
+    """Nothing constrains the sign of `ceded_credit`, and it would be wrong
+    to: §5.A.2.a.iv exists precisely because a treaty can reduce surplus
+    rather than relieve it. A module that asserted pre ≥ post would refuse
+    the case the text legislates for."""
+    costly = BasisPair(pre_ceded=100.0, post_ceded=130.0)
+    assert costly.ceded_credit == -30.0
+    assert AggregateReserve(
+        [ReservingGroup("g", "stochastic", costly)]).post_ceded == 130.0
+
+
+def test_the_reported_dictionary_carries_both_bases_everywhere():
+    """A report that gave one figure would leave the reader to guess which
+    basis they had, which §3.B makes an unanswerable question."""
+    excluded = Exclusion(basis="ratio_test", ratio=0.01, threshold=SERT_CAP)
+    reserve = AggregateReserve(
+        [ReservingGroup.formulaic("vm-a", 100.0, exclusion=excluded,
+                                  reinsurance_reserve_credit=40.0)],
+        non_qualifying_surplus_reduction=5.0)
+    out = reserve.to_dict()
+    assert out["value"] == {"pre_ceded": 100.0, "post_ceded": 65.0}
+    assert out["non_qualifying_surplus_reduction"] == 5.0
+    assert out["groups"][0]["ceded_credit"] == 40.0
+    assert out["groups"][0]["methods"] == {"post_ceded": "formulaic",
+                                           "pre_ceded": "formulaic"}
+    assert out["groups"][0]["excluded"] == {"post_ceded": "ratio_test",
+                                            "pre_ceded": "ratio_test"}
+    for pair in out["by_method"].values():
+        assert set(pair) == {"pre_ceded", "post_ceded"}
+
+
+# --------------------------------------------------------------------------
+# V4 — §13: the aggregate reserve, back down to the contracts
+# --------------------------------------------------------------------------
+
+def account_value(id, apv, csv, **kw):
+    return ContractRecord(id=id, scenario_apv=apv, category="accumulation",
+                          cash_surrender_value=csv, **kw)
+
+
+def test_the_contract_reserve_is_the_mav_plus_the_allocated_excess():
+    """§13.A: "The contract-level reserve for each contract shall be the sum
+    of … the contract's minimum allocation value (MAV) … [and] the
+    contract's allocated excess reserve (AER)", with §13.D.1 sharing the
+    excess "in proportion to the excess of the Scenario APV over the MAV".
+
+    Two account-value contracts with equal surrender values and unequal
+    Scenario APVs: the MAVs tie and the excess splits on the risk measure,
+    which is the whole design intent — "an indexed annuity contract with a
+    high benefit GLWB will typically have a larger allocated excess
+    reserve"."""
+    records = [account_value("A", apv=140.0, csv=100.0),
+               account_value("B", apv=120.0, csv=100.0)]
+    # MAVs are the surrender values (§13.C.2): 200 in aggregate.
+    # Excess 60 splits on excess APV 40 : 20.
+    got = allocate_aggregate_reserve(records, 260.0)
+    assert got.rule == "13.D.1"
+    assert got.amounts == {"A": 140.0, "B": 120.0}
+    assert got.aggregate_mav == 200.0 and got.excess == 60.0
+    assert got.total == 260.0 and got.reconciles
+
+
+def test_the_allocation_sums_to_the_aggregate_reserve_exactly():
+    """The property §3.H's allocation exists to have: what is allocated is
+    the reserve, not a number near it. Asserted on an awkward split rather
+    than a round one, because thirds are where a proportional allocation
+    would show its drift."""
+    records = [account_value("A", apv=317.0, csv=11.0),
+               account_value("B", apv=53.0, csv=7.0),
+               account_value("C", apv=101.0, csv=3.0)]
+    got = allocate_aggregate_reserve(records, 1_000.0 / 3.0)
+    assert got.rule == "13.D.1"
+    assert got.total == pytest.approx(1_000.0 / 3.0, rel=0, abs=1e-12)
+    assert got.reconciles
+
+
+def test_a_payout_group_can_never_reach_the_proportional_rule():
+    """**The structural finding.** §13.C.1 makes a payout contract's MAV
+    "the greater of … the Scenario APV … or … the cash surrender value", so
+    its excess Scenario APV is zero by construction and §13.D.1 can never
+    bind. §13.D.3 — "if all contracts in the group have an excess Scenario
+    APV that is floored at zero, then use the MAV to allocate" — is not a
+    fallback for this category; it is the rule.
+
+    A test that only exercised an accumulation group would never see it,
+    and a reader would reasonably assume §13.D.3 was an edge case."""
+    records = [ContractRecord("P1", scenario_apv=300.0,
+                              category="payout_annuity"),
+               ContractRecord("P2", scenario_apv=100.0,
+                              category="payout_annuity")]
+    assert all(r.excess_apv == 0.0 for r in records)
+
+    got = allocate_aggregate_reserve(records, 480.0)
+    assert got.rule == "13.D.3"
+    # MAVs 300 and 100; excess 80 split 3:1 on the MAVs.
+    assert got.amounts == {"P1": 360.0, "P2": 120.0}
+    assert got.total == 480.0
+
+
+def test_the_mav_is_a_different_rule_for_each_reserving_category():
+    """§13.C's three cases are §3.F.1's three Reserving Categories, with
+    §13.C.2's "Account Value Based Annuity" the chapter's undefined name for
+    the Accumulation category. Getting the rule from the category is what
+    makes the classification a calculation input a third time — after
+    §3.F.1's pooling rule and §4.B.1's floor."""
+    payout = ContractRecord("P", scenario_apv=90.0, category="payout_annuity",
+                            cash_surrender_value=70.0)
+    assert payout.mav == 90.0                      # §13.C.1: the greater
+    lean = ContractRecord("P2", scenario_apv=50.0, category="payout_annuity",
+                          cash_surrender_value=70.0)
+    assert lean.mav == 70.0
+
+    accum = account_value("A", apv=500.0, csv=80.0)
+    assert accum.mav == 80.0                       # §13.C.2: the CSV alone
+
+    longevity = ContractRecord("L", scenario_apv=10.0,
+                               category="longevity_reinsurance",
+                               longevity_benefits_12m=1_000.0)
+    assert longevity.mav == 20.0                   # §13.C.3: 2% of benefits
+    assert set(MAV_RULES) == set(RESERVING_CATEGORIES)
+
+
+def test_the_scenario_apv_is_floored_at_the_mav_before_it_is_a_weight():
+    """§13.D.2: "If the Scenario APV for any contract is less than the MAV,
+    then the excess Scenario APV to be used for allocating the excess
+    aggregate reserve to that contract shall be floored at zero."
+
+    Without the floor a contract whose APV sits below its surrender value
+    would take a *negative* share of the excess, which is a transfer of
+    reserve from a weak contract to a strong one."""
+    records = [account_value("rich", apv=200.0, csv=100.0),
+               account_value("poor", apv=20.0, csv=100.0)]
+    assert records[1].excess_apv == 0.0
+    got = allocate_aggregate_reserve(records, 300.0)
+    assert got.amounts == {"rich": 200.0, "poor": 100.0}
+
+
+def test_a_group_with_no_excess_apv_anywhere_allocates_on_the_mav():
+    """§13.D.3, reached by an accumulation group this time: every contract
+    is under water against its surrender value, so there is no risk measure
+    to allocate on and the MAV stands in for one."""
+    records = [account_value("A", apv=10.0, csv=100.0),
+               account_value("B", apv=20.0, csv=300.0)]
+    got = allocate_aggregate_reserve(records, 480.0)
+    assert got.rule == "13.D.3"
+    assert got.amounts == {"A": 120.0, "B": 360.0}   # 80 split 1:3
+
+
+def test_the_shortfall_goes_to_the_life_contingent_contracts_alone():
+    """§13.D.4: "If a group's aggregate reserve is less than the group's
+    aggregate MAV, that difference should be allocated to life contingent
+    contracts in proportion to each life contingent contract's MAV to the
+    sum of the life contingent contracts MAV."
+
+    The term-certain contract keeps its MAV untouched; the whole shortfall
+    lands on the contracts whose obligation runs on a life."""
+    records = [
+        ContractRecord("LC1", scenario_apv=200.0, category="payout_annuity",
+                       life_contingent=True),
+        ContractRecord("LC2", scenario_apv=100.0, category="payout_annuity",
+                       life_contingent=True),
+        ContractRecord("TC", scenario_apv=100.0, category="payout_annuity"),
+    ]
+    got = allocate_aggregate_reserve(records, 340.0)   # aggregate MAV is 400
+    assert got.rule == "13.D.4" and got.excess == -60.0
+    assert got.amounts == {"LC1": 160.0, "LC2": 80.0, "TC": 100.0}
+    assert got.total == 340.0 and got.reconciles
+
+
+def test_a_shortfall_with_nothing_life_contingent_to_carry_it_is_refused():
+    """§13.D.4 names the contracts the shortfall goes to and this group has
+    none of them. Spreading it over the term-certain contracts instead
+    would be a reserve nobody prescribed, which is worse than stopping."""
+    records = [ContractRecord("TC", scenario_apv=100.0,
+                              category="payout_annuity")]
+    with pytest.raises(VM22Error, match="nowhere the text puts it"):
+        allocate_aggregate_reserve(records, 40.0)
+
+
+def test_the_surrender_floor_under_a_shortfall_breaks_the_reconciliation():
+    """§13.D.4 ends "All contracts are floored at their cash surrender
+    value" — applied *after* the shortfall is allocated, so the amounts
+    need no longer sum to the aggregate reserve. §13's preamble promises
+    the allocation holds every contract at its surrender value, and the
+    only way to keep that promise is to stop reconciling.
+
+    Reported rather than reconciled away: a module that scaled the result
+    back down would be breaking the guarantee the floor exists to keep, and
+    one that stayed silent would leave the break to be found in a
+    reconciliation."""
+    records = [
+        ContractRecord("LC", scenario_apv=200.0, category="payout_annuity",
+                       cash_surrender_value=190.0, life_contingent=True),
+        ContractRecord("TC", scenario_apv=100.0, category="payout_annuity",
+                       cash_surrender_value=100.0),
+    ]
+    # Aggregate MAV 300, reserve 250: the 50 shortfall all falls on LC,
+    # taking it to 150 — below its 190 surrender value, which floors it.
+    got = allocate_aggregate_reserve(records, 250.0)
+    assert got.rule == "13.D.4"
+    assert got.amounts == {"LC": 190.0, "TC": 100.0}
+    assert got.total == 290.0
+    assert not got.reconciles                    # and the module says so
+    assert got.below_cash_surrender_value == ()  # the floor did its job
+
+
+def test_a_payout_contract_can_finish_below_the_apv_the_preamble_promises():
+    """§13's preamble: "the reserve held for a Payout Annuity contract
+    (whether life-contingent or not) will be no less than the present value
+    of the liability cash flows provided under the contract … discounted
+    using the NAER" — its Scenario APV.
+
+    §13.D.4's arithmetic floors at the cash surrender value and nothing
+    else, so a payout contract absorbing a shortfall lands under its APV.
+    The preamble and the prescribed method disagree, and this module
+    implements the method and reports the disagreement."""
+    records = [
+        ContractRecord("LC", scenario_apv=200.0, category="payout_annuity",
+                       life_contingent=True),
+        ContractRecord("TC", scenario_apv=100.0, category="payout_annuity"),
+    ]
+    got = allocate_aggregate_reserve(records, 240.0)
+    assert got.amounts["LC"] == 140.0            # against a 200 APV
+    assert got.below_scenario_apv == ("LC",)
+    assert got.below_cash_surrender_value == ()
+
+
+def test_a_longevity_mav_carries_no_surrender_floor_and_the_module_says_so():
+    """§13.C.3 sets the MAV to 2% of the next twelve months' scheduled
+    benefits full stop — no "greater of", unlike §13.C.1. A longevity
+    contract with a surrender value above that finishes below the preamble's
+    first guarantee, which is worth reporting because such contracts
+    normally have no surrender value at all and the case is easy to miss."""
+    record = ContractRecord("L", scenario_apv=5.0,
+                            category="longevity_reinsurance",
+                            longevity_benefits_12m=1_000.0,
+                            cash_surrender_value=50.0)
+    assert record.mav == 20.0 < 50.0
+    got = allocate_aggregate_reserve([record], 20.0)
+    assert got.amounts == {"L": 20.0}
+    assert got.below_cash_surrender_value == ("L",)
+
+
+def test_the_excluded_contracts_are_kept_out_of_the_allocation():
+    """§13: contracts passing §7.A's stochastic exclusion test "will not be
+    included in the allocation of the aggregate reserve"; §3.H has them
+    "calculated on a seriatim basis" instead. Including one would allocate
+    a reserve it is not part of to a contract that already has its own."""
+    records = [account_value("A", apv=140.0, csv=100.0),
+               account_value("X", apv=50.0, csv=40.0,
+                             stochastically_excluded=True)]
+    with pytest.raises(VM22Error, match="seriatim basis"):
+        allocate_aggregate_reserve(records, 300.0)
+
+
+def test_a_dr_contract_is_allocated_but_not_alongside_an_sr_one():
+    """§13 keeps §7.E's DR contracts in — "contracts that have passed the
+    Single Scenario Test … are subject to the allocation methodology
+    described in this section" — while requiring that "allocation
+    calculations shall be done separately for the DR and SR"."""
+    dr = [account_value("D1", apv=140.0, csv=100.0, carries_dr=True),
+          account_value("D2", apv=120.0, csv=100.0, carries_dr=True)]
+    assert allocate_aggregate_reserve(dr, 260.0).total == 260.0
+
+    mixed = [dr[0], account_value("S1", apv=120.0, csv=100.0)]
+    with pytest.raises(VM22Error, match="separately for the DR and SR"):
+        allocate_aggregate_reserve(mixed, 260.0)
+
+
+def test_the_allocation_is_separated_by_category_and_by_model_segment():
+    """§13: "separately … for different reserving categories that have not
+    been aggregated pursuant to Section 3.F.2. To the extent that
+    aggregation is done across multiple model segments, the allocation
+    calculations shall be done separately for each model segment."
+
+    Both refusals, and §3.F.2's attestation opening the one exception the
+    text allows — the same rule §3.F.1 applies one level up."""
+    payout = ContractRecord("P", scenario_apv=100.0,
+                            category="payout_annuity")
+    accum = account_value("A", apv=100.0, csv=50.0)
+    longevity = ContractRecord("L", scenario_apv=1.0,
+                               category="longevity_reinsurance",
+                               longevity_benefits_12m=100.0)
+    with pytest.raises(VM22Error, match="different reserving categories"):
+        allocate_aggregate_reserve([payout, accum], 200.0)
+    assert allocate_aggregate_reserve(
+        [payout, accum], 200.0, combined_payout_accumulation=True).total \
+        == 200.0
+    with pytest.raises(VM22Error, match="different reserving categories"):
+        allocate_aggregate_reserve([payout, longevity], 200.0,
+                                   combined_payout_accumulation=True)
+
+    with pytest.raises(VM22Error, match="each model segment"):
+        allocate_aggregate_reserve(
+            [account_value("A", apv=100.0, csv=50.0, model_segment="one"),
+             account_value("B", apv=100.0, csv=50.0, model_segment="two")],
+            300.0)
+
+
+def test_the_allocation_runs_once_per_basis_and_not_once_on_a_pair():
+    """§13 allocates "for both the pre- and post-reinsurance ceded
+    reserves", and §13.C's inputs are themselves stated "after
+    consideration of any reinsurance" — so the records differ by basis too.
+    Running one set of contracts against both halves of a `BasisPair` would
+    allocate the pre-ceded reserve over post-ceded contracts."""
+    records = [account_value("A", apv=140.0, csv=100.0)]
+    with pytest.raises(VM22Error, match="once per basis"):
+        allocate_aggregate_reserve(records,
+                                   BasisPair(pre_ceded=300.0,
+                                             post_ceded=200.0))
+
+
+def test_an_unclassified_contract_has_no_mav_rule_and_is_refused():
+    """§13.C gives one rule per Reserving Category and none for anything
+    else. Unclassified contracts aggregate freely for the *reserve* (§3.F.1
+    documents that as not a VM-22 reserve); for the allocation there is no
+    such latitude, because there would be no MAV to compute."""
+    with pytest.raises(VM22Error, match="§13.C"):
+        ContractRecord("X", scenario_apv=1.0, category=None)
+    with pytest.raises(VM22Error, match="belongs to 'longevity_reinsurance'"):
+        ContractRecord("Y", scenario_apv=1.0, category="accumulation",
+                       longevity_benefits_12m=10.0)
+
+
+def test_an_allocation_with_nothing_to_allocate_on_is_refused():
+    """A group of zero-MAV contracts with no excess Scenario APV gives
+    §13.D.3 no proportion to work with. Spreading the excess evenly is not
+    what §13.D says, so the module stops rather than inventing a rule."""
+    records = [ContractRecord("A", scenario_apv=0.0, category="accumulation"),
+               ContractRecord("B", scenario_apv=0.0, category="accumulation")]
+    with pytest.raises(VM22Error, match="no proportion to allocate on"):
+        allocate_aggregate_reserve(records, 100.0)
+    with pytest.raises(VM22Error, match="there are no contracts"):
+        allocate_aggregate_reserve([], 100.0)
+    with pytest.raises(VM22Error, match="contract ids repeat"):
+        allocate_aggregate_reserve([account_value("A", apv=1.0, csv=1.0),
+                                    account_value("A", apv=1.0, csv=1.0)],
+                                   10.0)
+
+
+def test_the_apv_scenario_is_the_closest_one_not_above_the_reserve():
+    """§13.B.1: "the scenario that produces the aggregate scenario reserve
+    for the group that is closest to, but not greater than the SR defined
+    in Section 3.D."
+
+    A prescribed selection, so the module makes it rather than taking the
+    Scenario APV entirely on faith. Scenario 2 at 140 is the closest below
+    the SR of 150; scenario 3 at 200 is closer in absolute terms and is not
+    eligible, which is the half of the rule an argmin would get wrong."""
+    reserves = np.array([50.0, 90.0, 140.0, 200.0])
+    assert apv_scenario(reserves, 150.0) == 2
+    assert apv_scenario(reserves, 140.0) == 2      # "not greater than"
+    assert apv_scenario(reserves, 139.0) == 1
+    # Ties take the lowest index, so the choice does not depend on a sort.
+    assert apv_scenario(np.array([90.0, 90.0, 200.0]), 150.0) == 0
+
+
+def test_the_apv_scenario_and_the_reserve_have_to_belong_to_each_other():
+    """A CTE is never below the minimum it averages over, so an SR below
+    every scenario reserve did not come from those reserves. Refused rather
+    than clamped to the smallest, which would silently pick a scenario the
+    text did not choose."""
+    reserves = np.array([100.0, 200.0, 300.0])
+    with pytest.raises(VM22Error, match="not the reserves that SR came from"):
+        apv_scenario(reserves, 50.0)
+    with pytest.raises(VM22Error, match="there are none"):
+        apv_scenario([], 10.0)
+
+
+def test_the_selected_scenario_is_the_one_the_prescribed_path_produces():
+    """End to end against §3.F.5.a: the aggregate scenario reserves come
+    from `segment_scenario_reserves` and the SR is their CTE, so §13.B.1's
+    selection is made against the same numbers the reserve was made from
+    rather than a second computation of them."""
+    segment = ModelSegment("S", [[0.0, 40.0, 100.0, 200.0]])
+    reserves = segment_scenario_reserves([segment])
+    sr = segment_stochastic_reserve([segment], basis=HALF)
+    assert sr == 150.0                              # CTE(50) of 100 and 200
+    assert apv_scenario(reserves, sr) == 2          # the 100 scenario

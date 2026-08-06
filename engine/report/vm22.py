@@ -71,6 +71,89 @@ pooling has bought nothing, however uncorrelated the block.
 a floor effect and a diversification effect and reports the prescribed
 figure alongside, rather than assuming where it falls.
 
+Two reserves, not one
+---------------------
+§3.B: "All components in the aggregate reserve shall be determined
+**post-reinsurance ceded and pre-reinsurance ceded** as outlined in Section
+5." Every amount this module reports is therefore a :class:`BasisPair`, and
+the pair is not a number and an adjustment. §5.A.2.a determines the
+post-ceded DR/SR "reflecting the effects of reinsurance treaties …
+including, where appropriate, all projected reinsurance premiums or other
+costs and all reinsurance recoveries"; §5.A.2.b determines the pre-ceded
+ones "ignoring the effects of reinsurance ceded within the projections".
+Those are **two projections**, and nothing here derives one from the other.
+
+The formulaic component is the exception, and there the text *does*
+subtract: §5.A.1, "for the reserve amount valued using requirements in
+VM-A, VM-C, VM-M, and VM-V, the post-reinsurance ceded reserve is
+determined by subtracting the reinsurance reserve credit" — §5.A.3 adding
+that the methodology "produces reserves on a pre-reinsurance ceded basis".
+:meth:`ReservingGroup.formulaic` is that subtraction and the only place in
+this module where one basis is computed from the other.
+
+Two things about §5 that no first-principles design would have contained:
+
+- **§5.A.2.a.iv is an additive charge, not a netting.** Where a treaty does
+  not qualify for credit for reinsurance and treating it as if it did
+  "would result in a reduction to the company's surplus, then the company
+  shall increase the aggregate reserve by the absolute value of such
+  reductions in surplus". :class:`AggregateReserve` takes it as
+  ``non_qualifying_surplus_reduction`` and **adds** it.
+- **§5.A.3 lets the two bases disagree about the method.** "It is possible
+  that the pre-reinsurance-ceded reserves would pass the relevant exclusion
+  test … while the post-reinsurance-ceded reserves might not, or vice
+  versa." So a group can be stochastic on one basis and formulaic on the
+  other, and :class:`ReservingGroup` carries a method per basis rather than
+  one method and two numbers.
+
+What §5 leaves to the actuary, and this module does not invent: the
+**starting assets on the ceded portion** (§5.A.2.b.i–ii). The text gives
+acceptable approaches — assets similar to those supporting the retained
+portion, scaling up each retained asset, or modelling an identifiable
+portfolio where a funds-withheld, modified-coinsurance or trust arrangement
+has one — and choosing among them is a modelling decision. It is an input
+to the pre-ceded projection, so it arrives here already made. Likewise
+§5.A.2.a.iii's counterparty-default margin, which is required *only* where
+"the company has knowledge that a counterparty is financially impaired" and
+explicitly not otherwise; charging one always would be the natural instinct
+and is not what the text says.
+
+Down again: §13's allocation, and the guarantee it does not keep
+---------------------------------------------------------------
+§3.H requires the aggregate reserve to be allocated back to contracts, and
+§13 prescribes the method: a **minimum allocation value** per contract
+(§13.C, one rule per Reserving Category) plus an **allocated excess
+reserve** (§13.D, the group's excess over its aggregate MAV shared out in
+proportion to each contract's excess Scenario APV). It is a risk measure,
+deliberately: the section expects "an indexed annuity contract with a high
+benefit GLWB [to] typically have a larger allocated excess reserve than an
+otherwise identical indexed annuity contract with a low benefit GLWB".
+
+Two things fall out of reading it that reading a summary would not give.
+
+**§13.D.1 can never reach a Payout Annuity group.** §13.C.1 sets a payout
+contract's MAV to the *greater* of its Scenario APV and its surrender
+value, so its excess Scenario APV is zero by construction — and §13.D.3's
+"if all contracts in the group have an excess Scenario APV that is floored
+at zero, then use the MAV to allocate" is therefore not a fallback for that
+category but the operative rule. §13.D.1's risk-proportional allocation is
+an accumulation-category mechanism, which is exactly the category the
+preamble's GLWB example belongs to.
+
+**§13's preamble promises what §13.D's arithmetic does not always
+deliver.** "the reserve held for any contract will be no less than the cash
+surrender value provided under that contract … Additionally, the reserve
+held for a Payout Annuity contract … will be no less than the present value
+of the liability cash flows". Under §13.D.4 — where the aggregate reserve
+falls short of the aggregate MAV — the shortfall is spread over
+life-contingent contracts and only then are "all contracts … floored at
+their cash surrender value", which restores the first guarantee, breaks the
+second, and applies the floor *after* the allocation so the amounts need no
+longer sum to the aggregate reserve. And §13.C.3's longevity MAV carries no
+surrender-value floor at all. :class:`Allocation` reports all three facts —
+which rule ran, whether it reconciles, and which contracts finished under a
+guarantee — rather than adding floors the text does not prescribe.
+
 Known deviations from the text, still open
 -----------------------------------------
 Two places where this module is **knowingly not what §4 says**. Both are
@@ -140,6 +223,22 @@ RESERVING_CATEGORIES = ("payout_annuity", "longevity_reinsurance",
 
 #: The only pair §3.F.2 allows to be combined, and only on attestation.
 COMBINABLE = frozenset({"payout_annuity", "accumulation"})
+
+#: §13.C keys the minimum allocation value off the contract type, and its
+#: three cases are §3.F.1's three Reserving Categories with the middle one
+#: renamed: §13.C.2's "Account Value Based Annuity" appears nowhere else in
+#: the chapter and is not defined in it. §3.F.1.c makes the identification
+#: safe — the Accumulation Reserving Category is "all annuities within
+#: scope of VM-22 that are not in the Payout … or Longevity Reinsurance"
+#: category, which is what an account-value-based annuity is.
+MAV_RULES = {"payout_annuity": "§13.C.1",
+             "accumulation": "§13.C.2",
+             "longevity_reinsurance": "§13.C.3"}
+
+#: §3.B's two bases, on both of which every component must be determined.
+#: The held reserve is the post-reinsurance-ceded one; the
+#: pre-reinsurance-ceded one is required alongside it, not instead of it.
+REINSURANCE_BASES = ("pre_ceded", "post_ceded")
 
 #: §4.B.1's second floor: for the longevity reinsurance category, the
 #: scenario reserve "shall not be less than 2% of the scheduled longevity
@@ -733,43 +832,204 @@ def segment_stochastic_reserve(segments: Sequence[ModelSegment], *,
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class BasisPair:
+    """One VM-22 amount on both of §3.B's bases.
+
+    §3.B: "All components in the aggregate reserve shall be determined
+    post-reinsurance ceded and pre-reinsurance ceded as outlined in Section
+    5." For the SR and the DR those are **two projections** — §5.A.2.a
+    reflects the treaties, §5.A.2.b ignores them — so this is a pair of
+    computed numbers and not a number with an adjustment hanging off it.
+    Nothing here derives one basis from the other; the only place in this
+    module that does is :meth:`ReservingGroup.formulaic`, because §5.A.1
+    says to.
+
+    :meth:`flat` is the case where the two coincide, which is a statement
+    about the block rather than a default: a group with no reinsurance
+    ceded genuinely has one number, and a group with reinsurance genuinely
+    has two.
+    """
+
+    pre_ceded: float
+    post_ceded: float
+
+    def __post_init__(self):
+        for name in REINSURANCE_BASES:
+            object.__setattr__(self, name, float(getattr(self, name)))
+
+    @classmethod
+    def flat(cls, amount: float) -> "BasisPair":
+        """One number on both bases — a group with no reinsurance ceded."""
+        return cls(pre_ceded=float(amount), post_ceded=float(amount))
+
+    @property
+    def ceded_credit(self) -> float:
+        """``pre_ceded − post_ceded``: what ceding is worth on this group.
+
+        Positive where reinsurance reduces the reserve, which is the usual
+        direction and not a guaranteed one — a treaty can cost more than it
+        recovers, which is the whole premise of §5.A.2.a.iv. Nothing here
+        constrains the sign.
+        """
+        return self.pre_ceded - self.post_ceded
+
+    @property
+    def collapsed(self) -> bool:
+        """Whether the two bases agree, as they do with no treaty."""
+        return self.pre_ceded == self.post_ceded
+
+    def __add__(self, other) -> "BasisPair":
+        if isinstance(other, BasisPair):
+            return BasisPair(self.pre_ceded + other.pre_ceded,
+                             self.post_ceded + other.post_ceded)
+        return BasisPair(self.pre_ceded + float(other),
+                         self.post_ceded + float(other))
+
+    __radd__ = __add__
+
+    def to_dict(self) -> dict:
+        return {"pre_ceded": self.pre_ceded, "post_ceded": self.post_ceded}
+
+    def __fingerprint__(self):
+        return self.to_dict()
+
+
+def _as_pair(amount) -> BasisPair:
+    """A :class:`BasisPair`, or a bare number read as a treaty-free block."""
+    return amount if isinstance(amount, BasisPair) else BasisPair.flat(amount)
+
+
+def _check_method(name: str, basis: str, method: str,
+                  exclusion: "Exclusion | None") -> None:
+    """One basis's method and its stated reason, checked together."""
+    if method not in METHODS:
+        raise VM22Error(
+            f"{method!r} is not a VM-22 method; they are {list(METHODS)}"
+        )
+    if method == "stochastic" and exclusion is not None:
+        raise VM22Error(
+            f"group {name!r} carries a stochastic reserve and an exclusion "
+            f"from one on the {basis} basis; an exclusion is a statement "
+            f"that the number was not needed, not a note attached to one "
+            f"that was"
+        )
+    if method != "stochastic" and exclusion is None:
+        raise VM22Error(
+            f"group {name!r} is valued as {method!r} rather than "
+            f"stochastically on the {basis} basis, which §7 permits only on "
+            f"a stated basis; record the Exclusion or compute the SR"
+        )
+
+
+@dataclass(frozen=True)
 class ReservingGroup:
-    """One group of contracts and the reserve it carries.
+    """One group of contracts and the reserves it carries, on both bases.
 
     §3.A adds one reserve per group: the SR for groups modelling
     stochastically, the DR for groups that passed the Single Scenario Test,
     and the formulaic reserve for groups that passed the exclusion test and
     elected not to model. A group that is not carrying a stochastic reserve
     says why, in ``exclusion``.
+
+    ``amount`` is a :class:`BasisPair`; a bare number is read as
+    :meth:`BasisPair.flat`, which says the group cedes nothing and both of
+    §3.B's bases give the same reserve.
+
+    ``method`` and ``exclusion`` describe the **post-reinsurance-ceded**
+    valuation — the one that goes on the balance sheet — and describe the
+    pre-ceded one too unless ``pre_ceded_method`` is given. That override
+    exists because §5.A.3 says the bases may part company: "it is possible
+    that the pre-reinsurance-ceded reserves would pass the relevant
+    exclusion test … while the post-reinsurance-ceded reserves might not,
+    or vice versa". A group can therefore be formulaic pre-ceded and
+    stochastic post-ceded, which is two valuations of one group rather than
+    two numbers from one. Where ``pre_ceded_method`` is given,
+    ``pre_ceded_exclusion`` stands alone and is not inherited — a different
+    method needs its own stated reason, or none.
     """
 
     name: str
     method: str
-    amount: float
+    amount: BasisPair
     exclusion: Exclusion | None = None
+    #: §5.A.3's override: the method on the pre-ceded basis, where it
+    #: differs. ``None`` means the same valuation on both bases.
+    pre_ceded_method: str | None = None
+    pre_ceded_exclusion: Exclusion | None = None
 
     def __post_init__(self):
-        if self.method not in METHODS:
+        object.__setattr__(self, "amount", _as_pair(self.amount))
+        _check_method(self.name, "post-ceded", self.method, self.exclusion)
+        if self.pre_ceded_method is None:
+            if self.pre_ceded_exclusion is not None:
+                raise VM22Error(
+                    f"group {self.name!r} states a pre-ceded exclusion but "
+                    f"no pre-ceded method; §5.A.3's split is a difference of "
+                    f"valuation, so name the method it applies to"
+                )
+        else:
+            _check_method(self.name, "pre-ceded", self.pre_ceded_method,
+                          self.pre_ceded_exclusion)
+
+    @property
+    def methods(self) -> dict:
+        """How this group is valued on each of §3.B's two bases."""
+        return {"post_ceded": self.method,
+                "pre_ceded": self.pre_ceded_method or self.method}
+
+    @property
+    def exclusions(self) -> dict:
+        """Why the SR was left out on each basis, where it was."""
+        if self.pre_ceded_method is None:
+            return {"post_ceded": self.exclusion, "pre_ceded": self.exclusion}
+        return {"post_ceded": self.exclusion,
+                "pre_ceded": self.pre_ceded_exclusion}
+
+    @classmethod
+    def formulaic(cls, name: str, pre_ceded_amount: float, *,
+                  exclusion: Exclusion,
+                  reinsurance_reserve_credit: float = 0.0
+                  ) -> "ReservingGroup":
+        """§5.A.1: post-ceded = pre-ceded − the reinsurance reserve credit.
+
+        The one component where the two bases are a number and an
+        adjustment rather than two projections. §5.A.3: the VM-A/C/M/V
+        methodology "produces reserves on a pre-reinsurance ceded basis.
+        Therefore, the reserve must be adjusted for any reinsurance ceded
+        accordingly" — so the stated amount is the pre-ceded one and the
+        credit is subtracted from it, not added to anything.
+
+        A credit larger than the reserve it is taken against is refused
+        rather than reported as a negative reserve: a reserve credit cannot
+        exceed the reserve ceded, so an amount that does is a data error,
+        and reporting it would net a liability into an asset silently.
+        """
+        credit = float(reinsurance_reserve_credit)
+        gross = float(pre_ceded_amount)
+        if credit < 0.0:
             raise VM22Error(
-                f"{self.method!r} is not a VM-22 method; they are "
-                f"{list(METHODS)}"
+                f"group {name!r} states a reinsurance reserve credit of "
+                f"{credit:,.2f}; a credit is what ceding is worth and is not "
+                f"negative. If ceding costs more than it recovers, that is "
+                f"§5.A.2.a.iv's surplus charge on the aggregate reserve."
             )
-        if self.method == "stochastic" and self.exclusion is not None:
+        if credit > gross:
             raise VM22Error(
-                f"group {self.name!r} carries a stochastic reserve and an "
-                f"exclusion from one; an exclusion is a statement that the "
-                f"number was not needed, not a note attached to one that was"
+                f"group {name!r} takes a reinsurance reserve credit of "
+                f"{credit:,.2f} against a pre-ceded reserve of {gross:,.2f}. "
+                f"A credit cannot exceed the reserve ceded, and §5.A.1's "
+                f"subtraction would report a negative reserve."
             )
-        if self.method != "stochastic" and self.exclusion is None:
-            raise VM22Error(
-                f"group {self.name!r} is valued as {self.method!r} rather "
-                f"than stochastically, which §7 permits only on a stated "
-                f"basis; record the Exclusion or compute the SR"
-            )
+        return cls(name=name, method="formulaic",
+                   amount=BasisPair(pre_ceded=gross,
+                                    post_ceded=gross - credit),
+                   exclusion=exclusion)
 
     def __fingerprint__(self):
         return {"name": self.name, "method": self.method,
-                "amount": self.amount, "exclusion": self.exclusion}
+                "amount": self.amount, "exclusion": self.exclusion,
+                "pre_ceded_method": self.pre_ceded_method,
+                "pre_ceded_exclusion": self.pre_ceded_exclusion}
 
 
 class AggregateReserve:
@@ -783,9 +1043,19 @@ class AggregateReserve:
     """
 
     def __init__(self, groups: Iterable[ReservingGroup], *,
-                 basis: VM22Basis = VM22_2026):
+                 basis: VM22Basis = VM22_2026,
+                 non_qualifying_surplus_reduction: float = 0.0):
         self.groups = list(groups)
         self.basis = basis
+        self.non_qualifying_surplus_reduction = float(
+            non_qualifying_surplus_reduction)
+        if self.non_qualifying_surplus_reduction < 0.0:
+            raise VM22Error(
+                f"§5.A.2.a.iv increases the aggregate reserve by the "
+                f"**absolute value** of the surplus reduction; "
+                f"{self.non_qualifying_surplus_reduction:,.2f} is negative "
+                f"and would relieve the reserve rather than charge it"
+            )
         if not self.groups:
             raise VM22Error(
                 "an aggregate reserve with no groups in it is a calculation "
@@ -800,49 +1070,149 @@ class AggregateReserve:
             )
 
     @property
-    def value(self) -> float:
-        return float(sum(group.amount for group in self.groups))
+    def group_total(self) -> BasisPair:
+        """§3.A's sum over the groups, before §5.A.2.a.iv's charge."""
+        return sum((group.amount for group in self.groups),
+                   BasisPair(0.0, 0.0))
+
+    @property
+    def value(self) -> BasisPair:
+        """§3.A's sum on both of §3.B's bases, plus §5.A.2.a.iv's charge.
+
+        The charge lands on the **post-ceded** basis only. §5.A.2.a.iv
+        arises because a non-qualifying treaty's cash flows are kept out of
+        the post-ceded projections, and it puts back the surplus that
+        omission flatters; the pre-ceded basis ignores reinsurance ceded
+        altogether by construction (§5.A.2.b), so charging it there would
+        be adding a reinsurance effect to the basis defined not to have
+        one. The text says only "increase the aggregate reserve" and does
+        not say on which basis, so this is a reading, and it is recorded
+        here rather than left for someone to infer from the arithmetic.
+        """
+        total = self.group_total
+        return BasisPair(
+            pre_ceded=total.pre_ceded,
+            post_ceded=total.post_ceded + self.non_qualifying_surplus_reduction,
+        )
+
+    @property
+    def post_ceded(self) -> float:
+        """The held reserve: §3.A's sum on §3.B's post-ceded basis."""
+        return self.value.post_ceded
+
+    @property
+    def pre_ceded(self) -> float:
+        """The same reserve ignoring reinsurance ceded, per §5.A.2.b."""
+        return self.value.pre_ceded
 
     def by_method(self) -> dict:
-        """The §3.A split: how much of the reserve each method contributed."""
-        out = {method: 0.0 for method in METHODS}
+        """The §3.A split, per basis, as :class:`BasisPair` per method.
+
+        A group may be valued one way pre-ceded and another post-ceded
+        (§5.A.3), so the two bases are split independently — which is why
+        this cannot be a dict of floats keyed by one method per group.
+
+        These sum to :attr:`group_total`, **not** to :attr:`value`:
+        §5.A.2.a.iv's charge is not any group's reserve and has no method
+        to be attributed to.
+        """
+        out = {method: BasisPair(0.0, 0.0) for method in METHODS}
         for group in self.groups:
-            out[group.method] += group.amount
+            methods = group.methods
+            out[methods["pre_ceded"]] = (out[methods["pre_ceded"]]
+                                         + BasisPair(group.amount.pre_ceded,
+                                                     0.0))
+            out[methods["post_ceded"]] = (out[methods["post_ceded"]]
+                                          + BasisPair(0.0,
+                                                      group.amount.post_ceded))
         return out
 
     @property
     def largest(self) -> str:
-        """The group contributing most. Not a binding component — a sum has
-        none — but the first thing anybody asks of a composition."""
-        return max(self.groups, key=lambda g: g.amount).name
+        """The group contributing most **post-ceded**. Not a binding
+        component — a sum has none — but the first thing anybody asks of a
+        composition."""
+        return max(self.groups, key=lambda g: g.amount.post_ceded).name
 
     def to_dict(self) -> dict:
         return {
             "basis": self.basis.label,
-            "value": self.value,
-            "by_method": self.by_method(),
-            "groups": [{"name": g.name, "method": g.method,
-                        "amount": g.amount,
-                        "excluded": None if g.exclusion is None
-                        else g.exclusion.basis}
+            "value": self.value.to_dict(),
+            "group_total": self.group_total.to_dict(),
+            "non_qualifying_surplus_reduction":
+                self.non_qualifying_surplus_reduction,
+            "by_method": {method: pair.to_dict()
+                          for method, pair in self.by_method().items()},
+            "groups": [{"name": g.name, "methods": g.methods,
+                        "amount": g.amount.to_dict(),
+                        "ceded_credit": g.amount.ceded_credit,
+                        "excluded": {basis: None if e is None else e.basis
+                                     for basis, e in g.exclusions.items()}}
                        for g in self.groups],
         }
 
     def __repr__(self) -> str:
-        return (f"AggregateReserve({self.value:,.2f}, "
+        return (f"AggregateReserve({self.post_ceded:,.2f} post-ceded, "
+                f"{self.pre_ceded:,.2f} pre-ceded, "
                 f"{len(self.groups)} group(s), basis={self.basis.label!r})")
 
     def __fingerprint__(self):
-        return {"basis": self.basis, "groups": list(self.groups)}
+        return {"basis": self.basis, "groups": list(self.groups),
+                "non_qualifying_surplus_reduction":
+                    self.non_qualifying_surplus_reduction}
 
 
 def stochastic_group(name: str, contracts: Sequence[Contract], *,
-                     basis: VM22Basis = VM22_2026) -> ReservingGroup:
-    """A group carrying the SR of §4, floored where §4.B.1 puts the floor."""
-    return ReservingGroup(
-        name=name, method="stochastic",
-        amount=aggregate_stochastic_reserve(contracts, basis=basis),
-    )
+                     pre_ceded_contracts: Sequence[Contract] | None = None,
+                     basis: VM22Basis = VM22_2026,
+                     combined_payout_accumulation: bool = False
+                     ) -> ReservingGroup:
+    """A group carrying the SR of §4, floored where §4.B.1 puts the floor.
+
+    ``contracts`` is the projection that reflects the treaties — §5.A.2.a's
+    post-reinsurance-ceded basis, and for a block that cedes nothing simply
+    the projection. ``pre_ceded_contracts`` is §5.A.2.b's second
+    projection, run "ignoring the effects of reinsurance ceded"; omitting
+    it says the group cedes nothing, and the pair collapses.
+
+    This is the :class:`Contract` path and therefore the overstating order
+    — see :func:`aggregate_stochastic_reserve`. :func:`segment_group` is
+    the prescribed one.
+    """
+    return _paired_group(
+        name,
+        lambda cs: aggregate_stochastic_reserve(
+            cs, basis=basis,
+            combined_payout_accumulation=combined_payout_accumulation),
+        contracts, pre_ceded_contracts)
+
+
+def segment_group(name: str, segments: Sequence[ModelSegment], *,
+                  pre_ceded_segments: Sequence[ModelSegment] | None = None,
+                  basis: VM22Basis = VM22_2026,
+                  combined_payout_accumulation: bool = False
+                  ) -> ReservingGroup:
+    """A group carrying the SR by §3.F.5.a's order, on both of §3.B's bases.
+
+    The prescribed path: combine the segments' present values, take the
+    greatest in aggregate, then CTE 70 — and do it twice, because §5.A.2.a
+    and §5.A.2.b are two projections and neither is derivable from the
+    other. ``pre_ceded_segments`` omitted says the group cedes nothing.
+    """
+    return _paired_group(
+        name,
+        lambda ss: segment_stochastic_reserve(
+            ss, basis=basis,
+            combined_payout_accumulation=combined_payout_accumulation),
+        segments, pre_ceded_segments)
+
+
+def _paired_group(name: str, reserve, post_ceded, pre_ceded) -> ReservingGroup:
+    """One reserve on each basis, from one calculation run twice."""
+    post = reserve(post_ceded)
+    pre = post if pre_ceded is None else reserve(pre_ceded)
+    return ReservingGroup(name=name, method="stochastic",
+                          amount=BasisPair(pre_ceded=pre, post_ceded=post))
 
 
 # --------------------------------------------------------------------------
@@ -920,3 +1290,387 @@ def aggregation_decomposition(contracts: Sequence[Contract], *,
         diversification_effect=midpoint - outside,
         floor_binds=total_floor >= pooled,
     )
+
+
+# --------------------------------------------------------------------------
+# §13 — allocating the aggregate reserve back to contracts
+# --------------------------------------------------------------------------
+
+#: Which of §13.D's rules produced an allocation. Reported rather than
+#: inferred, because §13.D.3 and §13.D.4 are not edge cases — the first is
+#: the *only* rule a payout group can ever reach, and the second breaks the
+#: reconciliation §13.D.1 guarantees.
+ALLOCATION_RULES = ("13.D.1", "13.D.3", "13.D.4")
+
+
+def apv_scenario(scenario_reserve: Sequence[float],
+                 stochastic_reserve: float) -> int:
+    """§13.B.1: which scenario the Scenario APV is taken from.
+
+    "the scenario that produces the aggregate scenario reserve for the
+    group that is **closest to, but not greater than** the SR defined in
+    Section 3.D."
+
+    A prescribed *selection*, and therefore computable here rather than
+    taken on faith: the caller supplies the aggregate scenario reserves it
+    already computed for §3.F.5.a.iii and the SR that came out of them, and
+    this returns the index whose liability cash flows §13.B.1 wants
+    discounted. Ties take the lowest index, so the choice is deterministic
+    rather than dependent on the sort.
+
+    There is always such a scenario when the SR is the CTE of these very
+    reserves — a conditional tail expectation is never below the minimum it
+    averages over — so a refusal here means the two arguments do not belong
+    to each other. §13.B.2's DR case needs none of this: there the single
+    scenario used to calculate the reserve *is* the scenario.
+    """
+    values = np.asarray(list(scenario_reserve), dtype=np.float64).ravel()
+    if values.size == 0:
+        raise VM22Error("§13.B.1 selects a scenario from the aggregate "
+                        "scenario reserves, and there are none")
+    eligible = values <= float(stochastic_reserve)
+    if not eligible.any():
+        raise VM22Error(
+            f"§13.B.1 wants the scenario closest to but not greater than the "
+            f"SR, and every one of {values.size} aggregate scenario reserves "
+            f"exceeds {float(stochastic_reserve):,.2f}. A CTE is never below "
+            f"the minimum it averages, so these are not the reserves that SR "
+            f"came from."
+        )
+    return int(np.flatnonzero(eligible & (values == values[eligible].max()))[0])
+
+
+@dataclass(frozen=True)
+class ContractRecord:
+    """One contract's facts, as §13 needs them.
+
+    Separate from :class:`Contract` because they are different objects:
+    :class:`Contract` carries a scenario reserve, one value per scenario,
+    and feeds the aggregate reserve; this carries a **Scenario APV**, one
+    number taken from the single scenario §13.B selects, and receives the
+    aggregate reserve back. The reserve is computed over a book and
+    allocated to contracts, and the two directions do not share a record.
+
+    ``scenario_apv`` is §13.B's "discounted liability cash flows at the
+    NAER … for the scenario that produces the aggregate scenario reserve
+    for the group that is closest to, but not greater than the SR" —
+    :func:`apv_scenario` names that scenario. §13.B.3 requires the same
+    liability assumptions used for the SR.
+
+    ``life_contingent`` matters only in §13.D.4's shortfall, which is
+    allocated to life-contingent contracts alone. ``stochastically_excluded``
+    marks a contract §13 keeps out of the allocation entirely.
+    """
+
+    id: str
+    scenario_apv: float
+    category: str
+    cash_surrender_value: float = 0.0
+    #: §13.C.3's input: the scheduled longevity benefits payable by the
+    #: benefit provider within the next 12 months. The same quantity
+    #: §4.B.1 floors the scenario reserve with, one level down.
+    longevity_benefits_12m: float = 0.0
+    life_contingent: bool = False
+    #: §13's first paragraph: contracts passing §7.A's stochastic exclusion
+    #: test "will not be included in the allocation of the aggregate
+    #: reserve"; §3.H has them "calculated on a seriatim basis" instead.
+    stochastically_excluded: bool = False
+    #: §13: allocation is done separately for the DR and the SR.
+    carries_dr: bool = False
+    #: §13: "To the extent that aggregation is done across multiple model
+    #: segments, the allocation calculations shall be done separately for
+    #: each model segment."
+    model_segment: str | None = None
+
+    def __post_init__(self):
+        for name in ("scenario_apv", "cash_surrender_value",
+                     "longevity_benefits_12m"):
+            object.__setattr__(self, name, float(getattr(self, name)))
+        if self.category not in RESERVING_CATEGORIES:
+            raise VM22Error(
+                f"contract {self.id!r} declares category "
+                f"{self.category!r}; §13.C gives a minimum allocation value "
+                f"per Reserving Category and has no rule for anything else. "
+                f"They are {list(RESERVING_CATEGORIES)}."
+            )
+        if self.longevity_benefits_12m and \
+                self.category != "longevity_reinsurance":
+            raise VM22Error(
+                f"contract {self.id!r} carries a twelve-month longevity "
+                f"benefit but is category {self.category!r}; §13.C.3's "
+                f"minimum allocation value belongs to "
+                f"'longevity_reinsurance'"
+            )
+
+    @property
+    def mav(self) -> float:
+        """§13.C's minimum allocation value, by Reserving Category.
+
+        - **§13.C.1**, Payout Annuity: "the greater of … the Scenario APV
+          for the contract, or … the cash surrender value provided under
+          the contract, if any."
+        - **§13.C.2**, Account Value Based Annuity: "the cash surrender
+          value provided under the contract, if any, otherwise zero" — so
+          the Scenario APV does *not* enter, which is what leaves room for
+          §13.D's risk-proportional allocation to do any work.
+        - **§13.C.3**, Longevity Reinsurance: "2% of the scheduled
+          longevity benefits payable by the benefit provider within the
+          next 12 months", and **not** floored at the cash surrender value,
+          which the section's own preamble promises. See
+          :class:`Allocation`.
+        """
+        if self.category == "payout_annuity":
+            return max(self.scenario_apv, self.cash_surrender_value)
+        if self.category == "longevity_reinsurance":
+            return LONGEVITY_FLOOR_RATE * self.longevity_benefits_12m
+        return self.cash_surrender_value
+
+    @property
+    def excess_apv(self) -> float:
+        """§13.D.1–2's weight: the Scenario APV over the MAV, floored at 0.
+
+        §13.D.2: "If the Scenario APV for any contract is less than the
+        MAV, then the excess Scenario APV to be used for allocating the
+        excess aggregate reserve to that contract shall be floored at
+        zero."
+        """
+        return max(self.scenario_apv - self.mav, 0.0)
+
+    def __fingerprint__(self):
+        return {"id": self.id, "scenario_apv": self.scenario_apv,
+                "category": self.category,
+                "cash_surrender_value": self.cash_surrender_value,
+                "longevity_benefits_12m": self.longevity_benefits_12m,
+                "life_contingent": self.life_contingent,
+                "stochastically_excluded": self.stochastically_excluded,
+                "carries_dr": self.carries_dr,
+                "model_segment": self.model_segment}
+
+
+@dataclass(frozen=True)
+class Allocation:
+    """§13.A's contract-level reserves, and what the arithmetic could not
+    promise.
+
+    §13.A: "The contract-level reserve for each contract shall be the sum
+    of … the contract's minimum allocation value (MAV) … [and] the
+    contract's allocated excess reserve (AER)."
+
+    §13's preamble states two guarantees about its own method — "the
+    reserve held for any contract will be no less than the cash surrender
+    value provided under that contract", and for a Payout Annuity contract
+    no less than "the present value of the liability cash flows …
+    discounted using the NAER", which is its Scenario APV. **The prescribed
+    arithmetic does not always deliver them**, and this class reports where
+    rather than quietly adding floors the text does not prescribe:
+
+    - Under §13.D.4, where the aggregate reserve falls short of the
+      aggregate MAV, the shortfall is spread over life-contingent contracts
+      and only then are "all contracts … floored at their cash surrender
+      value". A payout contract can finish below its Scenario APV, and the
+      cash-surrender floor is applied *after* the allocation, so the
+      allocated amounts need no longer sum to the aggregate reserve.
+    - §13.C.3's longevity MAV is 2% of the next twelve months' scheduled
+      benefits with no cash-surrender floor, so a longevity contract whose
+      surrender value exceeds that can land below it.
+
+    ``reconciles`` is therefore reported and not assumed. Under §13.D.1 and
+    §13.D.3 the sum is exact by construction, which is asserted rather than
+    trusted.
+    """
+
+    amounts: dict
+    rule: str
+    aggregate_reserve: float
+    aggregate_mav: float
+    below_cash_surrender_value: tuple
+    below_scenario_apv: tuple
+
+    @property
+    def total(self) -> float:
+        return float(sum(self.amounts.values()))
+
+    @property
+    def excess(self) -> float:
+        """§13.D.1's "excess … of the group's aggregate reserve over the
+        group's aggregate MAV". Negative is §13.D.4's case."""
+        return self.aggregate_reserve - self.aggregate_mav
+
+    @property
+    def reconciles(self) -> bool:
+        """Whether the contract-level reserves still add to the aggregate."""
+        scale = max(1.0, abs(self.aggregate_reserve))
+        return abs(self.total - self.aggregate_reserve) <= 1e-9 * scale
+
+    def to_dict(self) -> dict:
+        return {"amounts": dict(self.amounts), "rule": self.rule,
+                "total": self.total,
+                "aggregate_reserve": self.aggregate_reserve,
+                "aggregate_mav": self.aggregate_mav,
+                "excess": self.excess, "reconciles": self.reconciles,
+                "below_cash_surrender_value":
+                    list(self.below_cash_surrender_value),
+                "below_scenario_apv": list(self.below_scenario_apv)}
+
+    def __fingerprint__(self):
+        return self.to_dict()
+
+
+def _check_allocation_group(records: Sequence[ContractRecord], *,
+                            combined_payout_accumulation: bool) -> None:
+    """§13's four separations, before any arithmetic happens.
+
+    "Allocation calculations shall be done separately for the DR and SR,
+    and for different reserving categories that have not been aggregated
+    pursuant to Section 3.F.2. To the extent that aggregation is done
+    across multiple model segments, the allocation calculations shall be
+    done separately for each model segment." Plus the scope carve-out in
+    the same paragraph.
+    """
+    if not records:
+        raise VM22Error("§13 allocates a reserve to contracts, and there "
+                        "are no contracts")
+    ids = [r.id for r in records]
+    if len(set(ids)) != len(ids):
+        raise VM22Error(
+            f"contract ids repeat in the allocation: {sorted(ids)}. Two "
+            f"records with one id is either a double allocation or a "
+            f"contract that never received one."
+        )
+    excluded = [r.id for r in records if r.stochastically_excluded]
+    if excluded:
+        raise VM22Error(
+            f"contracts {sorted(excluded)} passed §7.A's stochastic "
+            f"exclusion test, and §13 says they "
+            f"\"will not be included in the allocation of the aggregate "
+            f"reserve\"; §3.H has them calculated on a seriatim basis "
+            f"instead. Contracts that passed §7.E's Single Scenario Test "
+            f"and carry a DR *are* allocated — set carries_dr."
+        )
+    declared = {r.category for r in records}
+    if len(declared) > 1 and not (declared == COMBINABLE
+                                  and combined_payout_accumulation):
+        raise VM22Error(
+            f"§13 allocates "
+            f"\"separately … for different reserving categories that have "
+            f"not been aggregated pursuant to Section 3.F.2\", and these "
+            f"span {sorted(declared)}. Only {sorted(COMBINABLE)} may be "
+            f"combined, and only on §3.F.2's criteria — pass "
+            f"combined_payout_accumulation=True to attest them."
+        )
+    if len({r.carries_dr for r in records}) > 1:
+        raise VM22Error(
+            "§13: \"Allocation calculations shall be done separately for "
+            "the DR and SR\". These records mix contracts that carry a DR "
+            "with contracts that do not; allocate each group to its own "
+            "reserve."
+        )
+    segments = {r.model_segment for r in records if r.model_segment is not None}
+    if len(segments) > 1:
+        raise VM22Error(
+            f"§13: \"To the extent that aggregation is done across multiple "
+            f"model segments, the allocation calculations shall be done "
+            f"separately for each model segment\". These records span "
+            f"{sorted(segments)}."
+        )
+
+
+def allocate_aggregate_reserve(records: Sequence[ContractRecord],
+                               aggregate_reserve, *,
+                               combined_payout_accumulation: bool = False
+                               ) -> Allocation:
+    """§13: the aggregate reserve, back down to the contracts.
+
+    §13.A's contract-level reserve is the MAV (§13.C) plus the allocated
+    excess reserve (§13.D), and §13.D.1 allocates "the excess, if any, of
+    the group's aggregate reserve over the group's aggregate MAV to the
+    contract **in proportion to the excess of the Scenario APV over the
+    MAV** for such contract" — a risk measure, which is why the section's
+    preamble expects "an indexed annuity contract with a high benefit GLWB
+    [to] typically have a larger allocated excess reserve than an otherwise
+    identical indexed annuity contract with a low benefit GLWB or no GLWB".
+
+    Three rules, and which one applies is structural rather than
+    exceptional:
+
+    - **§13.D.1**, proportional to the excess Scenario APV.
+    - **§13.D.3**, "If all contracts in the group have an excess Scenario
+      APV that is floored at zero, then use the MAV to allocate". For a
+      **Payout Annuity group this is always the rule**: §13.C.1 sets the
+      MAV to the greater of the Scenario APV and the surrender value, so no
+      payout contract can ever have a positive excess Scenario APV. §13.D.1
+      cannot reach a pure payout group at all.
+    - **§13.D.4**, where the aggregate reserve falls short of the aggregate
+      MAV: the difference goes to life-contingent contracts in proportion
+      to their MAV, and "all contracts are floored at their cash surrender
+      value".
+
+    ``aggregate_reserve`` is one basis's figure. §13's first paragraph says
+    the allocation "should be done for both the pre- and post-reinsurance
+    ceded reserves", and both the Scenario APV and the cash surrender value
+    are stated "after consideration of any reinsurance" — so the *records*
+    differ by basis too, and a :class:`BasisPair` here is refused rather
+    than run twice against one set of contracts.
+    """
+    if isinstance(aggregate_reserve, BasisPair):
+        raise VM22Error(
+            "§13's allocation runs once per basis, not once on a pair: the "
+            "Scenario APV and the cash surrender value are both stated "
+            "\"after consideration of any reinsurance\", so the contract "
+            "records differ between the bases as well as the reserve. Call "
+            "this twice, with each basis's own records."
+        )
+    _check_allocation_group(
+        records, combined_payout_accumulation=combined_payout_accumulation)
+    reserve = float(aggregate_reserve)
+    mavs = {r.id: r.mav for r in records}
+    total_mav = float(sum(mavs.values()))
+    excess = reserve - total_mav
+
+    if excess >= 0.0:
+        weights = {r.id: r.excess_apv for r in records}
+        rule = "13.D.1"
+        if sum(weights.values()) == 0.0:            # §13.D.3
+            weights = dict(mavs)
+            rule = "13.D.3"
+        total_weight = float(sum(weights.values()))
+        if total_weight == 0.0:
+            raise VM22Error(
+                f"§13.D.3 falls back to allocating the excess aggregate "
+                f"reserve of {excess:,.2f} in proportion to the MAV, and "
+                f"every contract's MAV is zero. There is no proportion to "
+                f"allocate on, and spreading it evenly is not what §13.D "
+                f"says."
+            )
+        amounts = {r.id: mavs[r.id] + excess * weights[r.id] / total_weight
+                   for r in records}
+    else:                                            # §13.D.4
+        rule = "13.D.4"
+        contingent = [r for r in records if r.life_contingent]
+        contingent_mav = float(sum(mavs[r.id] for r in contingent))
+        if not contingent or contingent_mav == 0.0:
+            raise VM22Error(
+                f"§13.D.4 allocates the {abs(excess):,.2f} by which the "
+                f"aggregate reserve falls short of the aggregate MAV "
+                f"\"to life contingent contracts in proportion to each life "
+                f"contingent contract's MAV\", and this group has no life "
+                f"contingent contract carrying one. The shortfall has "
+                f"nowhere the text puts it."
+            )
+        amounts = {}
+        for r in records:
+            amount = mavs[r.id]
+            if r.life_contingent:
+                amount += excess * mavs[r.id] / contingent_mav
+            # "All contracts are floored at their cash surrender value."
+            amounts[r.id] = max(amount, r.cash_surrender_value)
+
+    below_csv = tuple(r.id for r in records
+                      if amounts[r.id] < r.cash_surrender_value)
+    below_apv = tuple(r.id for r in records
+                      if r.category == "payout_annuity"
+                      and amounts[r.id] < r.scenario_apv)
+    return Allocation(amounts=amounts, rule=rule, aggregate_reserve=reserve,
+                      aggregate_mav=total_mav,
+                      below_cash_surrender_value=below_csv,
+                      below_scenario_apv=below_apv)
