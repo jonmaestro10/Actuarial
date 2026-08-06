@@ -71,6 +71,36 @@ pooling has bought nothing, however uncorrelated the block.
 a floor effect and a diversification effect and reports the prescribed
 figure alongside, rather than assuming where it falls.
 
+Known deviations from the text, still open
+-----------------------------------------
+Two places where this module is **knowingly not what §4 says**. Both are
+recorded rather than quietly carried, both push the reserve the same way
+(upward, so the error is conservative rather than deficient), and both are
+pinned by tests in tests/test_vm22.py so they cannot be forgotten:
+
+1. **The greatest present value is taken per contract, then summed.**
+   §3.F.5.a.ii says "Combine the present values for each model segment and
+   take the greatest present value **in aggregate** for each scenario" —
+   aggregate first, reduce second. This module reduces first (RFC-016's
+   ``scenario_reserves`` maximises over dates per contract) and sums after.
+   Since ``Σ max ≥ max Σ``, the result is an overstatement. Fixing it needs
+   :class:`Contract` to carry the discounted deficiency *path* rather than
+   the reduced scenario reserve, which is a real change and is not made
+   here.
+
+2. **The greatest present value is floored at zero.** RFC-016 floors it —
+   "a *surplus* is not a negative reserve" — and VM-22 explicitly does not:
+   §4.B.1.a carries the guidance note "The greatest present value of
+   accumulated deficiencies **can be negative**." The floor lives in
+   :mod:`engine.report.pbr`, which VM-20 and VM-21 share, so removing it
+   there would change two other chapters on the strength of a third's
+   text. VM-22 needs its own unfloored path.
+
+Both are the same shape as the floor-placement error this module already
+had corrected: reduce-then-aggregate where the text aggregates-then-reduces.
+That is worth naming, because it is evidently the mistake this framework
+invites.
+
 What is carried, and what is still the actuary's
 ------------------------------------------------
 :class:`VM22Basis` is a dated parameter set, in the manner of
@@ -328,11 +358,22 @@ class Contract:
     @classmethod
     def from_cashflows(cls, id: str, net_cashflows, earned_rates, *,
                        starting_assets: float = 0.0,
-                       cash_surrender_value: float = 0.0) -> "Contract":
-        """Build from the projection, via RFC-016's scenario reserves."""
+                       cash_surrender_value: float = 0.0,
+                       pimr: float = 0.0) -> "Contract":
+        """Build from the projection, via RFC-016's scenario reserves.
+
+        §4.B.1.a: "The starting asset amount, **less the allocated amount
+        of PIMR**, plus the greatest present value … of the projected
+        accumulated deficiencies". The pre-tax interest maintenance reserve
+        is an allocated balance-sheet amount rather than something a
+        projection produces, so it is an argument; it defaults to zero,
+        which is the right default for a block that has none and the wrong
+        one for a block that does.
+        """
         return cls(id=id,
                    scenario_reserve=scenario_reserves(
-                       net_cashflows, earned_rates, starting_assets),
+                       net_cashflows, earned_rates, starting_assets)
+                   - float(pimr),
                    cash_surrender_value=cash_surrender_value)
 
     def __fingerprint__(self):
