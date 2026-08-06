@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,024
+   naive implementation otherwise. The suite (`pytest`, currently 2,059
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -89,7 +89,7 @@ what any incumbent ships rather than merely reaching parity.
 | Results warehouse | ✅ star schema in partitioned Parquet with the run fingerprint on every fact row (E1, RFC-046) | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
 | Excel integration | ✅ audit workbook writer (E2, RFC-047) and live add-in (E4, RFC-056) shipped | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet — and state, in the workbook, the precision the format costs, which no vendor's does | E2 |
 | Production UI | ✅ runs list, seriatim drill-down, semantic assumption diff, artifact and evidence views shipped (E3, RFC-048) | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have — plus a diff that names the component that moved, and URLs that are citations because the run id is a content digest | E3 |
-| VM-22 | ❌ | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit | C1 |
+| VM-22 | ✅ shipped (C1, RFC-039): CTE stochastic reserve, CSV floor, recorded exclusions, dated basis | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit — here, that a per-contract floor can zero out the diversification benefit of aggregating | C1 |
 | US statutory formulaic reserves + AAT | ❌ | CRVM/net-premium + asset adequacy runner | Same | C2 |
 | Pensions / longevity as products | ❌ | Buy-in/buy-out, longevity swap templates | Same | C3 |
 | US health / LTC | ❌ | LTC template on the multi-state engine | Same | C4 |
@@ -308,12 +308,35 @@ counterparty-cliff habit is a product feature; keep it). These are
 independent of A/B and can interleave; C1 is the most time-sensitive
 (VM-22 is effective for 2026 valuations).
 
-### C1 — VM-22 (RFC-039) — effort M
+### C1 — VM-22 (RFC-039) — effort M — **shipped**
 `engine/report/vm22.py`: the 2026 VM-22 framework for non-variable annuities
 — stochastic reserve on the CTE machinery already in `engine/report/pbr.py`,
 deterministic certification option, exclusion tests. Golden tests from
 hand-computed miniature blocks (`tests/test_vm22.py`). Pairs with the FIA and
 payout-annuity templates already in `engine/library/`.
+
+**Shipped with a finding (RFC-039).** A stochastic reserve is a tail
+statistic over a *book*; a cash surrender value belongs to a *contract*.
+Put them in a maximum and the order of operations moves the answer, by two
+separable amounts: `seriatim − aggregate = floor effect + diversification
+effect`, both non-negative, and `aggregation_decomposition` splits them
+exactly. The sharp edge is that **the floor can eat the diversification
+benefit entirely** — both terms of the second bracket are maxima against
+the same summed floor, so when the surrender value binds in aggregate the
+credit for pooling is not reduced but exactly zero, however uncorrelated
+the block. "Our stochastic reserve fell when we aggregated" is worth
+nothing until somebody has checked which component binds.
+
+The other decision worth carrying forward: **the module refuses to invent
+the text's numbers.** `VM22Basis` is a dated parameter set in the manner of
+market risk's 2015/35 and 2026/269; `VM22_2026` carries the CTE level and
+nothing else numeric, and the stochastic exclusion test *raises* rather
+than defaulting a threshold — an exclusion decision is the one place where
+a wrong constant removes a whole reserve component without leaving a
+trace. An excluded component is recorded with its basis (a ratio test
+carries its ratio, a certification carries the actuary's name), because a
+component omitted after a passed test and one nobody computed are the same
+absence and different reserves.
 
 ### C2 — US statutory formulaic reserves + AAT (RFC-040) — effort M
 `engine/report/statutory.py`: CRVM / net-premium formulaic reserves (build on
@@ -671,16 +694,18 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: §10's path now runs into
-workstream C, and C1 (§5, VM-22, RFC-039) is the next item — it is also the
-most time-sensitive item on the plan, since VM-22 is effective for 2026
-valuations, and §10 already licenses pulling it forward. It builds on the
-CTE machinery in `engine/report/pbr.py` and pairs with the FIA and
-payout-annuity templates already in the library; per the workstream's
-standing habit it ships with one documented sharp-edge finding. B1 (§4)
-remains unstarted and carries a written assessment of why — read it before
-picking the item up, and expect an array-expression compiler rather than a
-wrapper. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) —
+*Next action for the implementing agent: C2 (§5, US statutory formulaic
+reserves + AAT, RFC-040) is the next item — `engine/report/statutory.py`,
+CRVM/net-premium reserves on `engine/library/reserves.py` plus an
+asset-adequacy runner joining the liability projection to the asset side
+(`engine/data/assets.py`, and `engine/report/embedded_value.py` for the
+pattern). It pairs naturally with C1: VM-22's deterministic component and
+the formulaic floor are the same family of calculation, and RFC-039
+deliberately left the Standard Projection Amount out, so if C2 brings
+prescribed assumption sets with it, that gap is the place to close it.
+B1 (§4) remains unstarted and carries a written assessment of why — read it
+before picking the item up, and expect an array-expression compiler rather
+than a wrapper. Shipped so far: A1 (RFC-033), A2 (RFC-034), A4 (RFC-036) —
 milestone M1 — F1 (RFC-049), D1–D3 + E1 (RFC-043, RFC-044, RFC-045,
-RFC-046) — milestone M3 — and E2, E3, E4 (RFC-047, RFC-048, RFC-056) —
-milestone M4.*
+RFC-046) — milestone M3 — E2, E3, E4 (RFC-047, RFC-048, RFC-056) —
+milestone M4 — and C1 (RFC-039).*
