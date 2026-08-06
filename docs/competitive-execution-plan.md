@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,519
-   tests — 2,473 of them without the `[compile]` extra, whose 46 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,561
+   tests — 2,515 of them without the `[compile]` extra, whose 46 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
@@ -1147,7 +1147,7 @@ Four items, each self-contained. None depends on any B, C, E, F or G item, so
 they can be taken whenever a session suits them — and H1 is worth doing before
 the next long piece of work rather than after.
 
-### H1 — `CLAUDE.md`, the working agreement in the repo — effort S
+### H1 — `CLAUDE.md`, the working agreement in the repo — effort S — **done**
 The conventions an agent or a new developer needs *before* touching
 anything, currently spread across §1 of this plan, the RFC house style, and
 tribal knowledge that only exists in session prompts: the dependency
@@ -1162,7 +1162,7 @@ to cover — the same derivation-over-restatement rule the prescribed-assumption
 provenance string earned, applied to a document that will otherwise drift the
 moment §1 changes.
 
-### H2 — Technology architecture — effort M
+### H2 — Technology architecture — effort M — **done**
 **Build:** `docs/architecture.md`. The layer map (`engine/core`, `data`,
 `library`, `report`, `api`, `migrate`, `parity`) with the dependency rules
 that hold between them and *why*; the three executors and the classes §1.2
@@ -1175,7 +1175,7 @@ warehouse). With diagrams that are generated from the code where they can be
 **Accept:** the layer-dependency claims are asserted by an import-graph test,
 so the document cannot describe a boundary the code has stopped keeping.
 
-### H3 — Developer README — effort S
+### H3 — Developer README — effort S — **done**
 The current `README.md` is 969 lines and is doing three jobs at once. Split
 the developer half out: install, the extras and what each is for, running the
 suite (including the `[compile]` extra's separate CI job), the benchmark
@@ -1186,7 +1186,7 @@ a finding to the catalogue, and the pre-push verification sequence.
 **Accept:** every command the document quotes is executed in CI, so a stale
 instruction fails the build rather than a new developer's afternoon.
 
-### H4 — User guide — effort M
+### H4 — User guide — effort M — **done**
 For the actuary rather than the developer. **Build:** `docs/user-guide.md`:
 the model catalogue and what each template is for, assumption objects and
 bases, running a valuation through the API and through Excel, reading a run
@@ -1197,6 +1197,38 @@ findings catalogue (F4) and the prescribed-assumption refusals.
 **Accept:** every worked example in the guide is one of the specimens the
 evidence pack already runs, so the guide cannot show an example that does not
 work.
+
+---
+
+**Outcome (workstream H).** All four shipped, and each acceptance criterion is
+a test rather than a promise. `CLAUDE.md`, `docs/architecture.md`,
+`docs/developing.md`, `docs/user-guide.md`, with `README.md` reduced to a
+front door that routes by what the reader is trying to do.
+
+Three things worth carrying forward.
+
+**A document nothing checks is a document that drifts, and this repo has the
+receipts.** A provenance string claimed two prescribed tables when seven were
+carried; a docstring stated an exclusion the evidence pack had been
+contradicting for months. Both were *enforcing* the error, because a test
+asserted the stale text. So `tests/test_working_agreement.py` asserts that
+every convention `CLAUDE.md` names is one something actually enforces — and
+that the file contains **no figure that drifts**: no test count, no coverage
+percentage. Those are cited, never copied.
+
+**The architecture test found the layer map was untidier than the diagram
+would have been.** `core` and `data` import each other — `core` needs
+`data.modelpoints` to type an executor, `data.mortality` needs `core.dates` —
+so the map draws them side by side rather than stacked, and the test pins
+exactly which modules participate. The cycle can now be paid down
+deliberately and cannot grow by accident. §1.4 itself came out clean: all
+four NumPy-only layers import nothing else unconditionally, with numba, cupy
+and pyarrow reached only behind guards.
+
+**The user guide's best section is the one no incumbent ships**: what the
+engine refuses to do and why, drawn from the findings catalogue and the
+prescribed-assumption refusals — and every refusal it promises is asserted to
+still happen.
 
 ---
 

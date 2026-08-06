@@ -2,8 +2,21 @@
 
 An open actuarial projection platform: a Prophet / MoSes competitor built on
 declarative models-as-code, a vectorizing executor, and accuracy enforced by
-golden tests. Full plan: [PLAN.md](PLAN.md). DSL spec:
-[docs/rfc-001-dsl.md](docs/rfc-001-dsl.md).
+golden tests.
+
+**Start here**
+
+| you are | read |
+|---|---|
+| changing the code | [`CLAUDE.md`](CLAUDE.md) — the working agreement, and the traps this repo has actually fallen into |
+| understanding the design | [`docs/architecture.md`](docs/architecture.md) — layers, executors, the three equivalence classes |
+| setting it up | [`docs/developing.md`](docs/developing.md) — install, extras, the suite, adding a template |
+| running valuations | [`docs/user-guide.md`](docs/user-guide.md) — the catalogue, run records, and what the engine **refuses** to do |
+| looking for sharp edges | [`docs/findings/`](docs/findings/) — each with a script CI runs |
+
+Full plan: [PLAN.md](PLAN.md) and
+[docs/competitive-execution-plan.md](docs/competitive-execution-plan.md).
+DSL spec: [docs/rfc-001-dsl.md](docs/rfc-001-dsl.md).
 
 ## Quick start
 
