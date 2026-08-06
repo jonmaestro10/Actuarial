@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,482
-   tests — 2,442 of them without the `[compile]` extra, whose 40 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,490
+   tests — 2,450 of them without the `[compile]` extra, whose 40 are
    RFC-072's bitwise measurement) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -229,7 +229,7 @@ Landscape §5.1: the binding constraint for production nested-stochastic. The
 graph and forward loop exist (`engine/core/graph.py`, `vector.py`); PLAN §4.2
 and §4.3 are designed but unbuilt.
 
-### B1 — The compiled executor (RFC-037) — effort L — **not started**
+### B1 — The compiled executor (RFC-037) — effort L — **in progress**
 
 **Build:** `engine/core/compiled.py`; optional extra `[compile]` (Numba).
 
@@ -294,6 +294,34 @@ since it fuses nothing.
 `engine/core/bitwise.py` carries the classification and refuses an
 unclassified op by name. B1's remaining work is the translation, and it now
 has a specification to translate *into*.
+
+**First brick laid (RFC-073).** `engine/core/compiled.py` answers, per model,
+the question an emitter has to answer first: which arithmetic goes inside a
+kernel, which values must be handed in, and — if none of it can — which
+operation is responsible. It emits a `CompilationPlan` and **not a kernel**,
+deliberately: a plan can be checked against the model it describes, a kernel
+only against its own output, and getting the plan right first gives the
+kernel something to be wrong against.
+
+Verdict across the deterministic catalogue: **13 of 14 plan cleanly**, the
+exception being `GeneralInsurance` — and that refusal was real information
+rather than noise. It used `atleast_1d`, which was unclassified, and the fix
+was not to wave it through but to notice that RFC-072's three categories were
+missing a fourth. **Selection and reshaping perform no arithmetic**, so a
+kernel may contain them for a different reason than IEEE-754's: not that the
+standard pins their rounding, but that they do not round. `where` had been
+sitting in the arithmetic set with a comment saying it was not arithmetic,
+which is the observation that produced `STRUCTURAL`.
+
+Also enforced, and worth its own line: **a `@var` body that branches on
+traced data is refused rather than specialised.** The recorded tape would be
+right for the batch it traced and wrong for the next block, which is RFC-070's
+bug exactly — a conditional branch a particular batch never entered, surviving
+three RFCs. It cannot survive a fourth.
+
+Still ahead for B1: the emitter itself (tape → Numba kernel over preallocated
+slabs), the hoist slabs, the kernel cache keyed by graph digest, and joining
+the equivalence suite as a third executor.
 
 **Accept:** every template in `engine/library/` bitwise-identical across
 interpreted / vectorized / compiled — read against §1.2's two classes, so

@@ -45,9 +45,11 @@ reduction is never compiled, and that is what makes ``pool_sum`` — every
 
 What this forces on B1's design
 -------------------------------
-A compiled kernel may contain **only** :data:`CORRECTLY_ROUNDED` operations.
-Everything else has to be evaluated by NumPy and passed in as a precomputed
-slab. That is not a concession extracted from the guarantee; it is the only
+A compiled kernel may contain **only** :data:`CORRECTLY_ROUNDED` operations
+and :data:`STRUCTURAL` ones — the second group being selection, reshaping and
+indexing, which a kernel may contain for a different reason: they perform no
+arithmetic at all, and a value that is copied cannot be rounded. Everything
+else has to be evaluated by NumPy and passed in as a precomputed slab. That is not a concession extracted from the guarantee; it is the only
 arrangement under which the guarantee survives, and it happens to be the
 arrangement the plan already reaches for on other grounds — assumption
 lookups "hoisted into precomputed slabs".
@@ -89,11 +91,32 @@ CORRECTLY_ROUNDED = frozenset({
     # libraries, so a kernel using these on data that can hold either is
     # relying on more than the standard gives it.
     "maximum", "minimum", "fmax", "fmin",
-    # Not an arithmetic operation: a data-movement select.
-    "where",
     # Boolean algebra over the masks indicator-style formulas are built on.
     "logical_and", "logical_or", "logical_not", "logical_xor",
     "isnan", "isinf", "isfinite",
+})
+
+#: Operations that **move** values without computing them: selection,
+#: reshaping, broadcasting, indexing. A kernel may contain these, and the
+#: reason is different from :data:`CORRECTLY_ROUNDED`'s — not that the
+#: standard pins their arithmetic, but that they perform none. A value that
+#: is copied cannot be rounded.
+#:
+#: Kept as its own set rather than folded into the arithmetic one because
+#: the emitter treats them differently: a reshape is the emitter's own
+#: business, resolved when the loop is laid out, and never appears in the
+#: loop body at all. ``where`` sat in ``CORRECTLY_ROUNDED`` with a comment
+#: saying it was not an arithmetic operation, which was the observation that
+#: this set should exist.
+STRUCTURAL = frozenset({
+    "where", "select", "clip",
+    "atleast_1d", "atleast_2d", "broadcast_to", "broadcast_arrays",
+    "reshape", "ravel", "squeeze", "expand_dims", "transpose",
+    "concatenate", "stack", "hstack", "vstack", "column_stack",
+    "take", "take_along_axis", "repeat", "tile", "roll", "flip",
+    "asarray", "asanyarray", "array", "copy", "empty", "zeros", "ones",
+    "full", "zeros_like", "ones_like", "empty_like", "full_like",
+    "searchsorted", "argmax", "argmin", "argsort", "nonzero", "flatnonzero",
 })
 
 #: Operations whose result is **implementation-defined to within an ulp**.
@@ -167,7 +190,7 @@ class NotCompilable(ValueError):
 
 
 def classify(op: str) -> str:
-    """``"exact"``, ``"hoist"``, ``"reduce"`` or ``"unknown"`` for a ufunc name.
+    """``"exact"``, ``"structural"``, ``"hoist"``, ``"reduce"`` or ``"unknown"``.
 
     ``"unknown"`` is deliberately **not** merged into ``"hoist"``. An
     operation nobody has classified is a question, and answering it by
@@ -177,6 +200,8 @@ def classify(op: str) -> str:
     """
     if op in CORRECTLY_ROUNDED:
         return "exact"
+    if op in STRUCTURAL:
+        return "structural"
     if op in IMPLEMENTATION_DEFINED:
         return "hoist"
     if op in ORDER_DEPENDENT:

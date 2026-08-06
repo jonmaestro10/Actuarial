@@ -342,3 +342,39 @@ def test_the_forward_recursion_the_kernel_exists_for_is_bitwise():
     assert compiled.shape == reference.shape
     assert compiled.dtype == reference.dtype == np.float64
     assert np.array_equal(_bits(compiled), _bits(reference))
+
+
+def test_a_structural_op_is_allowed_for_a_different_reason_than_arithmetic():
+    """**Selection and reshaping perform no arithmetic**, so a kernel may
+    contain them — but not because IEEE-754 pins their rounding. It pins
+    nothing about them; they simply do not round, because a value that is
+    copied is the value.
+
+    Kept as its own category rather than folded into ``CORRECTLY_ROUNDED``
+    because the emitter treats them differently: a reshape is resolved when
+    the loop is laid out and never appears in the loop body. ``where`` used
+    to sit in the arithmetic set with a comment saying it was not arithmetic,
+    which is the observation that produced this set — and ``atleast_1d``,
+    which `GeneralInsurance` actually uses, was refused as unclassified until
+    it existed.
+    """
+    from engine.core.bitwise import STRUCTURAL
+
+    assert classify("where") == "structural"
+    assert classify("atleast_1d") == "structural"
+    assert classify("take") == "structural"
+    assert classify("multiply") == "exact"
+
+    # A kernel may contain both kinds, so neither is a refusal.
+    ok, reasons = compilable(["add", "where", "atleast_1d", "take"])
+    assert ok and reasons == []
+
+    # Four categories, still disjoint — an op in two would make classify
+    # order-dependent and the caller would get whichever branch came first.
+    for other in (CORRECTLY_ROUNDED, IMPLEMENTATION_DEFINED, ORDER_DEPENDENT):
+        assert not STRUCTURAL & other
+
+    # And the extrema *reductions* stay reductions: `argmax` moves an index
+    # and is structural, `amax` picks a value out of an axis and is not.
+    assert classify("argmax") == "structural"
+    assert classify("amax") == "reduce"
