@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,492
-   tests — 2,446 of them without the `[compile]` extra, whose 46 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,519
+   tests — 2,473 of them without the `[compile]` extra, whose 46 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
@@ -360,7 +360,7 @@ marketing = engineering). If any op resists bitwise reproduction under Numba,
 the RFC documents the op and the replacement chosen — the tolerance does not
 move (§1.2).
 
-### B2 — Cross-machine dispatch (RFC-038) — effort L
+### B2 — Cross-machine dispatch (RFC-038) — effort L — **done**
 
 **Build:** `engine/core/dispatch.py`, `engine/api/worker.py`.
 
@@ -382,11 +382,48 @@ run vs the same run dispatched across ≥2 local worker processes (spawned in
 the test, marked slow); a killed worker's shard is retried and the final
 digest is unchanged; registry shows the shard tree.
 
+**Outcome (RFC-075).** Built, and the claim above needed correcting. A
+dispatched run is bitwise identical to an undispatched one at every shard
+count — tested at 1, 2, 3, 5, 8 and 37 shards over 37 model points. But
+"**any topology**" is wrong: RFC-072 measured that the transcendental library
+is implementation-defined to within an ulp, so a shard on an AVX-512 worker
+and one on an older core can disagree in the last bit, and the concatenated
+answer would then depend on which worker got which shard.
+
+So the guarantee is now stated where it holds — **bitwise across workers that
+attest the same arithmetic** — and enforced rather than caveated. Every worker
+digests what its floating-point unit does to a fixed probe, and the
+coordinator compares before reducing; unlike workers raise
+`ArithmeticMismatch` naming the shards. Two digests, not one, because they
+fail differently: `exact` (IEEE-754 §5, must agree) and `transcendental`
+(§9.2, does not). Reproduced end to end with AVX-512 dispatch disabled: the
+exact digest is identical and the transcendental one is not.
+
+**The bug it nearly shipped with is the finding.** The first probe was nine
+values and agreed with AVX-512 on and off — because NumPy dispatches its SIMD
+kernels only above a length threshold, and the scalar path below it is the one
+that does *not* vary. An attestation that agrees everywhere is the same as no
+attestation, and it would have shipped looking like a safeguard. `PROBE_LENGTH`
+is now 4096 with a test holding it above 1024.
+
+**The shard tree is recorded, and its `run_id` is the undispatched one.**
+That is the claim rather than an oversight: where a shard ran cannot move a
+number, so a run split five ways and the same run split eight ways are the
+same run and must share an identifier — putting the topology into the identity
+would make a correctly reproduced answer look like a different one. The tree
+sits beside the identity as the *evidence*, and a run made with
+`require_matching_arithmetic=False` records `arithmetic="mixed"` because the
+record is the one place that fact could otherwise not be recovered.
+
 **Milestone M2 — "the unanswerable benchmark":** B1 + B2. Publish the
 nested-stochastic numbers (the 20M-inner-cell benchmark, compiled, across
 N workers) with the bitwise-reproducibility statement no incumbent can make.
+**Not claimed yet** — B2's registry half is outstanding, and the statement
+itself has changed shape: it is now "bitwise across workers that attest
+alike", which is still a claim no incumbent makes and should be published in
+those words rather than the original ones.
 
-### B3 — GPU kernels (RFC-053) — effort L
+### B3 — GPU kernels (RFC-053) — effort L — **machinery built, device unmeasured**
 
 Starts only after B1 ships: the profiling data from the compiled executor
 decides which stochastic slabs justify a device (PLAN §4.6's original
@@ -415,6 +452,37 @@ move: incumbents' grids publish no reproducibility statement at all.
 path keeps the code imported and unit-tested in CI); the two guarantees
 asserted; `scripts/benchmark_gpu.py` added to the benchmark family with
 published numbers on the nested-stochastic workload vs B1.
+
+**Outcome (RFC-076).** The backend seam, both guarantees as executable
+contracts, and the reconciliation machinery are built and tested. **No CUDA
+device was available**, so the CuPy path is unexercised — recorded at
+`engine.core.gpu.DEVICE_STATUS` rather than left for a reader to infer from
+skip markers, and printed first by the benchmark.
+
+**The bound is measured without silicon, and that is principled rather than a
+substitute.** What separates a device answer from a CPU answer is the order
+partial sums are combined in, and that order is reproducible in NumPy:
+`DeviceReduction` reduces in the block-wise tree a device uses, block width 32
+so the tree has a warp's real shape. On the stochastic slabs B3 targets — up
+to 200 million cells — the worst spread against NumPy's pairwise reduction is
+**1.8e-15**, giving the 1e-12 target about **560x** headroom. The target is
+safe, and a device run that missed it would be evidence of a defect rather
+than of floating point.
+
+**It corrects an intuition.** A device-shaped tree is *closer* to NumPy than a
+naive sequential CPU loop is, because both are trees — the loop disagrees by
+an order of magnitude more. Asserted, so the reasoning behind the bound cannot
+quietly invert.
+
+**And a benchmark that reported nothing looked like a strong result.** The
+first version used a uniform-positive slab, which reduces to the same bits in
+any order, and printed 0.00e+00 on every workload. Cancellation between large
+opposite-signed partials is where reduction order actually shows.
+
+**Still owed:** the device kernels, and the stochastic-slab profile this RFC
+was meant to open with. RFC-074 profiled the deterministic path; the
+equivalent for the scenario dimension is what a device would accelerate, and
+measuring it needs a device to be worth anything.
 
 ---
 
@@ -1175,11 +1243,21 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: **B1 (§4, compiled kernels), then
-B2 and B3** — the whole speed workstream, taken in order because B3 gates on
-B1 and B2 shares its executor contract. B1 is the largest thing left, and F8
-(RFC-072) has just removed the unknown that kept it unstarted through six
-RFCs — **read that assessment
+*Next action for the implementing agent: **workstream H (documentation),
+starting with H1 `CLAUDE.md`** — the whole speed workstream B1/B2/B3 has now
+landed, and what a new developer or an evaluating actuary needs is the
+orthogonal cut the 76 RFCs do not give them. H1 is worth taking before the
+next long build rather than after.
+
+Two pieces of engineering are named by measurement rather than guessed, and
+either is a good second item. **B1's remaining order of magnitude**: the
+kernel is a median 14.6x but end-to-end is 1.36x, because the hoist pre-pass
+is a median 55% of the runtime — interleave the pre-pass with the kernel per
+period so a hoisted variable is computed from the kernel's own slabs instead
+of a second traversal. **B3's device measurement**: the machinery and both
+guarantees are built and tested, and nothing has run on silicon.
+
+For history, the item that unblocked all three: F8 — **read that assessment
 before designing anything**, because the kernel's contents are now determined
 by IEEE-754 rather than open: correctly-rounded operations only, everything
 else hoisted into a NumPy-computed slab, `fastmath` off, no reduction at any
@@ -1242,8 +1320,12 @@ it. The evidence is complete in `docs/sources/vm22-table-6-5-reading.md` and
 question — *"under your intended rule, when does column B's printed 2.0%
 after-expiry block ever apply?"* **Do not re-investigate it.** File the APF.
 
-**3. B1 (§4) is still unstarted**, but it is no longer blocked on an
-unknown. F8 (RFC-072) measured the thing its design turns on and the answer
+**3. B1, B2 and B3 have all landed** (RFC-074, RFC-075, RFC-076), and each
+left a named next step rather than a tidy ending — B1's hoist-pre-pass
+interleaving, B2's milestone M2 wording, B3's device measurement. The
+paragraph below is kept because its two rules are what the work was held to.
+
+The original entry: F8 (RFC-072) measured the thing its design turns on and the answer
 is a specification: a kernel may contain **only** IEEE-754-correctly-rounded
 operations, everything else hoisted into a NumPy-computed slab, `fastmath`
 off, and no reduction at any length — which puts every `@pool` body outside a
