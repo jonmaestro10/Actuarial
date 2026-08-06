@@ -1,81 +1,117 @@
-"""VM-22: the reserve for a non-variable annuity, and where it is computed.
+"""VM-22: the reserve for a non-variable annuity, and where the floor goes.
 
-Execution plan §5, item C1. The 2026 VM-22 framework brings non-variable
-annuities — fixed deferred, fixed indexed, payout and structured settlement
-business — under a principle-based reserve of the same shape VM-20 and
-VM-21 already have: a stochastic reserve that is a conditional tail
-expectation over scenario reserves, a deterministic reserve, a floor, and
-exclusion tests that let a company skip the expensive components when it
-can show they do not bind.
+Execution plan §5, item C1, corrected against the text (see RFC-039's
+"Corrected against the Valuation Manual" section). The 2026 VM-22 framework
+brings non-variable annuities — fixed deferred, fixed indexed, payout and
+structured settlement business — under a principle-based reserve built on
+the CTE machinery RFC-016 already had.
 
-The machinery for the tail statistic is RFC-016's and is not rebuilt here.
-:mod:`engine.report.pbr` already computes the accumulated-deficiency roll,
-the greatest present value, the scenario reserves and the CTE, and does so
-identically for all three chapters, because they *are* identical — the
-chapters differ in scope, assumptions and floors, not in what a CTE is.
-What this module adds is the part VM-22 does differently, and one finding
-about it.
+Quotations below are from the NAIC *Valuation Manual*, 1 January 2026
+edition, chapter VM-22, with section numbers.
 
-**The finding: where you aggregate decides the reserve, and by two
-separable amounts.** A stochastic reserve is a tail statistic over a *book*,
-and a cash-surrender-value floor is a property of a *contract*. Compute the
-floor per contract and add up, and you get a different number from adding
-up first and flooring once — always a larger one. Layer the CTE's own
-subadditivity on top and there are two distinct effects pushing the same
-way, which :func:`aggregation_decomposition` separates exactly:
+**The aggregate reserve is a sum, not a maximum.** §3.A: the aggregate
+reserve "shall equal the SR … **plus** the DR for contracts that pass the
+Single Scenario Test, **plus** the reserve for any contracts valued under
+applicable requirements in VM-A, VM-C, VM-M, and VM-V." Those are
+*partitions of the book* — each group of contracts is valued one way, and
+the groups add. That is the opposite shape from VM-20's three-way maximum
+over the same block, and getting it wrong turns a sum of disjoint parts
+into a maximum over them. :class:`AggregateReserve` models the partition.
 
-    seriatim − aggregate  =  floor effect  +  diversification effect
+**The cash surrender value floors each scenario, inside the tail.** §4.B.1:
+"The scenario reserve for any given scenario shall not be less than the
+cash surrender value in aggregate on the valuation date for the group of
+contracts modeled in the projection", and only then (§3.F.5.a.iii)
+"Calculate the CTE (70) of the aggregate scenario reserves." The floor goes
+*under the tail statistic*, not over it — and the difference is not
+cosmetic, because ``CTE(max(F, X)) >= max(F, CTE(X))`` always, so flooring
+outside understates the reserve. :func:`aggregate_stochastic_reserve`
+applies it where the text puts it, and :func:`floor_outside_reserve`
+computes the wrong-order figure so the gap can be reported rather than
+assumed away.
 
-Both are non-negative, and the second is the one people talk about. The
-sharp edge is that **the floor can eat the diversification benefit
-entirely**: on a block where the surrender value binds in aggregate, the
-credit for pooling is exactly zero, however uncorrelated the scenarios
-are. "Our stochastic reserve fell when we aggregated" is worth nothing
-until somebody has checked which component binds — and
-:meth:`VM22Reserve.binding` is one attribute.
+The finding, sharpened: three orderings, not two
+------------------------------------------------
+A stochastic reserve is a tail statistic over a **book**; a cash surrender
+value belongs to a **contract**. There are three places the floor can go:
 
-**What this module will not invent.** The mechanics here are general; the
-*numbers* — the exclusion-test threshold, the prescribed scenario set, the
-prescribed assumption margins — are the Valuation Manual's, they are dated,
-and they are not memorised here. :class:`VM22Basis` carries them as a
-named, dated set in the manner of :mod:`engine.report.market_risk`'s
-2015/35 and 2026/269 texts, and a ratio test asked to run without a
-threshold **raises** rather than defaulting to a plausible one. A reserve
-that quietly used a number nobody supplied is precisely the failure a
-principle-based framework exists to prevent.
+- **floor outside** — ``max(sum f, CTE(sum X))``: the natural reading, and
+  the one this module shipped before the text was checked;
+- **floor inside** — ``CTE(max(sum f, sum X_s))``: what §4.B.1 prescribes;
+- **seriatim** — ``sum max(f_i, CTE(X_i))``: what a system that reserves
+  contract by contract produces.
 
-**An excluded component is recorded, never merely absent.** A reserve that
-omits its stochastic component because a test was passed and one that omits
-it because nobody computed it are different objects here, and only the
-first is a valid reserve. :class:`Exclusion` carries the basis — a ratio
-test with its numbers, or a certification with a name against it.
+Only one inequality holds in general: **floor outside <= prescribed**,
+because ``max(F, X)`` dominates both arguments pointwise and a CTE is
+monotone. Reading §4.B.1 the natural way therefore *understates* the
+reserve, and by up to the whole width of the tail.
+
+**The prescribed figure is not bracketed by the other two, and that is the
+finding.** Reserving contract by contract is supposed to be the
+conservative thing to do — every actuary's intuition says aggregation can
+only help — and against the prescribed ordering it is not. Two contracts
+whose scenario reserves are ``[0, 0, 0, 150]`` each, with a surrender value
+of 100 each: every contract's own CTE(50) is 75, below its own floor, so
+seriatim reserves 100 + 100 = 200. Pooled, the scenario reserves are
+``[0, 0, 0, 300]``, floored at the aggregate 200, and CTE(50) of
+``[200, 200, 200, 300]`` is **250**. The aggregate reserve exceeds the sum
+of the standalone ones by 50, with no diversification anywhere in sight.
+
+The mechanism: seriatim gives each contract its own floor *and* its own
+tail, while the prescribed calculation applies the **summed** floor to the
+**pooled** scenario reserve, so a tail in which the pool clears the summed
+floor is a tail no individual contract had. The old claim that "seriatim is
+never smaller" was true of the natural misreading and is false of the text.
+
+The earlier finding survives underneath it: **the floor can eat the
+diversification benefit entirely**. On a block whose surrender value binds
+in every scenario, all three placements collapse to the same number and
+pooling has bought nothing, however uncorrelated the block.
+:func:`aggregation_decomposition` splits ``seriatim − floor outside`` into
+a floor effect and a diversification effect and reports the prescribed
+figure alongside, rather than assuming where it falls.
+
+What is carried, and what is still the actuary's
+------------------------------------------------
+:class:`VM22Basis` is a dated parameter set, in the manner of
+:mod:`engine.report.market_risk`'s 2015/35 and 2026/269 texts. It now
+carries the numbers the text states — CTE 70 (§3.D.2) and the 6.0% SERT
+cap (§7.C.1) — and refuses to invent the one it does not: §7.C.1 sets the
+threshold at "the lesser of 6.0% and the percentage change that would
+trigger the company's materiality standard", and a company's materiality
+standard is a company's.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 
 from engine.report.pbr import CTE_LEVEL, cte, scenario_reserves
 
-#: The components a VM-22 reserve is the maximum of, in the order a
-#: reviewer reads them: the floor, the single-scenario valuation, the tail.
-COMPONENTS = ("cash_surrender_value", "deterministic", "stochastic")
+#: How a group of contracts is valued. §3.A adds one reserve per group.
+METHODS = ("stochastic", "deterministic", "formulaic")
 
 #: How a component may be left out. A component absent for any other
 #: reason is a missing calculation.
-EXCLUSION_BASES = ("ratio_test", "certification")
+EXCLUSION_BASES = ("ratio_test", "demonstration", "certification")
+
+#: §7.C.1: the ratio must be "less than the lesser of 6.0% and the
+#: percentage change that would trigger the company's materiality
+#: standard". This is the 6.0%; the other half is the company's.
+SERT_CAP = 0.06
 
 
 class VM22Error(ValueError):
-    """A VM-22 reserve this module will not report.
+    """A VM-22 figure this module will not report.
 
     Every case is one where reporting a number would be worse than
-    refusing: a reserve with no components in it, an exclusion with no
-    stated basis, a ratio test with no threshold, a group whose contracts
-    disagree about how many scenarios they were run on.
+    refusing: a reserve with no groups in it, an exclusion with no stated
+    basis, a ratio test with no present value of benefits to divide by, a
+    group whose contracts disagree about how many scenarios they were run
+    on.
     """
 
 
@@ -93,57 +129,59 @@ class VM22Basis:
     revalues last year's business under this year's rules the moment it is
     upgraded.
 
-    ``cte_level`` is 0.70 — the tail level the principle-based chapters
-    share, and the one number here this module is willing to name.
-    ``stochastic_exclusion_ratio`` is deliberately ``None``: the threshold
-    is prescribed by the Valuation Manual, it is not the same across
-    chapters or across amendments, and inventing a default would produce
-    exclusion decisions that look computed and are not. Supply it from the
-    text you are valuing under.
+    ``materiality_standard`` is ``None`` by default and stays that way:
+    §7.C.1 caps the SERT threshold at 6.0% *or* the company's own
+    materiality standard, whichever is lower, and only the company knows
+    the second. Supplying it can only make the test harder to pass.
     """
 
     label: str
     cte_level: float = CTE_LEVEL
-    #: Threshold for :func:`stochastic_exclusion_test`, from the text.
-    #: ``None`` means "not supplied", and the test refuses to run.
-    stochastic_exclusion_ratio: float | None = None
-    #: Free-text provenance: which text, as of when. Carried into the
-    #: reserve so a report says what it was computed under.
+    #: §7.C.1's fixed cap. The effective threshold is the lesser of this
+    #: and ``materiality_standard``.
+    sert_cap: float = SERT_CAP
+    #: The company's own materiality standard, if it has stated one.
+    materiality_standard: float | None = None
     text: str = ""
 
     def __post_init__(self):
         if not 0.0 <= self.cte_level < 1.0:
             raise VM22Error(f"CTE level {self.cte_level} outside [0, 1)")
-        ratio = self.stochastic_exclusion_ratio
-        if ratio is not None and ratio < 0.0:
-            raise VM22Error(f"exclusion ratio {ratio} is negative")
+        for name in ("sert_cap", "materiality_standard"):
+            value = getattr(self, name)
+            if value is not None and value < 0.0:
+                raise VM22Error(f"{name} {value} is negative")
+
+    @property
+    def sert_threshold(self) -> float:
+        """§7.C.1: the lesser of the fixed cap and the company's standard."""
+        if self.materiality_standard is None:
+            return self.sert_cap
+        return min(self.sert_cap, self.materiality_standard)
 
     def variant(self, **changes) -> "VM22Basis":
-        """This basis with named parameters replaced.
-
-        The escape hatch a company needs when it values under a text this
-        repo does not carry, and the mechanism by which a threshold reaches
-        the exclusion test at all.
-        """
+        """This basis with named parameters replaced."""
         from dataclasses import replace
 
         return replace(self, **changes)
 
     def __fingerprint__(self):
         return {"label": self.label, "cte_level": self.cte_level,
-                "stochastic_exclusion_ratio": self.stochastic_exclusion_ratio,
+                "sert_cap": self.sert_cap,
+                "materiality_standard": self.materiality_standard,
                 "text": self.text}
 
 
-#: The 2026 framework, carrying only what this module is willing to assert:
-#: the tail level. The exclusion threshold is left unset on purpose — see
-#: :class:`VM22Basis`.
+#: The 2026 framework, carrying the numbers the text states.
 VM22_2026 = VM22Basis(
     label="VM-22 (2026)",
-    cte_level=CTE_LEVEL,
-    text="NAIC Valuation Manual chapter 22, operative 1 January 2026; "
-         "thresholds and prescribed sets are supplied by the valuation "
-         "actuary, not carried here",
+    cte_level=CTE_LEVEL,                       # §3.D.2
+    sert_cap=SERT_CAP,                         # §7.C.1
+    text="NAIC Valuation Manual, 1 January 2026 edition, chapter VM-22. "
+         "CTE 70 per §3.D.2; SERT cap 6.0% per §7.C.1, whose effective "
+         "threshold is the lesser of that and the company's materiality "
+         "standard. Prescribed scenarios (VM-20 Appendix 1.F) and "
+         "prescribed assumption sets are not carried here.",
 )
 
 
@@ -153,30 +191,22 @@ VM22_2026 = VM22Basis(
 
 @dataclass(frozen=True)
 class Exclusion:
-    """Why a component of the reserve is not there.
+    """Why a group of contracts is not carrying a stochastic reserve.
 
-    The distinction this exists to preserve: a stochastic reserve omitted
-    because a test was passed and one omitted because nobody ran it are
-    the same *absence* and completely different *reserves*. Only the first
-    is valid, and the difference is not recoverable from a number.
+    §7.B gives three routes — the ratio test, a demonstration, and a
+    qualified actuary's certification — and the distinction this preserves
+    is that a component omitted because a test was passed and one omitted
+    because nobody ran it are the same *absence* and completely different
+    *reserves*.
     """
 
-    component: str
     basis: str
     note: str = ""
-    #: For a ratio test: what it computed and what it was held to.
     ratio: float | None = None
     threshold: float | None = None
-    #: For a certification: who signed it. A certification is a person's
-    #: judgement, so an unsigned one is not a certification.
     certified_by: str | None = None
 
     def __post_init__(self):
-        if self.component not in COMPONENTS:
-            raise VM22Error(
-                f"{self.component!r} is not a VM-22 component; they are "
-                f"{list(COMPONENTS)}"
-            )
         if self.basis not in EXCLUSION_BASES:
             raise VM22Error(
                 f"an exclusion needs a basis in {list(EXCLUSION_BASES)}, "
@@ -184,8 +214,8 @@ class Exclusion:
             )
         if self.basis == "certification" and not self.certified_by:
             raise VM22Error(
-                "a certification is somebody's judgement: name the actuary "
-                "who made it, or compute the component"
+                "§7.B.3's certification is a qualified actuary's judgement: "
+                "name the actuary who made it, or compute the reserve"
             )
         if self.basis == "ratio_test" and self.ratio is None:
             raise VM22Error(
@@ -194,24 +224,24 @@ class Exclusion:
             )
 
     def __fingerprint__(self):
-        return {"component": self.component, "basis": self.basis,
-                "note": self.note, "ratio": self.ratio,
+        return {"basis": self.basis, "note": self.note, "ratio": self.ratio,
                 "threshold": self.threshold,
                 "certified_by": self.certified_by}
 
 
 @dataclass(frozen=True)
 class ExclusionTest:
-    """The outcome of a stochastic exclusion ratio test."""
+    """The outcome of §7.C's stochastic exclusion ratio test."""
 
     ratio: float
     threshold: float
     baseline: float
     adverse: float
+    pv_benefits: float
 
     @property
     def passed(self) -> bool:
-        """Passed means the stochastic reserve may be omitted."""
+        """§7.C.1: pass if the ratio is **less than** the threshold."""
         return self.ratio < self.threshold
 
     def exclusion(self, note: str = "") -> Exclusion:
@@ -220,160 +250,57 @@ class ExclusionTest:
             raise VM22Error(
                 f"the exclusion test did not pass: ratio {self.ratio:.6g} is "
                 f"not below {self.threshold:.6g}. The stochastic reserve is "
-                f"required."
+                f"required (§7.A.1.a)."
             )
-        return Exclusion(component="stochastic", basis="ratio_test",
-                         ratio=self.ratio, threshold=self.threshold, note=note)
+        return Exclusion(basis="ratio_test", ratio=self.ratio,
+                         threshold=self.threshold, note=note)
 
     def __fingerprint__(self):
         return {"ratio": self.ratio, "threshold": self.threshold,
-                "baseline": self.baseline, "adverse": self.adverse}
+                "baseline": self.baseline, "adverse": self.adverse,
+                "pv_benefits": self.pv_benefits}
 
 
-def stochastic_exclusion_test(baseline: float, adverse: Sequence[float], *,
-                              basis: VM22Basis,
+def stochastic_exclusion_test(baseline: float, adverse: Sequence[float],
+                              pv_benefits: float, *,
+                              basis: VM22Basis = VM22_2026,
                               threshold: float | None = None) -> ExclusionTest:
-    """Ratio of the most adverse prescribed scenario to a baseline.
+    """§7.C's ratio test: ``(b − a) / c`` against the prescribed threshold.
 
-    The shape of every principle-based stochastic exclusion test: value the
-    block under a baseline and under a set of prescribed adverse scenarios,
-    and if the worst of them exceeds the baseline by less than the
-    prescribed proportion, the tail is not where the reserve lives and the
-    stochastic reserve may be omitted.
+    - ``a`` (``baseline``) — the adjusted scenario reserve under the
+      baseline economic scenario ("scenario 9" of VM-20 Appendix 1.F) with
+      no adjustment to future mortality improvement.
+    - ``b`` (max of ``adverse``) — the **largest** adjusted scenario
+      reserve over the 16 prescribed economic scenarios crossed with the
+      three mortality-improvement variants.
+    - ``c`` (``pv_benefits``) — "the present value of benefits for the
+      policies, adjusted for reinsurance by subtracting ceded benefits",
+      from the baseline scenario and discounted on the same path as ``a``.
 
-    ``threshold`` comes from the text — from ``basis`` if it carries one,
-    or from the caller. There is no default, and that is the point: a
-    threshold nobody supplied would make an exclusion decision that looks
-    computed and is not.
-
-    The denominator is the baseline, so a baseline of zero has no ratio
-    rather than an infinite one; the test refuses instead of dividing.
+    ``c`` is a **separate quantity from the baseline reserve**, and that is
+    the correction this function exists in its present form to record: an
+    earlier version divided by ``a``, which is not what §7.C.1 says and
+    which gives a different — generally larger, since a reserve is smaller
+    than the benefits it funds — ratio.
     """
-    limit = threshold if threshold is not None \
-        else basis.stochastic_exclusion_ratio
-    if limit is None:
-        raise VM22Error(
-            f"{basis.label} carries no stochastic exclusion threshold and "
-            f"none was supplied. It is prescribed by the text being valued "
-            f"under; pass threshold=..., or basis.variant("
-            f"stochastic_exclusion_ratio=...). This module will not pick one."
-        )
+    limit = threshold if threshold is not None else basis.sert_threshold
     values = np.asarray(list(adverse), dtype=np.float64)
     if values.size == 0:
         raise VM22Error("the exclusion test needs at least one adverse "
                         "scenario")
-    if baseline == 0.0:
+    if pv_benefits <= 0.0:
         raise VM22Error(
-            "the exclusion ratio divides by the baseline reserve, and this "
-            "one is zero; there is no ratio to compute"
+            "§7.C.1 divides by the present value of benefits, and this one "
+            "is not positive; there is no ratio to compute"
         )
     worst = float(values.max())
-    ratio = (worst - baseline) / abs(baseline)
-    return ExclusionTest(ratio=ratio, threshold=float(limit),
-                         baseline=float(baseline), adverse=worst)
+    return ExclusionTest(ratio=(worst - baseline) / float(pv_benefits),
+                         threshold=float(limit), baseline=float(baseline),
+                         adverse=worst, pv_benefits=float(pv_benefits))
 
 
 # --------------------------------------------------------------------------
-# The reserve
-# --------------------------------------------------------------------------
-
-class VM22Reserve:
-    """The greatest of the components VM-22 requires, and which one binds.
-
-    Same instinct as :class:`~engine.report.pbr.MinimumReserve` and a
-    different component set: a cash-surrender-value floor rather than a net
-    premium reserve. Improving a component that does not bind changes
-    nothing, so *which* binds is the first question about a block and the
-    last one before anybody claims a reserve moved.
-
-    Components omitted under an :class:`Exclusion` are carried, not
-    dropped: a reserve that can say "the stochastic component was excluded
-    by a ratio test at 3.1%" is a different artifact from one that is
-    silent about it.
-    """
-
-    def __init__(self, *, cash_surrender_value: float | None = None,
-                 deterministic: float | None = None,
-                 stochastic: float | None = None,
-                 exclusions: Iterable[Exclusion] = (),
-                 basis: VM22Basis = VM22_2026):
-        supplied = {"cash_surrender_value": cash_surrender_value,
-                    "deterministic": deterministic,
-                    "stochastic": stochastic}
-        self.basis = basis
-        self.components = {name: float(value)
-                           for name, value in supplied.items()
-                           if value is not None}
-        self.exclusions = {entry.component: entry for entry in exclusions}
-
-        both = set(self.components) & set(self.exclusions)
-        if both:
-            raise VM22Error(
-                f"component(s) {sorted(both)} are both computed and excluded; "
-                f"an exclusion is a statement that the number was not needed, "
-                f"not a note attached to one that was"
-            )
-        if not self.components:
-            raise VM22Error(
-                "every component is missing; a reserve with nothing in it is "
-                "a calculation that did not happen, not a zero"
-            )
-        unaccounted = [name for name in COMPONENTS
-                       if name not in self.components
-                       and name not in self.exclusions]
-        if unaccounted:
-            raise VM22Error(
-                f"component(s) {unaccounted} were neither computed nor "
-                f"excluded. Omitting one is a decision with a basis; record "
-                f"it as an Exclusion or compute it."
-            )
-
-    @property
-    def value(self) -> float:
-        return max(self.components.values())
-
-    @property
-    def binding(self) -> str:
-        """The component that sets the reserve.
-
-        Ties resolve to :data:`COMPONENTS` order, so a floor that exactly
-        equals the stochastic reserve is reported as the floor — the
-        conservative reading, and a stable one, since a tie broken by
-        dictionary order would move with the input.
-        """
-        best = self.value
-        for name in COMPONENTS:
-            if name in self.components and self.components[name] == best:
-                return name
-        raise VM22Error("no binding component")  # pragma: no cover
-
-    def headroom(self) -> dict:
-        """How far each computed component sits below the binding one."""
-        return {name: self.value - value
-                for name, value in self.components.items()}
-
-    def to_dict(self) -> dict:
-        return {
-            "basis": self.basis.label,
-            "value": self.value,
-            "binding": self.binding,
-            "components": dict(self.components),
-            "excluded": {name: entry.basis
-                         for name, entry in self.exclusions.items()},
-        }
-
-    def __repr__(self) -> str:
-        return (f"VM22Reserve({self.value:,.2f}, binding={self.binding!r}, "
-                f"basis={self.basis.label!r})")
-
-    def __fingerprint__(self):
-        return {"basis": self.basis, "components": dict(self.components),
-                "exclusions": [self.exclusions[k]
-                               for k in sorted(self.exclusions)]}
-
-
-# --------------------------------------------------------------------------
-# Where the aggregation happens
+# Contracts and groups
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -425,49 +352,44 @@ def _stack(contracts: Sequence[Contract]) -> np.ndarray:
     return np.stack([c.scenario_reserve for c in contracts])
 
 
+def _total_floor(contracts: Sequence[Contract]) -> float:
+    return float(sum(c.cash_surrender_value for c in contracts))
+
+
 def aggregate_stochastic_reserve(contracts: Sequence[Contract], *,
                                  basis: VM22Basis = VM22_2026) -> float:
-    """CTE of the summed scenario reserves — the tail of the *book*.
+    """§4.B.1 then §3.F.5.a.iii: floor each scenario, **then** take CTE 70.
 
-    Summing first is what makes the CTE do its work: a scenario that is bad
-    for one contract and good for another is not in the tail of the sum.
+    "The scenario reserve for any given scenario shall not be less than the
+    cash surrender value in aggregate on the valuation date" — so the floor
+    is applied per scenario, at the aggregate level, before the tail
+    statistic sees it.
     """
-    return cte(_stack(contracts).sum(axis=0), basis.cte_level)
+    scenario = _stack(contracts).sum(axis=0)
+    floored = np.maximum(scenario, _total_floor(contracts))
+    return cte(floored, basis.cte_level)
 
 
-def seriatim_stochastic_reserve(contracts: Sequence[Contract], *,
-                                basis: VM22Basis = VM22_2026) -> float:
-    """Sum of each contract's own CTE — the tail of each *contract*.
+def floor_outside_reserve(contracts: Sequence[Contract], *,
+                          basis: VM22Basis = VM22_2026) -> float:
+    """``max(sum of floors, CTE of the unfloored scenario reserves)``.
 
-    Never smaller than :func:`aggregate_stochastic_reserve`, because a CTE
-    is subadditive. Computed here so the difference can be reported rather
-    than assumed.
+    The natural misreading, computed on purpose so the gap to the
+    prescribed figure can be reported. Never above
+    :func:`aggregate_stochastic_reserve`, because ``max(F, X)`` dominates
+    both ``F`` and ``X`` pointwise and a CTE is monotone.
     """
-    return float(sum(cte(c.scenario_reserve, basis.cte_level)
-                     for c in contracts))
-
-
-def aggregate_reserve(contracts: Sequence[Contract], *,
-                      basis: VM22Basis = VM22_2026,
-                      deterministic: float | None = None,
-                      exclusions: Iterable[Exclusion] = ()) -> VM22Reserve:
-    """Aggregate, then floor: the reserve for the book as a book."""
-    return VM22Reserve(
-        cash_surrender_value=float(sum(c.cash_surrender_value
-                                       for c in contracts)),
-        deterministic=deterministic,
-        stochastic=aggregate_stochastic_reserve(contracts, basis=basis),
-        exclusions=exclusions, basis=basis,
-    )
+    scenario = _stack(contracts).sum(axis=0)
+    return max(_total_floor(contracts), cte(scenario, basis.cte_level))
 
 
 def seriatim_reserve(contracts: Sequence[Contract], *,
                      basis: VM22Basis = VM22_2026) -> float:
-    """Floor, then aggregate: each contract reserved on its own and summed.
+    """Floor, then aggregate: each contract reserved alone and summed.
 
-    The comparator. It is not a VM-22 reserve — the chapter's stochastic
-    reserve is a tail statistic over a group — but it is what a system that
-    reserves contract by contract produces, and the gap between the two is
+    Not a VM-22 reserve — the chapter's stochastic reserve is a tail
+    statistic over a group — but it is what a system that reserves contract
+    by contract produces, and the gap is
     :func:`aggregation_decomposition`.
     """
     return float(sum(max(c.cash_surrender_value,
@@ -475,31 +397,157 @@ def seriatim_reserve(contracts: Sequence[Contract], *,
                      for c in contracts))
 
 
-@dataclass(frozen=True)
-class AggregationGap:
-    """Why reserving contract by contract costs more, split in two.
+# --------------------------------------------------------------------------
+# The aggregate reserve: a sum over groups, per §3.A
+# --------------------------------------------------------------------------
 
-    ``gap == floor_effect + diversification_effect``, exactly, and both
-    terms are non-negative. The decomposition is the useful part: the
-    second term is the one everybody expects, and the first is the one that
-    survives when scenarios are perfectly correlated and there is no
-    diversification to be had at all.
+@dataclass(frozen=True)
+class ReservingGroup:
+    """One group of contracts and the reserve it carries.
+
+    §3.A adds one reserve per group: the SR for groups modelling
+    stochastically, the DR for groups that passed the Single Scenario Test,
+    and the formulaic reserve for groups that passed the exclusion test and
+    elected not to model. A group that is not carrying a stochastic reserve
+    says why, in ``exclusion``.
     """
 
-    aggregate: float
+    name: str
+    method: str
+    amount: float
+    exclusion: Exclusion | None = None
+
+    def __post_init__(self):
+        if self.method not in METHODS:
+            raise VM22Error(
+                f"{self.method!r} is not a VM-22 method; they are "
+                f"{list(METHODS)}"
+            )
+        if self.method == "stochastic" and self.exclusion is not None:
+            raise VM22Error(
+                f"group {self.name!r} carries a stochastic reserve and an "
+                f"exclusion from one; an exclusion is a statement that the "
+                f"number was not needed, not a note attached to one that was"
+            )
+        if self.method != "stochastic" and self.exclusion is None:
+            raise VM22Error(
+                f"group {self.name!r} is valued as {self.method!r} rather "
+                f"than stochastically, which §7 permits only on a stated "
+                f"basis; record the Exclusion or compute the SR"
+            )
+
+    def __fingerprint__(self):
+        return {"name": self.name, "method": self.method,
+                "amount": self.amount, "exclusion": self.exclusion}
+
+
+class AggregateReserve:
+    """§3.A: the SR plus the DR plus the formulaic reserve, over groups.
+
+    A **sum over a partition of the book**, not a maximum over components
+    of one block — which is VM-20's shape and was this module's until the
+    text was read. Each group of contracts is valued one way and the groups
+    add; asking "which component binds" is a VM-20 question and has no
+    answer here, so this reports the composition instead.
+    """
+
+    def __init__(self, groups: Iterable[ReservingGroup], *,
+                 basis: VM22Basis = VM22_2026):
+        self.groups = list(groups)
+        self.basis = basis
+        if not self.groups:
+            raise VM22Error(
+                "an aggregate reserve with no groups in it is a calculation "
+                "that did not happen, not a zero"
+            )
+        names = [group.name for group in self.groups]
+        if len(set(names)) != len(names):
+            raise VM22Error(
+                f"group names repeat: {sorted(names)}. §3.A adds one reserve "
+                f"per group, so two groups with one name is either a double "
+                f"count or a lost group."
+            )
+
+    @property
+    def value(self) -> float:
+        return float(sum(group.amount for group in self.groups))
+
+    def by_method(self) -> dict:
+        """The §3.A split: how much of the reserve each method contributed."""
+        out = {method: 0.0 for method in METHODS}
+        for group in self.groups:
+            out[group.method] += group.amount
+        return out
+
+    @property
+    def largest(self) -> str:
+        """The group contributing most. Not a binding component — a sum has
+        none — but the first thing anybody asks of a composition."""
+        return max(self.groups, key=lambda g: g.amount).name
+
+    def to_dict(self) -> dict:
+        return {
+            "basis": self.basis.label,
+            "value": self.value,
+            "by_method": self.by_method(),
+            "groups": [{"name": g.name, "method": g.method,
+                        "amount": g.amount,
+                        "excluded": None if g.exclusion is None
+                        else g.exclusion.basis}
+                       for g in self.groups],
+        }
+
+    def __repr__(self) -> str:
+        return (f"AggregateReserve({self.value:,.2f}, "
+                f"{len(self.groups)} group(s), basis={self.basis.label!r})")
+
+    def __fingerprint__(self):
+        return {"basis": self.basis, "groups": list(self.groups)}
+
+
+def stochastic_group(name: str, contracts: Sequence[Contract], *,
+                     basis: VM22Basis = VM22_2026) -> ReservingGroup:
+    """A group carrying the SR of §4, floored where §4.B.1 puts the floor."""
+    return ReservingGroup(
+        name=name, method="stochastic",
+        amount=aggregate_stochastic_reserve(contracts, basis=basis),
+    )
+
+
+# --------------------------------------------------------------------------
+# Where the floor goes
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class AggregationGap:
+    """Where the floor goes, and what each placement costs.
+
+    ``floor_outside <= prescribed`` always. ``seriatim`` is **not**
+    bracketed with them — it can fall on either side of ``prescribed``, for
+    the reason in the module docstring — so it is reported rather than
+    assumed to be the conservative end.
+    """
+
+    floor_outside: float
+    prescribed: float
     seriatim: float
     floor_effect: float
     diversification_effect: float
-    #: ``True`` when the floor binds on the aggregate reserve — in which
-    #: case the diversification effect is damped or gone entirely.
     floor_binds: bool
 
     @property
     def gap(self) -> float:
-        return self.seriatim - self.aggregate
+        """``seriatim − floor_outside``, the sum of the two effects."""
+        return self.seriatim - self.floor_outside
+
+    @property
+    def ordering_cost(self) -> float:
+        """What putting the floor inside the tail costs against outside it."""
+        return self.prescribed - self.floor_outside
 
     def __fingerprint__(self):
-        return {"aggregate": self.aggregate, "seriatim": self.seriatim,
+        return {"floor_outside": self.floor_outside,
+                "prescribed": self.prescribed, "seriatim": self.seriatim,
                 "floor_effect": self.floor_effect,
                 "diversification_effect": self.diversification_effect,
                 "floor_binds": self.floor_binds}
@@ -507,38 +555,37 @@ class AggregationGap:
 
 def aggregation_decomposition(contracts: Sequence[Contract], *,
                               basis: VM22Basis = VM22_2026) -> AggregationGap:
-    """Split ``seriatim − aggregate`` into its floor and tail halves.
+    """Split ``seriatim − floor_outside``, and place the prescribed figure.
 
-    Writing ``f_i`` for a contract's surrender value and ``C_i`` for its own
-    CTE, with ``C`` the CTE of the sum:
+    Writing ``f_i`` for a contract's surrender value, ``C_i`` for its own
+    CTE and ``C`` for the CTE of the summed scenario reserves:
 
-    - ``seriatim   = Σ max(f_i, C_i)``
-    - ``midpoint   = max(Σ f_i, Σ C_i)``  — floored once, but undiversified
-    - ``aggregate  = max(Σ f_i, C)``
+    - ``seriatim      = sum max(f_i, C_i)``
+    - ``midpoint      = max(sum f_i, sum C_i)`` — floored once, undiversified
+    - ``floor_outside = max(sum f_i, C)``
 
-    so ``seriatim − aggregate = (seriatim − midpoint) + (midpoint −
-    aggregate)``. The first bracket is the **floor effect**: taking the
-    maximum per contract and adding up can only exceed adding up and taking
-    the maximum once. The second is the **diversification effect**: ``C ≤
-    Σ C_i`` because a CTE is subadditive — and it is *damped by the floor*,
-    because both sides are maxima against the same ``Σ f_i``. When the
-    floor binds in aggregate the second bracket is exactly zero and pooling
-    has bought nothing.
+    so the gap is ``(seriatim − midpoint) + (midpoint − floor_outside)``:
+    a **floor effect**, because a sum of maxima dominates a maximum of
+    sums, and a **diversification effect**, because a CTE is subadditive.
+    Both are non-negative and the second is damped by the floor — when the
+    floor binds it is exactly zero, and pooling has bought nothing.
     """
     stacked = _stack(contracts)
     floors = np.array([c.cash_surrender_value for c in contracts],
                       dtype=np.float64)
     own = np.array([cte(row, basis.cte_level) for row in stacked],
                    dtype=np.float64)
-    pooled = cte(stacked.sum(axis=0), basis.cte_level)
+    scenario = stacked.sum(axis=0)
+    pooled = cte(scenario, basis.cte_level)
 
     total_floor = float(floors.sum())
     seriatim = float(np.maximum(floors, own).sum())
     midpoint = max(total_floor, float(own.sum()))
-    aggregate = max(total_floor, pooled)
+    outside = max(total_floor, pooled)
+    prescribed = cte(np.maximum(scenario, total_floor), basis.cte_level)
     return AggregationGap(
-        aggregate=aggregate, seriatim=seriatim,
+        floor_outside=outside, prescribed=prescribed, seriatim=seriatim,
         floor_effect=seriatim - midpoint,
-        diversification_effect=midpoint - aggregate,
+        diversification_effect=midpoint - outside,
         floor_binds=total_floor >= pooled,
     )

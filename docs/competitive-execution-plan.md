@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,080
+   naive implementation otherwise. The suite (`pytest`, currently 2,079
    tests) must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
    `engine/report` keep NumPy as the only runtime dependency. Anything else
@@ -89,7 +89,7 @@ what any incumbent ships rather than merely reaching parity.
 | Results warehouse | ✅ star schema in partitioned Parquet with the run fingerprint on every fact row (E1, RFC-046) | Star schema in Parquet | Warehouse rows carry run fingerprints — every BI number traceable to a registered run | E1 |
 | Excel integration | ✅ audit workbook writer (E2, RFC-047) and live add-in (E4, RFC-056) shipped | Workbook writer | Workbooks embed the run fingerprint and assumption digests on every sheet — and state, in the workbook, the precision the format costs, which no vendor's does | E2 |
 | Production UI | ✅ runs list, seriatim drill-down, semantic assumption diff, artifact and evidence views shipped (E3, RFC-048) | Runs list, results explorer, assumption diff | Parity-report and lineage views the incumbents' UIs don't have — plus a diff that names the component that moved, and URLs that are citations because the run id is a content digest | E3 |
-| VM-22 | ✅ shipped (C1, RFC-039): CTE stochastic reserve, CSV floor, recorded exclusions, dated basis | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit — here, that a per-contract floor can zero out the diversification benefit of aggregating | C1 |
+| VM-22 | ✅ shipped (C1, RFC-039), corrected against the 1 Jan 2026 text: §3.A sum over groups, §4.B.1 floor inside the CTE, §7.C.1 ratio over PV of benefits, CTE 70 and the 6.0% SERT cap carried with citations | 2026 VM-22 SRA for non-variable annuities | Ships with a documented sharp-edge finding, per the RFC-026/028 habit — here, that the prescribed floor placement is not bracketed by the two obvious ones, so seriatim reserving can be *less* conservative than aggregating | C1 |
 | US statutory formulaic reserves + AAT | ✅ shipped (C2, RFC-040): the modified-premium family as one parameter, CRVM's cap, and cash-flow testing on RFC-016's deficiency roll | CRVM/net-premium + asset adequacy runner | Same — here, that first-year strain is exactly the cap's bite and vanishes discontinuously in slope where the cap stops binding | C2 |
 | Pensions / longevity as products | ❌ | Buy-in/buy-out, longevity swap templates | Same | C3 |
 | US health / LTC | ❌ | LTC template on the multi-state engine | Same | C4 |
@@ -315,28 +315,28 @@ deterministic certification option, exclusion tests. Golden tests from
 hand-computed miniature blocks (`tests/test_vm22.py`). Pairs with the FIA and
 payout-annuity templates already in `engine/library/`.
 
-**Shipped with a finding (RFC-039).** A stochastic reserve is a tail
-statistic over a *book*; a cash surrender value belongs to a *contract*.
-Put them in a maximum and the order of operations moves the answer, by two
-separable amounts: `seriatim − aggregate = floor effect + diversification
-effect`, both non-negative, and `aggregation_decomposition` splits them
-exactly. The sharp edge is that **the floor can eat the diversification
-benefit entirely** — both terms of the second bracket are maxima against
-the same summed floor, so when the surrender value binds in aggregate the
-credit for pooling is not reduced but exactly zero, however uncorrelated
-the block. "Our stochastic reserve fell when we aggregated" is worth
-nothing until somebody has checked which component binds.
+**Shipped, then corrected against the text (RFC-039).** The first cut was
+written without the Valuation Manual to hand and got three things wrong,
+all now fixed and all more interesting than the original design: §3.A
+makes the aggregate reserve a **sum over disjoint groups** (SR + DR +
+formulaic), not VM-20's maximum over components of one block; §4.B.1 puts
+the cash-surrender-value floor **inside** the tail — each scenario reserve
+is floored *before* CTE 70 — so flooring outside understates; and §7.C.1's
+ratio divides by the **present value of benefits**, not the baseline
+reserve. CTE 70 (§3.D.2) and the 6.0% SERT cap (§7.C.1) are now carried
+with citations; the company's materiality standard, which §7.C.1 takes the
+lesser of, is still refused.
 
-The other decision worth carrying forward: **the module refuses to invent
-the text's numbers.** `VM22Basis` is a dated parameter set in the manner of
-market risk's 2015/35 and 2026/269; `VM22_2026` carries the CTE level and
-nothing else numeric, and the stochastic exclusion test *raises* rather
-than defaulting a threshold — an exclusion decision is the one place where
-a wrong constant removes a whole reserve component without leaving a
-trace. An excluded component is recorded with its basis (a ratio test
-carries its ratio, a certification carries the actuary's name), because a
-component omitted after a passed test and one nobody computed are the same
-absence and different reserves.
+**The finding, sharpened by the correction: the prescribed ordering is not
+bracketed by the two obvious ones.** Only `floor outside ≤ prescribed`
+holds in general. Seriatim reserving — supposedly the conservative thing —
+can come out *below* the prescribed aggregate: two contracts with scenario
+reserves `[0,0,0,150]` and surrender value 100 each reserve 200 standalone
+and 250 pooled, because the summed floor applied to the pooled reserve
+creates a tail no individual contract had. The original finding survives
+underneath: the floor can still eat the diversification benefit entirely,
+so a block whose surrender value binds gets exactly zero credit for being
+pooled however uncorrelated it is.
 
 ### C2 — US statutory formulaic reserves + AAT (RFC-040) — effort M — **shipped**
 `engine/report/statutory.py`: CRVM / net-premium formulaic reserves (build on
