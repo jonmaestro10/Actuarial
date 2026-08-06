@@ -56,12 +56,13 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 
 from engine.core.fingerprint import fingerprint
 from engine.core.registry import ArtifactRecord, ArtifactRegistry, git_commit
+from engine.core.snapshot import MAX_DEPTH, MAX_ITEMS, snapshot_rows
 
 #: Excel's grid, which is a hard limit rather than a guideline.
 EXCEL_MAX_ROWS = 1_048_576
@@ -277,87 +278,22 @@ def read_stamps(path: Path | str) -> dict[str, Stamp]:
 # The assumption snapshot
 # --------------------------------------------------------------------------
 
-def _fingerprintable(value: Any) -> Any:
-    """The content of ``value`` for the snapshot walk, or ``None``.
-
-    The same two rules the fingerprint encoder follows, in the same order:
-    ``__fingerprint__()`` where an object states what defines it, ``vars()``
-    where it does not. Walking anything else would produce a snapshot whose
-    rows do not add up to the digest at the top of them.
-    """
-    if hasattr(value, "__fingerprint__"):
-        return value.__fingerprint__()
-    if hasattr(value, "__dict__") and not isinstance(value, type):
-        return dict(vars(value))
-    return None
-
-
-def _describe(value: Any) -> tuple[str, Any]:
-    """``(kind, displayed value)`` for a leaf of the snapshot."""
-    if isinstance(value, np.ndarray):
-        return f"array {value.dtype}{tuple(value.shape)}", None
-    if isinstance(value, (str, bool, np.bool_)):
-        return type(value).__name__, value
-    if isinstance(value, (int, np.integer, float, np.floating)):
-        return type(value).__name__, value
-    if value is None:
-        return "none", None
-    if isinstance(value, Mapping):
-        return f"mapping[{len(value)}]", None
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return f"{type(value).__name__}[{len(value)}]", None
-    return type(value).__name__, None
-
-
-def assumption_rows(assumptions: Any, *, max_depth: int = 4,
-                    max_items: int = 64) -> list[dict]:
+def assumption_rows(assumptions: Any, *, max_depth: int = MAX_DEPTH,
+                    max_items: int = MAX_ITEMS) -> list[dict]:
     """Flatten an assumption set into ``(path, kind, value, digest)`` rows.
 
-    Every row carries the digest of the subtree beneath it, and the root
-    row's digest is ``fingerprint(assumptions)`` — the same value the run
-    registry stored as ``assumptions_digest``. That is what turns a snapshot
-    sheet from a description into evidence: two workbooks whose bases differ
-    have a *row* that differs, so the reader learns which component moved
-    rather than only that the digest did.
+    :func:`~engine.core.snapshot.snapshot_rows` under another name, and
+    deliberately not a second walker: the rows on the snapshot sheet are
+    the rows RFC-048's assumption-diff route joins, so two surfaces that
+    disagreed about what a basis contains would be worse than either.
 
-    Containers larger than ``max_items``, or deeper than ``max_depth``, are
-    summarised in a single row rather than expanded — with their digest, so
-    a summarised subtree is still checkable. A snapshot sheet nobody can
-    read is not a control.
+    What the sheet gets out of it is that every row carries the digest of
+    the subtree beneath it and the root row carries the run's
+    ``assumptions_digest`` — which is what turns a snapshot sheet from a
+    description into evidence.
     """
-    rows: list[dict] = []
-
-    def walk(path: str, value: Any, depth: int) -> None:
-        kind, shown = _describe(value)
-        content = _fingerprintable(value)
-        if content is not None:
-            kind = type(value).__name__
-        rows.append({
-            "path": path,
-            "kind": kind,
-            "value": shown,
-            "digest": fingerprint(value),
-            "expanded": False,
-        })
-        node = rows[-1]
-
-        children: list[tuple[str, Any]] | None = None
-        target = content if content is not None else value
-        if depth < max_depth:
-            if isinstance(target, Mapping):
-                children = [(str(key), item) for key, item in target.items()]
-            elif isinstance(target, (list, tuple)) and not isinstance(
-                    target, (str, bytes)):
-                children = [(str(i), item) for i, item in enumerate(target)]
-        if children is None or not children or len(children) > max_items:
-            return
-        node["expanded"] = True
-        for key, item in children:
-            walk(f"{path}.{key}" if path else key, item, depth + 1)
-
-    walk("", assumptions, 0)
-    rows[0]["path"] = type(assumptions).__name__
-    return rows
+    return snapshot_rows(assumptions, max_depth=max_depth,
+                         max_items=max_items)
 
 
 # --------------------------------------------------------------------------
@@ -652,7 +588,8 @@ def write_workbook(path: Path | str, result, record, *,
                    variables: Sequence[str] | None = None,
                    detail: Sequence[str] = (), scenario: Any = None,
                    label: str | None = None,
-                   max_depth: int = 4, max_items: int = 64) -> WorkbookWrite:
+                   max_depth: int = MAX_DEPTH,
+                   max_items: int = MAX_ITEMS) -> WorkbookWrite:
     """Write one registered run to an ``.xlsx`` audit workbook.
 
     ``record`` is a :class:`~engine.core.registry.RunRecord`, for the same

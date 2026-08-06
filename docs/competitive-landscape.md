@@ -172,7 +172,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 |---|---|---|---|---|
 | Modelling paradigm | Declarative vars, proprietary IDE | Procedural, compiled | Configured, closed code | ✅ Declarative `@var` graph in plain Python, procedural escape hatch |
 | Models in version control / CI | ❌ binary formats | 🟡 partial | ❌ n/a | ✅ git-native, CI on every commit |
-| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 1,968 tests, closed forms, bitwise dual-executor equivalence, parity harness |
+| Machine-checked accuracy evidence | 🟡 vendor QA, opaque | 🟡 | 🟡 vendor-audited | ✅ 1,997 tests, closed forms, bitwise dual-executor equivalence, parity harness |
 | Vectorised execution across policies × scenarios | ❌ largely per-policy | ❌ | 🟡 | ✅ core design; ~40× interpreter, 100k×60y in seconds |
 | Compiled kernels / GPU | ✅ compiled C | ✅ C++ | ✅ | ❌ planned (graph + forward loop in place, "nothing is compiled yet") |
 | Grid / cross-machine scale-out | ✅ Enterprise grid | ✅ | ✅ GridLink | 🟡 multi-core sharding with bitwise guarantee; no cross-machine dispatch |
@@ -189,7 +189,7 @@ Legend: ✅ shipped · 🟡 partial / demonstrable but not production-grade ·
 | Reproducibility / run registry | 🟡 run logs | 🟡 Unify | 🟡 | ✅ content-addressed question+answer digests, cross-process verified |
 | Model documentation / lineage | ✅ formula browser | 🟡 | 🟡 manual is the doc | ✅ generated Markdown + dependency graph with time offsets; docstring coverage measured and asserted (80.3% floor) |
 | API-first integration | ❌ file drops | 🟡 | 🟡 | ✅ Python SDK + REST (202/fingerprint/event stream), Parquet I/O, and a star-schema results warehouse whose every fact row carries the run fingerprint (RFC-046) |
-| Production UI (runs, results explorer, assumption diffing) | ✅ | ✅ | ✅ | 🟡 demo UI only |
+| Production UI (runs, results explorer, assumption diffing) | ✅ | ✅ | ✅ | ✅ runs list with prefix-matched digest search, seriatim drill-down (aggregate → variable → model point), a **semantic** assumption diff that names the component that moved rather than the line (RFC-048), and artifact and evidence-pack views — plus the property no incumbent's console has: every view's state is in the URL and the run identifier is a content digest, so a pasted link is a citation that cannot rot into different numbers; ❌ interactive trace/graph explorer (calculation-ux-plan) |
 | Governance: RBAC, approval workflows, multi-user | ✅ | ✅ Unify | ✅ | 🟡 token authentication and four roles on every route (RFC-043), off by default so the library is unchanged, plus 4-eyes assumption approval bound to the content digest rather than to a label (RFC-044) — an approval that cannot silently drift, which no incumbent's label-based workflow offers — and a digest-chained audit log plus a declarative run calendar whose entries freeze the request fingerprint (RFC-045) |
 | Excel integration | ✅ | ✅ | ✅ | ✅ audit workbook writer (RFC-047): run summary, aggregates, per-row-digested assumption snapshot and the parity report, with the run fingerprint and assumption digests stamped on **every** sheet because tabs get copied — plus the finding no vendor's workbook states, that a spreadsheet carries 16 significant digits and Excel parses 15, so non-finite values are written as text rather than the blank cells openpyxl produces and the exact record stays the run's Parquet; ❌ live add-in (E4) |
 | Incumbent migration tooling (readers + parity reports) | n/a | n/a | n/a | 🟡 parity core (RFC-033: reusable diff engine, Markdown report, registered against both content digests), Prophet MPF/results readers (RFC-034, dialect-driven, mapping report) and conversion scaffold (RFC-036); ❌ MoSes readers |
@@ -450,7 +450,7 @@ REPL or notebook.
 | Coherent Spark | Excel (named ranges) | n/a — services, not runs | JSON API responses | None — consumers are systems | **REST + SDKs + MCP**; Testing Center |
 | Mo.net | .NET desktop studio | Execution/Quotation services | Excel; BI connectors | Excel | Models compiled to DLL/EXE, **published as services** |
 | lifelib/modelx | Python / Spyder widgets | Python calls | pandas / Excel | Whatever the actuary builds | It *is* the API |
-| This repo | Python `@var` in git | REST `POST /runs` → 202 + fingerprint, event stream; demo UI | Parquet round-trips; content-addressed registry | 🟡 demo UI only | ✅ Python SDK + REST, idempotent by digest |
+| This repo | Python `@var` in git | REST `POST /runs` → 202 + fingerprint, event stream; runs list w/ digest search | Parquet star schema (RFC-046), fingerprint-stamped workbooks (RFC-047); content-addressed registry | ✅ seriatim drill-down, semantic assumption diff, evidence views; URLs are citations | ✅ Python SDK + REST, idempotent by digest |
 
 ### 7.3 The patterns
 

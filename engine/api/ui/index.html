@@ -27,9 +27,12 @@
   <main>
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="run" aria-selected="true">Run</button>
+      <button role="tab" data-tab="runs" aria-selected="false">Runs</button>
       <button role="tab" data-tab="results" aria-selected="false">Results</button>
+      <button role="tab" data-tab="assumptions" aria-selected="false">Assumptions</button>
       <button role="tab" data-tab="model" aria-selected="false">Formulae</button>
       <button role="tab" data-tab="report" aria-selected="false">IFRS 17</button>
+      <button role="tab" data-tab="evidence" aria-selected="false">Evidence</button>
     </nav>
 
     <!-- ── run ─────────────────────────────────────────────────────── -->
@@ -62,6 +65,41 @@
       </div>
     </section>
 
+    <!-- ── runs ────────────────────────────────────────────────────── -->
+    <section id="tab-runs" hidden>
+      <div class="card">
+        <h3>Runs</h3>
+        <p class="note">
+          <code>GET /runs</code>. Search matches a model name anywhere and a
+          digest by its <em>prefix</em> — the way a digest is quoted — so a
+          search finds the run whose fingerprint starts that way and not one
+          that merely contains those characters somewhere.
+        </p>
+        <div class="row">
+          <label class="field">search
+            <input type="text" id="runs-q" size="26"
+              placeholder="fingerprint prefix, or model">
+          </label>
+          <label class="field">state
+            <select id="runs-state">
+              <option value="">any</option>
+              <option value="queued">queued</option>
+              <option value="running">running</option>
+              <option value="succeeded">succeeded</option>
+              <option value="failed">failed</option>
+            </select>
+          </label>
+          <button class="ghost" id="runs-refresh">Refresh</button>
+          <span class="grow"></span>
+          <span id="runs-state-pill" class="pill">not loaded</span>
+        </div>
+        <div id="runs-error" style="margin-top:10px"></div>
+        <div class="tablewrap" style="margin-top:10px">
+          <table id="runs-table"></table>
+        </div>
+      </div>
+    </section>
+
     <!-- ── results ─────────────────────────────────────────────────── -->
     <section id="tab-results" hidden>
       <div class="card" id="results-empty">
@@ -82,6 +120,72 @@
         <h3>The numbers</h3>
         <p class="note" id="results-digest-note"></p>
         <div class="tablewrap"><table id="results-table"></table></div>
+      </div>
+      <div class="card" id="drill-card" hidden>
+        <h3>Drill down</h3>
+        <p class="note">
+          <code>GET /runs/{id}/results?variable=…&amp;modelpoint=…</code>. The
+          block total above is the engine's own reduction; this is one
+          policy's column of it. The response says <code>partial</code>, so
+          nothing here gets checked against a digest that covers the whole
+          run.
+        </p>
+        <div class="row">
+          <label class="field">variable
+            <select id="drill-variable"></select>
+          </label>
+          <label class="field">model point
+            <select id="drill-modelpoint"></select>
+          </label>
+          <span class="grow"></span>
+          <span id="drill-pill" class="pill">whole block</span>
+        </div>
+        <div id="drill-error" style="margin-top:10px"></div>
+        <div id="drill-chart"></div>
+        <div class="legend" id="drill-legend"></div>
+        <div class="readout" id="drill-readout"></div>
+      </div>
+    </section>
+
+    <!-- ── assumptions ─────────────────────────────────────────────── -->
+    <section id="tab-assumptions" hidden>
+      <div class="card">
+        <h3>Assumption diff</h3>
+        <p class="note">
+          <code>POST /assumptions/diff</code> — a diff by <em>component</em>,
+          not by line. A reordered mapping is not a change; a changed rate is
+          reported at the path that moved. The verdict comes from the two
+          digests, which are the same digests an approval binds to
+          (RFC-044), so this screen and the approval check can never
+          disagree about whether two bases are the same.
+        </p>
+        <div class="row">
+          <label class="field">left
+            <input type="text" id="diff-left-id" size="26" placeholder="run fingerprint">
+          </label>
+          <label class="field">right
+            <input type="text" id="diff-right-id" size="26" placeholder="run fingerprint">
+          </label>
+          <button class="action" id="diff-run">Diff</button>
+          <span class="grow"></span>
+          <span id="diff-pill" class="pill">not compared</span>
+        </div>
+        <p class="note">
+          Pick runs on the <strong>Runs</strong> tab, or paste two
+          assumption specs below.
+        </p>
+        <div class="row diff-panes">
+          <textarea id="diff-left" spellcheck="false" wrap="off"
+            aria-label="Left assumptions JSON"></textarea>
+          <textarea id="diff-right" spellcheck="false" wrap="off"
+            aria-label="Right assumptions JSON"></textarea>
+        </div>
+        <div id="diff-error" style="margin-top:10px"></div>
+      </div>
+      <div class="card" id="diff-out" hidden>
+        <h3>What moved</h3>
+        <div id="diff-banner"></div>
+        <div class="tablewrap"><table id="diff-table"></table></div>
       </div>
     </section>
 
@@ -173,6 +277,36 @@
           <h3>Statement</h3>
           <div class="tablewrap"><table id="report-table"></table></div>
         </div>
+      </div>
+    </section>
+
+    <!-- ── evidence ────────────────────────────────────────────────── -->
+    <section id="tab-evidence" hidden>
+      <div class="card">
+        <h3>Validation evidence pack</h3>
+        <p class="note">
+          <code>GET /evidence</code>. RFC-049's pack, as <em>built</em> — by
+          CI, not by this request. Collecting it runs the test suite, and a
+          page that rebuilt it per view would report whatever the server had
+          time for.
+        </p>
+        <div id="evidence-error"></div>
+        <dl class="facts" id="evidence-facts"></dl>
+        <div class="tablewrap" style="margin-top:10px">
+          <table id="evidence-table"></table>
+        </div>
+        <div id="evidence-section" style="margin-top:10px"></div>
+      </div>
+
+      <div class="card">
+        <h3>Artifacts on record</h3>
+        <p class="note">
+          <code>GET /artifacts</code>. Reconciliations (RFC-033), workbooks
+          (RFC-047) and packs, each addressed by what it was derived from and
+          what came out — so a second derivation that disagrees is refused
+          rather than filed alongside.
+        </p>
+        <div class="tablewrap"><table id="artifacts-table"></table></div>
       </div>
     </section>
   </main>
