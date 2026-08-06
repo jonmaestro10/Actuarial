@@ -49,7 +49,7 @@ them; the acceptance criteria assume them.
 8. **Commit style.** One item per commit series; messages in the repo's
    declarative-sentence style (e.g. "The parity report, and what a
    reconciliation owes a sceptic").
-9. **Ship in the order of §5 unless blocked.** Items are independently
+9. **Ship in the order of §10 unless blocked.** Items are independently
    shippable; do not start a second item before the first's RFC is
    `implemented` and CI is green.
 
@@ -78,12 +78,21 @@ what any incumbent ships rather than merely reaching parity.
 | Regulatory track record / evidence | ❌ (not software) | — | Machine-generated validation **evidence pack** — the closest software can get to a track record | F1 |
 | Vendor library update cadence | ❌ (not software) | — | Regulation-as-dated-sets diff reports (generalize the 2015/35 vs 2026/269 pattern) | F2 |
 | Exact-decimal audit mode (PLAN §3.4 promise) | ❌ | — | Decimal sign-off executor; no incumbent offers one | F3 |
+| General insurance beyond chain-ladder LIC | 🟡 | Reserve variability (Mack, ODP bootstrap) + premium-liability template | Reserve *ranges* reproduced against published triangles in CI — Igloo/ResQ assert them, we prove them | C5 |
+| Takaful | ❌ | Wakala/mudarabah template on the with-profits chassis | Surplus distribution and qard hasan golden-tested in the open | C6 |
+| GPU kernels | ❌ | Stochastic slabs on GPU behind a `[gpu]` extra | Run-to-run determinism on-device plus an *asserted* CPU reconciliation bound — a stated posture no vendor gives | B3 |
+| Live Excel add-in | ❌ | Submit runs and pull results from inside Excel | Every pulled block stamped with the run fingerprint — a spreadsheet that can prove where its numbers came from | E4 |
+| Multi-tenant SaaS packaging | ❌ | Container images, per-tenant isolation, deploy blueprint | Tenant isolation asserted by tests, not by policy document | G1 |
+| SOC 2 substrate | ❌ (organizational) | Control mapping + automated evidence collection | Audit evidence *generated* from the registry, audit log and evidence pack — not compiled by hand | G2 |
+| Vendor support / update cadence | ❌ (not software) | Versioned releases, changelog discipline, regulatory-update calendar | Dated-set regulation tracking in the open (F2) on a published cadence | G3 |
+| A rehearsed pilot process | ❌ | Documented pilot playbook, dry-run asserted in CI | The pilot itself is a reproducible artifact | G4 |
 
-Explicitly **out of scope** for this plan (deferred, revisit after M5):
-general insurance beyond the chain-ladder LIC, takaful, an Excel *add-in*
-(the workbook writer ships first), GPU kernels (gated on B1 profiling),
-multi-tenant SaaS packaging, SOC 2 certification (organizational, not code —
-but D1–D3 build the technical substrate an auditor would ask for).
+Nothing from the landscape report is deferred. The items previously parked —
+general insurance, takaful, GPU kernels, the live Excel add-in, SaaS
+packaging, the SOC 2 substrate — are in scope as B3, C5–C6, E4 and
+workstream G (§9). The control against scope explosion is no longer
+*exclusion* but *ordering*: §10's milestone gates place each of them after
+the migration, performance and governance work they depend on.
 
 ---
 
@@ -214,7 +223,7 @@ move (§1.2).
   the answer is bitwise-identical for 1 machine or N, any topology, worker
   failures retried anywhere (idempotency makes retry safe by construction).
 - Workers are just `engine.api` processes; no Ray, no k8s dependency (a Ray
-  adapter can come later if demand appears — deferred list).
+  adapter can come later if demand appears; it is not on this plan's path).
 - Registry records the shard digests under the parent run.
 
 **Accept:** `tests/test_dispatch.py` — bitwise equality of a single-process
@@ -225,6 +234,36 @@ digest is unchanged; registry shows the shard tree.
 **Milestone M2 — "the unanswerable benchmark":** B1 + B2. Publish the
 nested-stochastic numbers (the 20M-inner-cell benchmark, compiled, across
 N workers) with the bitwise-reproducibility statement no incumbent can make.
+
+### B3 — GPU kernels (RFC-053) — effort L
+
+Starts only after B1 ships: the profiling data from the compiled executor
+decides which stochastic slabs justify a device (PLAN §4.6's original
+gating), and the RFC opens with that data.
+
+**Build:** `engine/core/gpu.py` behind a `[gpu]` extra. CuPy first — it
+mirrors the NumPy op set the vectorized executor already emits — with JAX
+recorded as the alternative and the choice justified from the B1 profile.
+Target workloads: stochastic and nested-stochastic slabs (the ESG scenario
+dimension in `engine/core/stochastic.py` / `nested.py`), not the
+deterministic single-scenario path, which B1 already serves.
+
+**The reproducibility posture, stated honestly:** GPU reductions do not in
+general reproduce CPU float results bitwise, and §1.2 forbids weakening the
+bitwise class — so the GPU executor does **not** join it. Instead it makes
+two weaker guarantees, both asserted by tests rather than claimed: (a)
+**run-to-run bitwise determinism on the same device** (fixed reduction
+orders, pinned RNG streams per (scenario, model point) — no atomics-order
+nondeterminism); (b) a **per-variable reconciliation bound against the
+compiled CPU executor** (target 1e-12 relative on aggregates, the actual
+achieved bound published in the RFC). The docs state plainly which
+guarantee applies where. That stated posture is itself the beyond-parity
+move: incumbents' grids publish no reproducibility statement at all.
+
+**Accept:** `tests/test_gpu.py` (`skipif` no device; a CPU-fallback CuPy
+path keeps the code imported and unit-tested in CI); the two guarantees
+asserted; `scripts/benchmark_gpu.py` added to the benchmark family with
+published numbers on the nested-stochastic workload vs B1.
 
 ---
 
@@ -261,8 +300,39 @@ index). Golden tests with closed-form joint-life annuity values.
 pattern): active → claim (home/facility) → dead, benefit-utilization and
 inflation-protection mechanics.
 
-**Milestone M5 — "deeper than AXIS where it counts":** C1–C4 shipped, each
-with its sharp-edge finding documented.
+### C5 — General insurance beyond the chain-ladder LIC (RFC-054) — effort L
+The landscape doc names the market this repo doesn't address (Igloo, ResQ,
+Tyche); the chain-ladder LIC (`engine/report/incurred_claims.py`) is the
+seed. Two halves:
+- **Reserve variability:** extend `incurred_claims.py` with Mack standard
+  errors and an over-dispersed-Poisson bootstrap — golden-tested against the
+  published Taylor–Ashe triangle results that every P&C text reproduces, so
+  the reserve *ranges* (not just the point estimates) are machine-checked.
+  Bootstrap RNG follows the engine's pinned-stream discipline, so the range
+  itself is reproducible — which no reserving tool asserts.
+- **Premium liabilities:** `engine/library/general_insurance.py` — a policy
+  template for earned/unearned premium, earning patterns, expected loss and
+  cat-load cashflows — pairing naturally with the existing PAA overlay
+  (`engine/report/paa.py`), which was built for exactly these contracts.
+
+**Accept:** `tests/test_gi_reserving.py` reproduces published Mack/ODP
+results; `tests/test_general_insurance.py` golden-tests the template and
+passes the dual-executor equivalence suite; a PAA measurement of a GI block
+appears in the worked examples.
+
+### C6 — Takaful (RFC-055) — effort M
+`engine/library/takaful.py` on the with-profits chassis
+(`engine/library/with_profits.py` is the structural pattern: two funds and a
+distribution rule). Model the participants' risk fund vs the shareholder
+fund, wakala fee and/or mudarabah share as declared `@var`s, surplus
+distribution to participants, and the qard hasan facility (shareholder loan
+to a deficit fund, repaid from future surplus). Golden tests from
+hand-computed miniature funds (`tests/test_takaful.py`); the sharp-edge
+finding to look for: how the qard repayment ordering changes the split of
+surplus between generations of participants.
+
+**Milestone M5 — "deeper than AXIS where it counts, wider than the field":**
+C1–C6 shipped, each with its sharp-edge finding documented.
 
 ---
 
@@ -319,8 +389,8 @@ registered, reproducible run.
 `engine/excel/workbook.py` behind a `[excel]` extra (openpyxl): a workbook
 writer — run summary, per-variable aggregates, assumption snapshot sheet,
 parity-report sheet (A1) — with the run fingerprint and assumption digests
-stamped on every sheet. The add-in (live submit/pull from Excel) stays on
-the deferred list; the workbook is what audit files actually contain.
+stamped on every sheet. The workbook is what audit files actually contain;
+it ships before the live add-in (E4) for that reason.
 
 ### E3 — Production UI (RFC-048) — effort L
 Grow `engine/api/ui` from demo to product: a runs list with filter/search
@@ -330,7 +400,23 @@ per-table diff, not a text diff); parity-report and evidence-pack views.
 Same architecture rule as RFC-032: everything on the page is a call to the
 documented REST API.
 
-**Milestone M4:** E2 + E3.
+### E4 — The live Excel add-in (RFC-056) — effort M
+The tool actuaries will never give up, made a first-class client of the API
+(PLAN §6's "Excel add-in (later)" — now). **Build:** `engine/excel/addin.py`
+on xlwings, behind the same `[excel]` extra: submit a run from a sheet
+(request built from named ranges), poll by fingerprint, pull aggregates and
+model-point drill-downs into sheets. Authentication uses D1 tokens; every
+pulled block is stamped with the run fingerprint and assumption digests in
+adjacent cells, exactly as the E2 workbooks are — a live spreadsheet that
+can still prove where its numbers came from. Depends on E2 (shared
+formatting/stamping code) and D1 (auth).
+
+**Accept:** `tests/test_excel_addin.py` exercises the request-building,
+polling and stamping logic against a test API instance without requiring a
+running Excel (xlwings mocked at the boundary); a manual smoke procedure
+against real Excel is documented in the RFC.
+
+**Milestone M4:** E2 + E3 + E4.
 
 ---
 
@@ -375,7 +461,86 @@ sales collateral that is also a regression suite.
 
 ---
 
-## 9. Sequencing
+## 9. Workstream G — Platform operations & trust
+
+The landscape doc's closing point (§5.6): the incumbents' actual moat is
+trust assets that aren't software — support organisations, update cadences,
+regulator familiarity, reference clients. Most of that is bought with time
+and customers; this workstream builds every part of it that *can* be built
+with commits, so that when the first customer arrives, the operational story
+is already true.
+
+### G1 — Multi-tenant SaaS packaging (RFC-057) — effort L
+**Build:** a `deploy/` directory — Dockerfile for the API/worker images, a
+docker-compose profile for single-box deployment, and a Helm chart for
+k8s — plus the tenancy model in code: a tenant is a namespace prefix over
+the registry, the warehouse partitioning (E1), and a principals file (D1);
+`engine/api/tenancy.py` resolves the tenant from the authenticated principal
+and scopes every route. The design rule to state in the RFC: **isolation is
+asserted by tests, not by a policy document** — a tenant-A token can never
+enumerate, read, or collide with tenant-B runs, even when both submit the
+identical fingerprint (the fingerprint stays global and content-true; the
+*visibility* of the run is what tenancy scopes). Depends on D1, E1.
+
+**Accept:** `tests/test_tenancy.py` — cross-tenant reads denied per route;
+identical submissions from two tenants deduplicate compute but not
+visibility; the compose profile boots and serves a run end-to-end in a
+smoke test (marked slow).
+
+### G2 — SOC 2 substrate (RFC-058) — effort M
+Certification is organizational, but the technical substrate an auditor asks
+for is code, and most of it already exists — this item joins it up.
+**Build:** `docs/compliance/soc2-controls.md` mapping each Trust Services
+control to the mechanism that satisfies it (change management → CI +
+golden-test drift gate; access control → D1; integrity → registry digests;
+audit → D3's chained log); `engine/report/evidence.py` (F1) grows a
+compliance section that *generates* the evidence — principal list and role
+changes from the audit log, run approvals from D2, dependency-audit output —
+so the audit binder is a build artifact, regenerable and digest-pinned. Add
+an API hardening pass (rate limiting, security headers, `pip-audit` in CI).
+Depends on D1–D3, F1.
+
+**Accept:** the compliance section builds in CI; every control row in the
+mapping names a test or generated artifact, and a CI check fails if a named
+test disappears.
+
+### G3 — Release & support cadence (RFC-059) — effort S
+The open answer to "quarterly vendor library updates on a contractual
+cadence." **Build:** semantic-versioned releases with a maintained
+`CHANGELOG.md` in which every numeric-result change carries the
+expected-change note PLAN §3.5 requires (the CI drift gate already forces
+the note to exist — the changelog makes it public); a documented deprecation
+policy; and a **regulatory-update calendar** (`docs/regulatory-calendar.md`)
+listing the dated regulation sets carried (2015/35, 2026/269, VM-22 2026, …)
+with their review dates — each future update landing as a new dated set plus
+an F2 diff report, so "what changed and what it does to your numbers" is a
+published artifact, not a support ticket.
+
+**Accept:** first tagged release cut with the changelog; a CI check asserts
+the changelog gained an entry whenever the golden-test expected values
+changed; the calendar cross-references every dated set present in
+`engine/report/`.
+
+### G4 — The pilot playbook (RFC-060) — effort S
+The A-workstream builds the tools; this makes the *process* a rehearsed,
+reproducible artifact. **Build:** `docs/pilot-playbook.md` — the
+step-by-step client pilot: ingest their model points (A2/A3), scaffold
+(A4), reconcile (A1), hand over the parity report and the evidence pack
+(F1), stand up the workbook/warehouse feeds (E1/E2) — with the roles, the
+data-handling rules (client files never leave their environment; the
+dialect fixtures we keep are synthetic), and the exit criteria for a pilot.
+Plus `scripts/pilot_dryrun.py`: the whole playbook executed end-to-end
+against the synthetic Prophet fixtures, asserted in CI — so the pilot has
+been run a thousand times before it is run once. Depends on M1, F1.
+
+**Accept:** the dry-run script passes in CI and its outputs (parity report,
+evidence pack, workbook) are produced into a content-addressed directory.
+
+**Milestone M6 — "operable, auditable, sellable":** G1–G4 shipped.
+
+---
+
+## 10. Sequencing
 
 Priority order (from landscape §6, refined by dependency):
 
@@ -383,20 +548,26 @@ Priority order (from landscape §6, refined by dependency):
 A1 → A2 → A4 → [M1]                        (migration: the sales on-ramp)
 B1 → [F1] → B2 → [M2]                      (kernels, evidence pack, grid)
 D1 → D2 → D3 → E1 → [M3]                   (governance + warehouse)
-E2 → E3 → [M4]                             (Excel + UI)
-C1 → C2 → C3 → C4 → [M5]                   (breadth; C1 may pull forward
+E2 → E3 → E4 → [M4]                        (Excel, UI, live add-in)
+C1 → C2 → C3 → C4 → C5 → C6 → [M5]         (breadth; C1 may pull forward
                                             — VM-22 is effective 2026)
+B3                                          (GPU: gated on B1's profile,
+                                            schedule any time after M2)
+G1 → G2 → G3 → G4 → [M6]                   (operations & trust)
 F2, F3, F4                                  (interleave as slack allows)
-A3 (MoSes readers)                          (schedule on pilot demand)
+A3 (MoSes readers)                          (schedule on pilot demand,
+                                            no later than G4)
 ```
 
 Hard dependencies only: A2/A3/A4 need A1; B2 benefits from B1 but does not
-require it; F1 needs A1 (parity reports) and is enriched by B1's attestation;
-E2's parity sheet needs A1; E3's views need D1 (auth) and E1 (warehouse
-queries). Everything else is parallelizable — but per §1.9, execute serially
-in this order unless there is a concrete reason not to.
+require it; B3 needs B1 (its RFC opens with B1's profiling data); F1 needs
+A1 (parity reports) and is enriched by B1's attestation; E2's parity sheet
+needs A1; E3's views need D1 (auth) and E1 (warehouse queries); E4 needs E2
+and D1; G1 needs D1 and E1; G2 needs D1–D3 and F1; G4 needs M1 and F1.
+Everything else is parallelizable — but per §1.9, execute serially in this
+order unless there is a concrete reason not to.
 
-## 10. Risks
+## 11. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -404,6 +575,10 @@ in this order unless there is a concrete reason not to.
 | Real Prophet/MoSes files diverge from fixtures | The dialect mechanism is the absorber; the first pilot's variant becomes a new fixture. Never claim format coverage beyond what fixtures prove |
 | Governance layer grows a database | Resist: principals file + registry + append-only log. Postgres stays optional metadata (PLAN §2.4) until multi-user contention is real |
 | Breadth (C) starves the platform work (A/B/D/E) | The milestone gates are the control: C-items other than VM-22 wait for M1–M3 unless a prospect requires one |
+| Everything in scope → scope explosion by another name | Ordering replaces exclusion as the control (§2): B3, C5–C6, E4 and workstream G each gate on a named earlier milestone, and §1.9 forbids starting an item before its predecessor's RFC is `implemented` |
+| GPU cannot join the bitwise class | Accepted and stated up front (B3): the bitwise class stays CPU-only; the GPU executor ships with on-device run-to-run determinism and an asserted CPU reconciliation bound, both tested — an honest posture, not a weakened guarantee |
+| Tenancy bug leaks one client's runs to another | G1's rule — isolation asserted by per-route tests including the identical-fingerprint case — plus D3's audit log making any access visible after the fact |
+| The cadence (G3) is promised but not kept | The CI checks make the cadence self-enforcing: drift without a changelog entry fails the build; a dated set without a calendar entry fails the cross-reference check |
 | Evidence pack overclaims | The pack only reports what CI actually asserts; every line in it is generated from a passing test or a registered digest, never hand-written |
 
 ---
