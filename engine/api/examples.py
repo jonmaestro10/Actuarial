@@ -598,6 +598,41 @@ EXAMPLES: dict = {
             ],
         },
     },
+    "FamilyTakaful": {
+        "note": "A family takaful plan on the hybrid model: a 30% wakala "
+                "fee on contributions, a 20% mudarabah share of investment "
+                "profit, and surplus in the participants' risk fund "
+                "distributed at 25% of its balance a year. 48 paths at 22% "
+                "volatility, which is what makes the qard hasan facility "
+                "do anything — the fund is priced to run off at about zero "
+                "on the mean path, dips into deficit on roughly a third of "
+                "them, and repays the operator's loan out of surplus "
+                "before distributing any of it. Pooled, so the interpreted "
+                "executor cannot run it (RFC-061); scenario-bound, so "
+                "neither deterministic executor can (RFC-068).",
+        "request": {
+            "model": "FamilyTakaful",
+            "proj_len": 16,
+            "outputs": ["pols_if", "contribution", "wakala_fee_charged",
+                        "tabarru", "pif", "risk_fund_boy", "claims_paid",
+                        "qard_drawn", "qard_repaid", "qard_outstanding",
+                        "distributable_surplus",
+                        "qard_transfer_to_participants", "surplus_paid",
+                        "operator_income", "v"],
+            "assumptions": {
+                "mortality": MORTALITY, "lapse": 0.05, "interest": 0.04,
+            },
+            "scenarios": _lognormal(16, n_scenarios=48, vol=0.22),
+            "modelpoints": [
+                {"id": "K1", "age_at_entry": 45, "term_years": 15,
+                 "sum_covered": 160_000.0, "annual_contribution": 2_500.0,
+                 "init_pols": 1_000.0},
+                {"id": "K2", "age_at_entry": 58, "term_years": 12,
+                 "sum_covered": 104_000.0, "annual_contribution": 2_000.0,
+                 "init_pols": 400.0},
+            ],
+        },
+    },
     "VariablePayoutAnnuity": {
         "note": "A pooled variable payout annuity: three members share a "
                 "fund, and every year the whole pool's pensions are scaled "

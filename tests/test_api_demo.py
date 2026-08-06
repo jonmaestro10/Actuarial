@@ -650,9 +650,9 @@ def test_nothing_is_left_out_and_the_mechanism_that_said_so_survives():
     for name in ("PayoutAnnuity", "PensionBuyout", "LongevitySwap",
                  "IncomeProtection", "LongTermCare", "GeneralInsurance",
                  "FixedIndexedAnnuity", "UnitLinkedGMDB", "UnitLinkedGMxB",
-                 "VariablePayoutAnnuity"):
+                 "VariablePayoutAnnuity", "FamilyTakaful"):
         assert name in EXAMPLES and name not in UNAVAILABLE
-    assert len(EXAMPLES) == 18 and len(catalogue()) == 18
+    assert len(EXAMPLES) == 19 and len(catalogue()) == 19
     assert set(EXAMPLES) == set(catalogue())
 
 

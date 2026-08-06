@@ -25,8 +25,9 @@ valuation-basis and transition-matrix gaps and left one reason standing, in
               "drift": 0.03922071, "vol": 0.18, "seed": 20260101}
 ```
 
-Eighteen specimens, up from fourteen. `UNAVAILABLE` is empty for the first
-time since RFC-032 wrote it.
+Eighteen specimens, up from fourteen — nineteen once C6 (RFC-055) landed on
+the same key. `UNAVAILABLE` is empty for the first time since RFC-032 wrote
+it, and is kept empty rather than deleted.
 
 ## Whether the original reasoning still applies, which was the question
 
@@ -123,7 +124,7 @@ Three consequences, and all three are load-bearing:
    a reconciliation should quote.
 2. `tests/test_api_scenarios.py` pins the digest of the exact set the worked
    examples build. A NumPy upgrade that moved the stream would otherwise
-   revalue four templates with every other test in the suite still green —
+   revalue five templates with every other test in the suite still green —
    the request is unchanged, the shapes are unchanged, and *nothing else in
    the repository looks at the numbers*. This is the RFC-066 move applied to
    a different failure: assert the fingerprint, because a type check passes

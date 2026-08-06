@@ -44,8 +44,8 @@ from engine.data.scenarios import ScenarioSet
 #: The templates whose worked example binds a scenario set. Listed rather
 #: than discovered so that a template silently losing its scenarios shows up
 #: as a red test here instead of as a shorter loop that still passes.
-SCENARIO_BOUND = ("FixedIndexedAnnuity", "UnitLinkedGMDB", "UnitLinkedGMxB",
-                  "VariablePayoutAnnuity")
+SCENARIO_BOUND = ("FamilyTakaful", "FixedIndexedAnnuity", "UnitLinkedGMDB",
+                  "UnitLinkedGMxB", "VariablePayoutAnnuity")
 
 
 # --- the three kinds -------------------------------------------------------
@@ -112,8 +112,8 @@ def test_the_generated_specimen_set_has_not_moved():
     currently produces.
 
     Without it, a NumPy upgrade would revalue `UnitLinkedGMDB`,
-    `UnitLinkedGMxB`, `FixedIndexedAnnuity` and `VariablePayoutAnnuity`
-    while every other test in the suite stayed green — the request is
+    `UnitLinkedGMxB`, `FixedIndexedAnnuity`, `VariablePayoutAnnuity` and
+    `FamilyTakaful` while every other test in the suite stayed green — the request is
     unchanged, the shapes are unchanged, and nothing else looks at the
     numbers."""
     built = build_scenarios(EXAMPLES["UnitLinkedGMDB"]["request"]["scenarios"])
@@ -414,10 +414,10 @@ def test_one_scenario_alone_is_its_column_of_the_slab(name):
     The stochastic executor evaluates a `(model point x scenario)` slab. If
     that slab is what it claims to be, scenario `s` run on its own is column
     `s` of it, bitwise — so a template that let one scenario see another
-    would break here and nowhere else. `VariablePayoutAnnuity` is the one
-    that makes the claim non-trivial: it reduces across the *model-point*
-    axis every period, and the assertion is that the reduction does not
-    reach across the scenario axis as well.
+    would break here and nowhere else. `VariablePayoutAnnuity` and
+    `FamilyTakaful` are the ones that make the claim non-trivial: both
+    reduce across the *model-point* axis every period, and the assertion is
+    that the reduction does not reach across the scenario axis as well.
 
     Every scenario is checked here. The evidence pack samples eight and
     reports how many, because it runs on every build."""
