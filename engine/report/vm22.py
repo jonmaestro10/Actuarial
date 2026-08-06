@@ -71,6 +71,53 @@ pooling has bought nothing, however uncorrelated the block.
 a floor effect and a diversification effect and reports the prescribed
 figure alongside, rather than assuming where it falls.
 
+Two reserves, not one
+---------------------
+§3.B: "All components in the aggregate reserve shall be determined
+**post-reinsurance ceded and pre-reinsurance ceded** as outlined in Section
+5." Every amount this module reports is therefore a :class:`BasisPair`, and
+the pair is not a number and an adjustment. §5.A.2.a determines the
+post-ceded DR/SR "reflecting the effects of reinsurance treaties …
+including, where appropriate, all projected reinsurance premiums or other
+costs and all reinsurance recoveries"; §5.A.2.b determines the pre-ceded
+ones "ignoring the effects of reinsurance ceded within the projections".
+Those are **two projections**, and nothing here derives one from the other.
+
+The formulaic component is the exception, and there the text *does*
+subtract: §5.A.1, "for the reserve amount valued using requirements in
+VM-A, VM-C, VM-M, and VM-V, the post-reinsurance ceded reserve is
+determined by subtracting the reinsurance reserve credit" — §5.A.3 adding
+that the methodology "produces reserves on a pre-reinsurance ceded basis".
+:meth:`ReservingGroup.formulaic` is that subtraction and the only place in
+this module where one basis is computed from the other.
+
+Two things about §5 that no first-principles design would have contained:
+
+- **§5.A.2.a.iv is an additive charge, not a netting.** Where a treaty does
+  not qualify for credit for reinsurance and treating it as if it did
+  "would result in a reduction to the company's surplus, then the company
+  shall increase the aggregate reserve by the absolute value of such
+  reductions in surplus". :class:`AggregateReserve` takes it as
+  ``non_qualifying_surplus_reduction`` and **adds** it.
+- **§5.A.3 lets the two bases disagree about the method.** "It is possible
+  that the pre-reinsurance-ceded reserves would pass the relevant exclusion
+  test … while the post-reinsurance-ceded reserves might not, or vice
+  versa." So a group can be stochastic on one basis and formulaic on the
+  other, and :class:`ReservingGroup` carries a method per basis rather than
+  one method and two numbers.
+
+What §5 leaves to the actuary, and this module does not invent: the
+**starting assets on the ceded portion** (§5.A.2.b.i–ii). The text gives
+acceptable approaches — assets similar to those supporting the retained
+portion, scaling up each retained asset, or modelling an identifiable
+portfolio where a funds-withheld, modified-coinsurance or trust arrangement
+has one — and choosing among them is a modelling decision. It is an input
+to the pre-ceded projection, so it arrives here already made. Likewise
+§5.A.2.a.iii's counterparty-default margin, which is required *only* where
+"the company has knowledge that a counterparty is financially impaired" and
+explicitly not otherwise; charging one always would be the natural instinct
+and is not what the text says.
+
 Known deviations from the text, still open
 -----------------------------------------
 Two places where this module is **knowingly not what §4 says**. Both are
@@ -140,6 +187,11 @@ RESERVING_CATEGORIES = ("payout_annuity", "longevity_reinsurance",
 
 #: The only pair §3.F.2 allows to be combined, and only on attestation.
 COMBINABLE = frozenset({"payout_annuity", "accumulation"})
+
+#: §3.B's two bases, on both of which every component must be determined.
+#: The held reserve is the post-reinsurance-ceded one; the
+#: pre-reinsurance-ceded one is required alongside it, not instead of it.
+REINSURANCE_BASES = ("pre_ceded", "post_ceded")
 
 #: §4.B.1's second floor: for the longevity reinsurance category, the
 #: scenario reserve "shall not be less than 2% of the scheduled longevity
@@ -733,43 +785,204 @@ def segment_stochastic_reserve(segments: Sequence[ModelSegment], *,
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True)
+class BasisPair:
+    """One VM-22 amount on both of §3.B's bases.
+
+    §3.B: "All components in the aggregate reserve shall be determined
+    post-reinsurance ceded and pre-reinsurance ceded as outlined in Section
+    5." For the SR and the DR those are **two projections** — §5.A.2.a
+    reflects the treaties, §5.A.2.b ignores them — so this is a pair of
+    computed numbers and not a number with an adjustment hanging off it.
+    Nothing here derives one basis from the other; the only place in this
+    module that does is :meth:`ReservingGroup.formulaic`, because §5.A.1
+    says to.
+
+    :meth:`flat` is the case where the two coincide, which is a statement
+    about the block rather than a default: a group with no reinsurance
+    ceded genuinely has one number, and a group with reinsurance genuinely
+    has two.
+    """
+
+    pre_ceded: float
+    post_ceded: float
+
+    def __post_init__(self):
+        for name in REINSURANCE_BASES:
+            object.__setattr__(self, name, float(getattr(self, name)))
+
+    @classmethod
+    def flat(cls, amount: float) -> "BasisPair":
+        """One number on both bases — a group with no reinsurance ceded."""
+        return cls(pre_ceded=float(amount), post_ceded=float(amount))
+
+    @property
+    def ceded_credit(self) -> float:
+        """``pre_ceded − post_ceded``: what ceding is worth on this group.
+
+        Positive where reinsurance reduces the reserve, which is the usual
+        direction and not a guaranteed one — a treaty can cost more than it
+        recovers, which is the whole premise of §5.A.2.a.iv. Nothing here
+        constrains the sign.
+        """
+        return self.pre_ceded - self.post_ceded
+
+    @property
+    def collapsed(self) -> bool:
+        """Whether the two bases agree, as they do with no treaty."""
+        return self.pre_ceded == self.post_ceded
+
+    def __add__(self, other) -> "BasisPair":
+        if isinstance(other, BasisPair):
+            return BasisPair(self.pre_ceded + other.pre_ceded,
+                             self.post_ceded + other.post_ceded)
+        return BasisPair(self.pre_ceded + float(other),
+                         self.post_ceded + float(other))
+
+    __radd__ = __add__
+
+    def to_dict(self) -> dict:
+        return {"pre_ceded": self.pre_ceded, "post_ceded": self.post_ceded}
+
+    def __fingerprint__(self):
+        return self.to_dict()
+
+
+def _as_pair(amount) -> BasisPair:
+    """A :class:`BasisPair`, or a bare number read as a treaty-free block."""
+    return amount if isinstance(amount, BasisPair) else BasisPair.flat(amount)
+
+
+def _check_method(name: str, basis: str, method: str,
+                  exclusion: "Exclusion | None") -> None:
+    """One basis's method and its stated reason, checked together."""
+    if method not in METHODS:
+        raise VM22Error(
+            f"{method!r} is not a VM-22 method; they are {list(METHODS)}"
+        )
+    if method == "stochastic" and exclusion is not None:
+        raise VM22Error(
+            f"group {name!r} carries a stochastic reserve and an exclusion "
+            f"from one on the {basis} basis; an exclusion is a statement "
+            f"that the number was not needed, not a note attached to one "
+            f"that was"
+        )
+    if method != "stochastic" and exclusion is None:
+        raise VM22Error(
+            f"group {name!r} is valued as {method!r} rather than "
+            f"stochastically on the {basis} basis, which §7 permits only on "
+            f"a stated basis; record the Exclusion or compute the SR"
+        )
+
+
+@dataclass(frozen=True)
 class ReservingGroup:
-    """One group of contracts and the reserve it carries.
+    """One group of contracts and the reserves it carries, on both bases.
 
     §3.A adds one reserve per group: the SR for groups modelling
     stochastically, the DR for groups that passed the Single Scenario Test,
     and the formulaic reserve for groups that passed the exclusion test and
     elected not to model. A group that is not carrying a stochastic reserve
     says why, in ``exclusion``.
+
+    ``amount`` is a :class:`BasisPair`; a bare number is read as
+    :meth:`BasisPair.flat`, which says the group cedes nothing and both of
+    §3.B's bases give the same reserve.
+
+    ``method`` and ``exclusion`` describe the **post-reinsurance-ceded**
+    valuation — the one that goes on the balance sheet — and describe the
+    pre-ceded one too unless ``pre_ceded_method`` is given. That override
+    exists because §5.A.3 says the bases may part company: "it is possible
+    that the pre-reinsurance-ceded reserves would pass the relevant
+    exclusion test … while the post-reinsurance-ceded reserves might not,
+    or vice versa". A group can therefore be formulaic pre-ceded and
+    stochastic post-ceded, which is two valuations of one group rather than
+    two numbers from one. Where ``pre_ceded_method`` is given,
+    ``pre_ceded_exclusion`` stands alone and is not inherited — a different
+    method needs its own stated reason, or none.
     """
 
     name: str
     method: str
-    amount: float
+    amount: BasisPair
     exclusion: Exclusion | None = None
+    #: §5.A.3's override: the method on the pre-ceded basis, where it
+    #: differs. ``None`` means the same valuation on both bases.
+    pre_ceded_method: str | None = None
+    pre_ceded_exclusion: Exclusion | None = None
 
     def __post_init__(self):
-        if self.method not in METHODS:
+        object.__setattr__(self, "amount", _as_pair(self.amount))
+        _check_method(self.name, "post-ceded", self.method, self.exclusion)
+        if self.pre_ceded_method is None:
+            if self.pre_ceded_exclusion is not None:
+                raise VM22Error(
+                    f"group {self.name!r} states a pre-ceded exclusion but "
+                    f"no pre-ceded method; §5.A.3's split is a difference of "
+                    f"valuation, so name the method it applies to"
+                )
+        else:
+            _check_method(self.name, "pre-ceded", self.pre_ceded_method,
+                          self.pre_ceded_exclusion)
+
+    @property
+    def methods(self) -> dict:
+        """How this group is valued on each of §3.B's two bases."""
+        return {"post_ceded": self.method,
+                "pre_ceded": self.pre_ceded_method or self.method}
+
+    @property
+    def exclusions(self) -> dict:
+        """Why the SR was left out on each basis, where it was."""
+        if self.pre_ceded_method is None:
+            return {"post_ceded": self.exclusion, "pre_ceded": self.exclusion}
+        return {"post_ceded": self.exclusion,
+                "pre_ceded": self.pre_ceded_exclusion}
+
+    @classmethod
+    def formulaic(cls, name: str, pre_ceded_amount: float, *,
+                  exclusion: Exclusion,
+                  reinsurance_reserve_credit: float = 0.0
+                  ) -> "ReservingGroup":
+        """§5.A.1: post-ceded = pre-ceded − the reinsurance reserve credit.
+
+        The one component where the two bases are a number and an
+        adjustment rather than two projections. §5.A.3: the VM-A/C/M/V
+        methodology "produces reserves on a pre-reinsurance ceded basis.
+        Therefore, the reserve must be adjusted for any reinsurance ceded
+        accordingly" — so the stated amount is the pre-ceded one and the
+        credit is subtracted from it, not added to anything.
+
+        A credit larger than the reserve it is taken against is refused
+        rather than reported as a negative reserve: a reserve credit cannot
+        exceed the reserve ceded, so an amount that does is a data error,
+        and reporting it would net a liability into an asset silently.
+        """
+        credit = float(reinsurance_reserve_credit)
+        gross = float(pre_ceded_amount)
+        if credit < 0.0:
             raise VM22Error(
-                f"{self.method!r} is not a VM-22 method; they are "
-                f"{list(METHODS)}"
+                f"group {name!r} states a reinsurance reserve credit of "
+                f"{credit:,.2f}; a credit is what ceding is worth and is not "
+                f"negative. If ceding costs more than it recovers, that is "
+                f"§5.A.2.a.iv's surplus charge on the aggregate reserve."
             )
-        if self.method == "stochastic" and self.exclusion is not None:
+        if credit > gross:
             raise VM22Error(
-                f"group {self.name!r} carries a stochastic reserve and an "
-                f"exclusion from one; an exclusion is a statement that the "
-                f"number was not needed, not a note attached to one that was"
+                f"group {name!r} takes a reinsurance reserve credit of "
+                f"{credit:,.2f} against a pre-ceded reserve of {gross:,.2f}. "
+                f"A credit cannot exceed the reserve ceded, and §5.A.1's "
+                f"subtraction would report a negative reserve."
             )
-        if self.method != "stochastic" and self.exclusion is None:
-            raise VM22Error(
-                f"group {self.name!r} is valued as {self.method!r} rather "
-                f"than stochastically, which §7 permits only on a stated "
-                f"basis; record the Exclusion or compute the SR"
-            )
+        return cls(name=name, method="formulaic",
+                   amount=BasisPair(pre_ceded=gross,
+                                    post_ceded=gross - credit),
+                   exclusion=exclusion)
 
     def __fingerprint__(self):
         return {"name": self.name, "method": self.method,
-                "amount": self.amount, "exclusion": self.exclusion}
+                "amount": self.amount, "exclusion": self.exclusion,
+                "pre_ceded_method": self.pre_ceded_method,
+                "pre_ceded_exclusion": self.pre_ceded_exclusion}
 
 
 class AggregateReserve:
@@ -783,9 +996,19 @@ class AggregateReserve:
     """
 
     def __init__(self, groups: Iterable[ReservingGroup], *,
-                 basis: VM22Basis = VM22_2026):
+                 basis: VM22Basis = VM22_2026,
+                 non_qualifying_surplus_reduction: float = 0.0):
         self.groups = list(groups)
         self.basis = basis
+        self.non_qualifying_surplus_reduction = float(
+            non_qualifying_surplus_reduction)
+        if self.non_qualifying_surplus_reduction < 0.0:
+            raise VM22Error(
+                f"§5.A.2.a.iv increases the aggregate reserve by the "
+                f"**absolute value** of the surplus reduction; "
+                f"{self.non_qualifying_surplus_reduction:,.2f} is negative "
+                f"and would relieve the reserve rather than charge it"
+            )
         if not self.groups:
             raise VM22Error(
                 "an aggregate reserve with no groups in it is a calculation "
@@ -800,49 +1023,149 @@ class AggregateReserve:
             )
 
     @property
-    def value(self) -> float:
-        return float(sum(group.amount for group in self.groups))
+    def group_total(self) -> BasisPair:
+        """§3.A's sum over the groups, before §5.A.2.a.iv's charge."""
+        return sum((group.amount for group in self.groups),
+                   BasisPair(0.0, 0.0))
+
+    @property
+    def value(self) -> BasisPair:
+        """§3.A's sum on both of §3.B's bases, plus §5.A.2.a.iv's charge.
+
+        The charge lands on the **post-ceded** basis only. §5.A.2.a.iv
+        arises because a non-qualifying treaty's cash flows are kept out of
+        the post-ceded projections, and it puts back the surplus that
+        omission flatters; the pre-ceded basis ignores reinsurance ceded
+        altogether by construction (§5.A.2.b), so charging it there would
+        be adding a reinsurance effect to the basis defined not to have
+        one. The text says only "increase the aggregate reserve" and does
+        not say on which basis, so this is a reading, and it is recorded
+        here rather than left for someone to infer from the arithmetic.
+        """
+        total = self.group_total
+        return BasisPair(
+            pre_ceded=total.pre_ceded,
+            post_ceded=total.post_ceded + self.non_qualifying_surplus_reduction,
+        )
+
+    @property
+    def post_ceded(self) -> float:
+        """The held reserve: §3.A's sum on §3.B's post-ceded basis."""
+        return self.value.post_ceded
+
+    @property
+    def pre_ceded(self) -> float:
+        """The same reserve ignoring reinsurance ceded, per §5.A.2.b."""
+        return self.value.pre_ceded
 
     def by_method(self) -> dict:
-        """The §3.A split: how much of the reserve each method contributed."""
-        out = {method: 0.0 for method in METHODS}
+        """The §3.A split, per basis, as :class:`BasisPair` per method.
+
+        A group may be valued one way pre-ceded and another post-ceded
+        (§5.A.3), so the two bases are split independently — which is why
+        this cannot be a dict of floats keyed by one method per group.
+
+        These sum to :attr:`group_total`, **not** to :attr:`value`:
+        §5.A.2.a.iv's charge is not any group's reserve and has no method
+        to be attributed to.
+        """
+        out = {method: BasisPair(0.0, 0.0) for method in METHODS}
         for group in self.groups:
-            out[group.method] += group.amount
+            methods = group.methods
+            out[methods["pre_ceded"]] = (out[methods["pre_ceded"]]
+                                         + BasisPair(group.amount.pre_ceded,
+                                                     0.0))
+            out[methods["post_ceded"]] = (out[methods["post_ceded"]]
+                                          + BasisPair(0.0,
+                                                      group.amount.post_ceded))
         return out
 
     @property
     def largest(self) -> str:
-        """The group contributing most. Not a binding component — a sum has
-        none — but the first thing anybody asks of a composition."""
-        return max(self.groups, key=lambda g: g.amount).name
+        """The group contributing most **post-ceded**. Not a binding
+        component — a sum has none — but the first thing anybody asks of a
+        composition."""
+        return max(self.groups, key=lambda g: g.amount.post_ceded).name
 
     def to_dict(self) -> dict:
         return {
             "basis": self.basis.label,
-            "value": self.value,
-            "by_method": self.by_method(),
-            "groups": [{"name": g.name, "method": g.method,
-                        "amount": g.amount,
-                        "excluded": None if g.exclusion is None
-                        else g.exclusion.basis}
+            "value": self.value.to_dict(),
+            "group_total": self.group_total.to_dict(),
+            "non_qualifying_surplus_reduction":
+                self.non_qualifying_surplus_reduction,
+            "by_method": {method: pair.to_dict()
+                          for method, pair in self.by_method().items()},
+            "groups": [{"name": g.name, "methods": g.methods,
+                        "amount": g.amount.to_dict(),
+                        "ceded_credit": g.amount.ceded_credit,
+                        "excluded": {basis: None if e is None else e.basis
+                                     for basis, e in g.exclusions.items()}}
                        for g in self.groups],
         }
 
     def __repr__(self) -> str:
-        return (f"AggregateReserve({self.value:,.2f}, "
+        return (f"AggregateReserve({self.post_ceded:,.2f} post-ceded, "
+                f"{self.pre_ceded:,.2f} pre-ceded, "
                 f"{len(self.groups)} group(s), basis={self.basis.label!r})")
 
     def __fingerprint__(self):
-        return {"basis": self.basis, "groups": list(self.groups)}
+        return {"basis": self.basis, "groups": list(self.groups),
+                "non_qualifying_surplus_reduction":
+                    self.non_qualifying_surplus_reduction}
 
 
 def stochastic_group(name: str, contracts: Sequence[Contract], *,
-                     basis: VM22Basis = VM22_2026) -> ReservingGroup:
-    """A group carrying the SR of §4, floored where §4.B.1 puts the floor."""
-    return ReservingGroup(
-        name=name, method="stochastic",
-        amount=aggregate_stochastic_reserve(contracts, basis=basis),
-    )
+                     pre_ceded_contracts: Sequence[Contract] | None = None,
+                     basis: VM22Basis = VM22_2026,
+                     combined_payout_accumulation: bool = False
+                     ) -> ReservingGroup:
+    """A group carrying the SR of §4, floored where §4.B.1 puts the floor.
+
+    ``contracts`` is the projection that reflects the treaties — §5.A.2.a's
+    post-reinsurance-ceded basis, and for a block that cedes nothing simply
+    the projection. ``pre_ceded_contracts`` is §5.A.2.b's second
+    projection, run "ignoring the effects of reinsurance ceded"; omitting
+    it says the group cedes nothing, and the pair collapses.
+
+    This is the :class:`Contract` path and therefore the overstating order
+    — see :func:`aggregate_stochastic_reserve`. :func:`segment_group` is
+    the prescribed one.
+    """
+    return _paired_group(
+        name,
+        lambda cs: aggregate_stochastic_reserve(
+            cs, basis=basis,
+            combined_payout_accumulation=combined_payout_accumulation),
+        contracts, pre_ceded_contracts)
+
+
+def segment_group(name: str, segments: Sequence[ModelSegment], *,
+                  pre_ceded_segments: Sequence[ModelSegment] | None = None,
+                  basis: VM22Basis = VM22_2026,
+                  combined_payout_accumulation: bool = False
+                  ) -> ReservingGroup:
+    """A group carrying the SR by §3.F.5.a's order, on both of §3.B's bases.
+
+    The prescribed path: combine the segments' present values, take the
+    greatest in aggregate, then CTE 70 — and do it twice, because §5.A.2.a
+    and §5.A.2.b are two projections and neither is derivable from the
+    other. ``pre_ceded_segments`` omitted says the group cedes nothing.
+    """
+    return _paired_group(
+        name,
+        lambda ss: segment_stochastic_reserve(
+            ss, basis=basis,
+            combined_payout_accumulation=combined_payout_accumulation),
+        segments, pre_ceded_segments)
+
+
+def _paired_group(name: str, reserve, post_ceded, pre_ceded) -> ReservingGroup:
+    """One reserve on each basis, from one calculation run twice."""
+    post = reserve(post_ceded)
+    pre = post if pre_ceded is None else reserve(pre_ceded)
+    return ReservingGroup(name=name, method="stochastic",
+                          amount=BasisPair(pre_ceded=pre, post_ceded=post))
 
 
 # --------------------------------------------------------------------------

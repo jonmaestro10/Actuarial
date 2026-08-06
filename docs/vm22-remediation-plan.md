@@ -12,7 +12,7 @@ commit per item, tests asserting refusals as well as grants.*
 |---|---|---|---|---|
 | ~~**V1** unfloored greatest present value~~ | 4.B.1.a note | overstates | S | **done** |
 | ~~**V2** model segments, aggregation order, category floors~~ | 3.F.5.a.ii, 4.B.1, 3.F.3 | overstates (order), understates (floor) | M | **done** |
-| **V3** the ceded basis | 3.B, 5 | not comparable | M | V2 (segments are what get two bases) |
+| ~~**V3** the ceded basis~~ | 3.B, 5 | not comparable | M | **done** |
 | **V4** allocation to contracts | 13 | n/a | M | V2 |
 
 V1 first because it is small, independent, and touches shared code — doing
@@ -129,7 +129,7 @@ blocked on the same abstraction.
 
 ---
 
-## V3 — every component, both ceded and not
+## V3 — every component, both ceded and not — **done**
 
 **The text.** §3.B: "All components in the aggregate reserve shall be
 determined **post-reinsurance ceded and pre-reinsurance ceded** as outlined
@@ -189,6 +189,28 @@ number on both bases, so the pair collapses where it should.
 
 **Risk.** Medium-high — it doubles every output and changes the reserve's
 public shape. Worth doing deliberately rather than at the end of a session.
+
+**Outcome.** Shipped, RFC-062. `BasisPair` is the shape everywhere a float
+used to be, and `AggregateReserve.value` is that pair; `.post_ceded` is the
+held reserve. `stochastic_group` and the new `segment_group` take a second
+projection rather than deriving one basis from the other, and a caller who
+supplies none has said the group cedes nothing — the pair collapses, which
+is the acceptance criterion and not a fallback. `ReservingGroup.formulaic`
+is the single place one basis is computed from the other, per §5.A.1, and it
+takes the **pre**-ceded amount because §5.A.3 says that is what the VM-A/C/M/V
+methodology produces.
+
+The reading turned up one thing this plan had not carried, and it changed
+the design: **§5.A.3 lets the two bases disagree about the method** — a
+group can pass the exclusion test pre-ceded and fail it post-ceded. So a
+group carries a method *per basis*, not one method and two numbers, and
+`by_method()` splits the bases independently. Without that, a group would be
+reported under a method it was not valued by on one of its two bases.
+
+§5.A.2.a.iv's charge lands post-ceded only, on the reading that a basis
+defined as ignoring reinsurance ceded cannot also carry a reinsurance
+charge. The text does not name a basis; the reading is stated in the module
+docstring rather than inferred from the arithmetic.
 
 ---
 
