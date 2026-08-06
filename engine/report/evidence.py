@@ -475,6 +475,35 @@ def audit_chain(log=None) -> Section:
     )
 
 
+#: What the pack's digest is and is not an identity for. Stated because the
+#: benchmarks section used to claim the pack "rebuilds to the same digest
+#: anywhere", and that was never true.
+#:
+#: It is true *on a machine*: CI builds the pack twice and `diff -r` fails if
+#: any digest moved, which is what RFC-049's acceptance criterion asserts and
+#: what the claim was reaching for. Across machines it is false, and the
+#: reason is not the engine's determinism but NumPy's: `np.exp` and `**` over
+#: an array dispatch on the CPU's instruction set, so the same NumPy on two
+#: microarchitectures returns values differing in the last unit in the last
+#: place. Found when a CI runner and the machine the specimens were written
+#: on — identical NumPy 2.4.6, identical Python — produced different digests,
+#: and reproduced with `NPY_DISABLE_CPU_FEATURES=AVX512_SPR,AVX512_ICL,X86_V4`.
+#:
+#: Nothing the repo claims elsewhere is weakened by this. The dual-executor
+#: invariant compares two executors *on one machine* and is untouched; so is
+#: the registry's determinism check, and so is every golden test, which
+#: either states an exact closed form or reconciles to a tolerance. What is
+#: affected is precisely the one claim that quantified over machines.
+REPRODUCIBILITY_SCOPE = (
+    "This pack's digest is reproducible on a given machine — CI rebuilds it "
+    "and requires the two to be identical — and is not a cross-machine "
+    "identity. NumPy dispatches `exp` and `**` on the CPU's instruction set, "
+    "so two machines running the same NumPy can differ in the last ULP, and "
+    "a digest is over bits. Cite a pack digest alongside the environment "
+    "section, which records what it was built on."
+)
+
+
 def benchmarks(records: Sequence[Mapping[str, Any]] | None = None) -> Section:
     """Benchmark numbers, if somebody measured some.
 
@@ -485,9 +514,11 @@ def benchmarks(records: Sequence[Mapping[str, Any]] | None = None) -> Section:
     if not records:
         return Section(
             "benchmarks", "Benchmarks",
-            "No benchmark on record for this pack; it is therefore "
-            "machine-independent and rebuilds to the same digest anywhere.",
-            {"available": True, "n_benchmarks": 0, "benchmarks": []},
+            "No benchmark on record for this pack, so nothing in it is a "
+            "measurement of this machine's speed. It is not therefore "
+            "machine-independent: see `reproducibility_scope`.",
+            {"available": True, "n_benchmarks": 0, "benchmarks": [],
+             "reproducibility_scope": REPRODUCIBILITY_SCOPE},
         )
     rows = [dict(record) for record in records]
     return Section(

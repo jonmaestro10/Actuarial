@@ -34,6 +34,7 @@ from engine.api.catalogue import (
     index_credit_designs,
 )
 from engine.api.examples import EXAMPLES
+from engine.api.specimen_scenarios import SPECIMEN_RETURNS
 from engine.core.fingerprint import fingerprint
 from engine.core.registry import record_run
 from engine.data.index_credit import (
@@ -97,28 +98,84 @@ def test_a_generated_set_is_the_class_method_it_names():
 # --- the two identities ----------------------------------------------------
 
 
-#: The digest of the values ``engine.api.examples._lognormal(21)`` builds.
-#: Recorded, not derived — the point is that nothing else in the suite looks
-#: at these numbers. Regenerate it **only** on a deliberate decision that the
-#: four scenario-bound specimens are allowed to move.
-EXAMPLE_SCENARIO_DIGEST = "3c1be990acee4108ad587aca002fbc66"
+#: The digest of the frozen specimen returns. Portable by construction now
+#: — they are literals in the source — where the constant this replaces was
+#: the digest of a *generated* set and moved between two machines running
+#: the identical NumPy. See :mod:`engine.api.specimen_scenarios`.
+SPECIMEN_DIGEST = "963c6c12d0ccbb3c0b6289ec2c876cf9"
 
 
-def test_the_generated_specimen_set_has_not_moved():
-    """A seed pins NumPy's stream *within* a version. NumPy's own policy
-    freezes only the legacy `RandomState`; `default_rng` may change stream
-    in a feature release. So the request digest of a `lognormal` scenario
-    set identifies a recipe, and this asserts the **values** the recipe
-    currently produces.
+def test_the_specimen_returns_are_literals_and_have_not_moved():
+    """The constant this replaces was pinned over
+    ``ScenarioSet.lognormal(64, 21, …, seed=20260101)`` on the reasoning that
+    a seed pins the stream. It does. It does not pin ``np.exp``.
 
-    Without it, a NumPy upgrade would revalue `UnitLinkedGMDB`,
-    `UnitLinkedGMxB`, `FixedIndexedAnnuity`, `VariablePayoutAnnuity` and
-    `FamilyTakaful` while every other test in the suite stayed green — the request is
-    unchanged, the shapes are unchanged, and nothing else looks at the
-    numbers."""
-    built = build_scenarios(EXAMPLES["UnitLinkedGMDB"]["request"]["scenarios"])
-    assert (built.n_scenarios, built.horizon) == (64, 21)
-    assert fingerprint(built) == EXAMPLE_SCENARIO_DIGEST
+    CI failed on a runner with the **same NumPy 2.4.6 and the same Python**
+    as the machine the constant was written on, because ``np.exp`` over an
+    array dispatches on the CPU's instruction set. Reproduced locally with
+    ``NPY_DISABLE_CPU_FEATURES=AVX512_SPR,AVX512_ICL,X86_V4``: the digest of
+    the RNG output ``z`` is identical on every path, and the digest of
+    ``exp(...) - 1`` is not. The generator was innocent throughout.
+
+    So the specimens carry values. This asserts the frozen array, which is
+    the thing five worked examples and therefore five evidence-pack digests
+    now rest on — and unlike its predecessor it is a claim that holds on any
+    machine, because rounding at 1e-6 puts the values clear of a
+    last-ULP disagreement by eleven orders of magnitude."""
+    assert (len(SPECIMEN_RETURNS), len(SPECIMEN_RETURNS[0])) == (32, 46)
+    assert fingerprint(np.asarray(SPECIMEN_RETURNS)) == SPECIMEN_DIGEST
+    # Literals, not a recomputation: every value is exactly six decimals.
+    for row in SPECIMEN_RETURNS:
+        for v in row:
+            assert round(v, 6) == v
+    # And they are returns, which `ScenarioSet` would refuse otherwise.
+    assert min(min(r) for r in SPECIMEN_RETURNS) > -1.0
+
+
+def test_no_worked_example_rests_on_a_generated_scenario_set():
+    """The guard that stops this regressing. A generated set is identified
+    by a recipe, and a recipe is only as portable as the arithmetic behind
+    it — so a specimen carrying one makes the evidence pack's digest
+    machine-dependent while `engine/report/evidence.py` claims it "rebuilds
+    to the same digest anywhere".
+
+    CI cannot catch that: it builds the pack twice on one runner, where a
+    seeded generator is perfectly stable. Only a cross-machine comparison
+    shows it, and the repo does not do one. So the invariant is asserted
+    here structurally instead."""
+    for name in SCENARIO_BOUND:
+        spec = EXAMPLES[name]["request"]["scenarios"]
+        assert spec["kind"] == "explicit", name
+        assert "seed" not in spec, name
+    generated = [n for n, e in EXAMPLES.items()
+                 if e["request"].get("scenarios", {}).get("kind")
+                 in ("lognormal",)]
+    assert generated == []
+
+
+def test_a_specimen_slice_is_a_truncation_of_one_set():
+    """Every specimen reads a prefix of the same rectangle, so two of them
+    are the same scenarios over different horizons rather than two unrelated
+    sets that happen to look alike."""
+    gmdb = build_scenarios(EXAMPLES["UnitLinkedGMDB"]["request"]["scenarios"])
+    fia = build_scenarios(
+        EXAMPLES["FixedIndexedAnnuity"]["request"]["scenarios"])
+    assert np.array_equal(gmdb.returns, fia.returns[:, :gmdb.horizon])
+    assert fingerprint(gmdb) == fingerprint(fia.truncate(gmdb.horizon))
+
+
+def test_the_frozen_set_refuses_to_be_over_read():
+    """A specimen asking for more than the frozen set holds is a bug in the
+    caller. Returning a short set would give it a projection that ran off
+    the end of its own scenarios, which `build_run` would then refuse with a
+    message about the request rather than about the specimen."""
+    from engine.api.examples import _scenarios
+
+    assert len(_scenarios(46)["returns"][0]) == 46
+    with pytest.raises(ValueError, match="periods"):
+        _scenarios(47)
+    with pytest.raises(ValueError, match="scenarios"):
+        _scenarios(10, n_scenarios=33)
 
 
 def test_an_explicit_set_is_identified_by_its_numbers_and_a_recipe_is_not():
@@ -282,10 +339,10 @@ def _gmdb_request(**over):
 
 def test_a_bound_set_chooses_the_stochastic_executor():
     built = build_run(_gmdb_request())
-    assert built["scenarios"].n_scenarios == 64
+    assert built["scenarios"].n_scenarios == 32
     _, record = record_run(**built)
     assert record.executor == "stochastic"
-    assert record.n_scenarios == 64 and record.scenario_horizon == 21
+    assert record.n_scenarios == 32 and record.scenario_horizon == 21
 
 
 def test_the_executor_and_the_scenario_key_must_agree_at_the_boundary():

@@ -69,7 +69,8 @@ rather than as a failure.
 from __future__ import annotations
 
 import copy
-import math
+
+from engine.api.specimen_scenarios import SPECIMEN_RETURNS
 
 
 def _gompertz(ages: range, a: float = 0.0004, b: float = 1.09,
@@ -139,31 +140,36 @@ BASIS_MORTALITY = {
 BASIS_CURVE = {"rates": 0.04, "freq": 1, "horizon_years": 60}
 
 
-def _lognormal(horizon: int, *, n_scenarios: int = 64, vol: float = 0.18,
-               seed: int = 20_260_101) -> dict:
-    """A generated scenario set, in the request schema's ``lognormal`` form.
+def _scenarios(horizon: int, *, n_scenarios: int = 32) -> dict:
+    """A scenario set for a specimen, in the schema's ``explicit`` form.
 
-    ``drift`` is ``log(1.04)``, which makes the set risk-neutral with respect
-    to the flat 4% the basis specimens discount at: ``E[1 + r] = 1.04``. It
-    is written to eight places to keep the specimen readable as JSON, and
-    **the rounding costs the martingale property** in the eighth decimal —
-    which is stated here rather than left for somebody to rediscover from a
-    reconciliation that misses by 3e-9. A specimen is not a calibration; the
-    one thing it is claiming is a shape.
+    A prefix of :data:`engine.api.specimen_scenarios.SPECIMEN_RETURNS` —
+    literal values, not a seeded generator, and that is a correction rather
+    than a style choice. RFC-068 wrote these as ``lognormal`` requests on the
+    reasoning that a seed pins the stream. It does; it does not pin
+    ``np.exp``, which dispatches on the CPU's instruction set, so the five
+    scenario-bound specimens took different values on different machines and
+    made the evidence pack's digest machine-dependent. CI caught it across
+    two runners. See :mod:`engine.api.specimen_scenarios`.
 
-    ``seed`` pins the stream, so the same request builds the same set. What
-    it does *not* pin is the stream across NumPy versions — see
-    :mod:`engine.api.catalogue` on the two identities, and
-    ``tests/test_api_scenarios.py``, which asserts the digest of the values
-    this returns so a moved stream fails loudly.
-
-    Sixty-four scenarios: enough for the guarantee cashflows to be visibly
-    stochastic rather than a smooth curve, and small enough that the
-    evidence pack — which runs every specimen more than once — stays cheap.
+    Truncating a row is a truncation of the same set, not a different one,
+    so every specimen is reading a prefix of one rectangle. Requesting more
+    than the frozen set holds is a bug in the caller and says so rather than
+    silently returning a short set.
     """
-    return {"kind": "lognormal", "n_scenarios": n_scenarios,
-            "horizon": horizon, "drift": round(math.log(1.04), 8),
-            "vol": vol, "seed": seed}
+    if not 0 < horizon <= len(SPECIMEN_RETURNS[0]):
+        raise ValueError(
+            f"the frozen specimen set covers {len(SPECIMEN_RETURNS[0])} "
+            f"periods; {horizon} were asked for"
+        )
+    if not 0 < n_scenarios <= len(SPECIMEN_RETURNS):
+        raise ValueError(
+            f"the frozen specimen set holds {len(SPECIMEN_RETURNS)} "
+            f"scenarios; {n_scenarios} were asked for"
+        )
+    return {"kind": "explicit",
+            "returns": [list(row[:horizon])
+                        for row in SPECIMEN_RETURNS[:n_scenarios]]}
 
 
 #: One runnable request per template, keyed by model name. Each is a
@@ -509,7 +515,7 @@ EXAMPLES: dict = {
     },
     "UnitLinkedGMDB": {
         "note": "A unit-linked bond with a return-of-premium death "
-                "guarantee, run against 64 lognormal fund paths at 18% "
+                "guarantee, run against 32 fund paths at 18% "
                 "volatility. The guarantee costs nothing on most paths and "
                 "everything on a few, which is why it is priced against a "
                 "distribution rather than a projection.",
@@ -523,7 +529,7 @@ EXAMPLES: dict = {
                 "mortality": MORTALITY, "lapse": 0.04, "interest": 0.03,
                 "amc": 0.01, "gmdb_fee": 0.004,
             },
-            "scenarios": _lognormal(21),
+            "scenarios": _scenarios(21),
             "modelpoints": [
                 {"id": "U1", "age_at_entry": 45, "term_years": 20,
                  "premium": 100_000.0, "gmdb_guarantee": 100_000.0,
@@ -552,7 +558,7 @@ EXAMPLES: dict = {
                 "amc": 0.01, "gmdb_fee": 0.004, "gmab_fee": 0.006,
                 "gmwb_fee": 0.005,
             },
-            "scenarios": _lognormal(21),
+            "scenarios": _scenarios(21),
             "modelpoints": [
                 {"id": "X1", "age_at_entry": 55, "term_years": 20,
                  "premium": 100_000.0, "gmdb_guarantee": 100_000.0,
@@ -589,7 +595,7 @@ EXAMPLES: dict = {
                                  "participation": 1.0, "spread": 0.0,
                                  "floor": 0.0},
             },
-            "scenarios": _lognormal(46),
+            "scenarios": _scenarios(46),
             "modelpoints": [
                 {"id": "F1", "age_at_entry": 60, "premium": 100_000.0,
                  "init_pols": 1_000.0, "glwb_base": 100_000.0,
@@ -602,12 +608,12 @@ EXAMPLES: dict = {
         "note": "A family takaful plan on the hybrid model: a 30% wakala "
                 "fee on contributions, a 20% mudarabah share of investment "
                 "profit, and surplus in the participants' risk fund "
-                "distributed at 25% of its balance a year. 48 paths at 22% "
+                "distributed at 25% of its balance a year. 32 paths at 18% "
                 "volatility, which is what makes the qard hasan facility "
                 "do anything — the fund is priced to run off at about zero "
-                "on the mean path, dips into deficit on roughly a third of "
-                "them, and repays the operator's loan out of surplus "
-                "before distributing any of it. Pooled, so the interpreted "
+                "on the mean path, draws a loan on 28% of the paths and "
+                "repays one on 9%, always out of surplus and always ahead "
+                "of any distribution. Pooled, so the interpreted "
                 "executor cannot run it (RFC-061); scenario-bound, so "
                 "neither deterministic executor can (RFC-068).",
         "request": {
@@ -622,7 +628,7 @@ EXAMPLES: dict = {
             "assumptions": {
                 "mortality": MORTALITY, "lapse": 0.05, "interest": 0.04,
             },
-            "scenarios": _lognormal(16, n_scenarios=48, vol=0.22),
+            "scenarios": _scenarios(16),
             "modelpoints": [
                 {"id": "K1", "age_at_entry": 45, "term_years": 15,
                  "sum_covered": 160_000.0, "annual_contribution": 2_500.0,
@@ -640,7 +646,8 @@ EXAMPLES: dict = {
                 "account is set to their own liability at outset, so the "
                 "pool starts balanced and every later adjustment is "
                 "experience rather than an opening mismatch. The scenarios "
-                "are risk-neutral against the basis's own 4%. Pooled, so "
+                "drift at the basis's own 4%, so the adjustment measures "
+                "deviation rather than a mismatch of means. Pooled, so "
                 "the interpreted executor cannot run it — see RFC-061.",
         "request": {
             "model": "VariablePayoutAnnuity",
@@ -652,7 +659,7 @@ EXAMPLES: dict = {
                 "mortality": BASIS_MORTALITY, "curve": BASIS_CURVE,
                 "revalue_every": 1,
             },
-            "scenarios": _lognormal(41, n_scenarios=32, vol=0.10),
+            "scenarios": _scenarios(41),
             "modelpoints": [
                 {"id": 'V1', "dob": '1956-01-01', "sex": 'M', "valuation": '2021-01-01', "pension": 12000.0, "account_value": 190900.0, "init_lives": 1.0},
                 {"id": 'V2', "dob": '1946-06-30', "sex": 'F', "valuation": '2021-01-01', "pension": 6000.0, "account_value": 80250.0, "init_lives": 3.0},

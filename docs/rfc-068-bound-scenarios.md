@@ -21,8 +21,7 @@ valuation-basis and transition-matrix gaps and left one reason standing, in
   "index_credit": {"kind": "AnnualPointToPoint", "cap": 0.06,
                    "participation": 1.0, "spread": 0.0, "floor": 0.0}
 },
-"scenarios": {"kind": "lognormal", "n_scenarios": 64, "horizon": 46,
-              "drift": 0.03922071, "vol": 0.18, "seed": 20260101}
+"scenarios": {"kind": "explicit", "returns": [[0.079894, -0.113355, …], …]}
 ```
 
 Eighteen specimens, up from fourteen — nineteen once C6 (RFC-055) landed on
@@ -116,26 +115,69 @@ that names a seed can mean different numbers under a different NumPy while
 the request digest, and therefore `RunStore`'s idempotency collision, stays
 exactly the same.
 
-Three consequences, and all three are load-bearing:
+Three consequences were drawn from that, and **the second of them was
+wrong in a way CI later demonstrated** — see the correction below.
 
 1. The identity that is safe to cite for a generated set is the run record's
    `scenarios_digest`, which is over the values. The request digest is over
    the recipe. They answer different questions and the run record is the one
    a reconciliation should quote.
-2. `tests/test_api_scenarios.py` pins the digest of the exact set the worked
-   examples build. A NumPy upgrade that moved the stream would otherwise
-   revalue five templates with every other test in the suite still green —
-   the request is unchanged, the shapes are unchanged, and *nothing else in
-   the repository looks at the numbers*. This is the RFC-066 move applied to
-   a different failure: assert the fingerprint, because a type check passes
-   against a default that quietly changed the tables underneath.
+2. ~~`tests/test_api_scenarios.py` pins the digest of the exact set the
+   worked examples build, so a NumPy upgrade that moved the stream cannot
+   revalue five templates silently.~~ **Superseded.** The test was right to
+   exist and the specimens were wrong to need it.
 3. `kind` has **no default**, which is where this schema differs from
    `assumptions.kind`. RFC-066 defaulted to `"scalar"` because every request
-   written before the union existed already meant that, and the default was
-   load-bearing precisely for preserving it. No request ever carried a
-   scenario set, so there is no prior meaning to preserve — and since the
-   three kinds are identified differently, a default would be the schema
-   choosing an identity on the caller's behalf.
+   written before the union existed already meant that. No request ever
+   carried a scenario set, so there is no prior meaning to preserve — and
+   since the three kinds are identified differently, a default would be the
+   schema choosing an identity on the caller's behalf.
+
+### The correction: a seed pins the stream, and not the transform
+
+This RFC shipped with all five scenario-bound specimens carrying a
+`lognormal` request — parameters and a seed — and a test pinning the digest
+of the values that produced. CI failed on it, and the reason is not the one
+this RFC anticipated.
+
+**Both machines were on NumPy 2.4.6 and Python 3.11.** The stream had not
+moved. What moved was `np.exp`: `ScenarioSet.lognormal` computes
+`exp(drift − vol²/2 + vol·z) − 1`, and NumPy dispatches `exp` over an array
+on the CPU's instruction set. Reproduced locally —
+
+```
+NPY_DISABLE_CPU_FEATURES=AVX512_SPR,AVX512_ICL,X86_V4
+```
+
+— under which the digest of `z` is **identical on every path** and the digest
+of the returns is not. The generator was innocent throughout; the
+transcendental was not. Pinning NumPy would not have helped.
+
+So the argument of this RFC — that a generated set is identified by a recipe
+and an explicit one by its values — was right, and its own specimens
+contradicted it. They now carry literal values, frozen in
+`engine/api/specimen_scenarios.py`, rounded to six decimal places, which
+puts them clear of a last-ULP disagreement by eleven orders of magnitude.
+`tests/test_api_scenarios.py` asserts structurally that no worked example
+rests on a generated set, because CI cannot catch a recurrence: it builds
+the evidence pack twice on **one** runner, where a seeded generator is
+perfectly stable.
+
+**And it exposed an older overclaim.** The pack's benchmarks section said it
+"rebuilds to the same digest anywhere". It never did — `LongTermCare`,
+`LongevitySwap` and `PensionBuyout` still move across dispatch paths, and
+those bind no scenarios at all; `**` in their escalation and survival maths
+dispatches the same way `exp` does. RFC-068's specimens made a false claim
+falser, and removing them reduces it from eight templates to three rather
+than closing it. `evidence.REPRODUCIBILITY_SCOPE` now states what the digest
+is an identity for: reproducible on a machine, which is what CI asserts and
+what the claim was reaching for, and not across them.
+
+Nothing else the repo claims is weakened. The dual-executor invariant
+compares two executors on one machine; so does the registry's determinism
+check; and every golden test either states a closed form or reconciles to a
+tolerance. The one claim that quantified over machines was the one that was
+wrong.
 
 `source` is deliberately not carried for the same reason read backwards. It
 is outside `ScenarioSet.__fingerprint__` on purpose — two sets holding the
