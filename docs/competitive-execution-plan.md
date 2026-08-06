@@ -370,6 +370,39 @@ chassis, joint-life, deferred members) and
 `engine/library/longevity_swap.py` (fixed-leg vs floating-leg on a survival
 index). Golden tests with closed-form joint-life annuity values.
 
+**Which equivalence class these belong to — settle it first (noted after
+C2, 2026-08).** §1.2 reads as though every new template must be bitwise
+identical under the interpreted *and* vectorized executors. That is the
+rule for the annual-step templates, and it is not automatically the rule
+here, because "on the payout-annuity chassis" means inheriting
+`PayoutAnnuity`'s design — a `TimeAxis` at a payment frequency, a
+`ValuationBasis`, a `YieldCurve` — and that template **explicitly does not
+support the interpreted executor** (see its module docstring: the
+interpreted path is the per-policy loop the basis exists to avoid). It has
+no worked example either, so it is not in the evidence pack's specimen set
+(`default_specimens` walks `EXAMPLES`, which covers 8 of the 14
+templates) and it is not among the 6 the attestation reports as bitwise.
+
+So there are three groups in the library today, not two: the per-policy
+bitwise class, RFC-061's block class (pooled/coupling), and the
+basis-chassis templates that are vectorized-only by construction. A buy-out
+built on that chassis joins the third; one written on annual steps and a
+plain mortality table could join the first. **That is a design choice, not
+a discovery**, and it decides whether C3 owes a bitwise equivalence test or
+a documented statement of which executors it supports.
+
+Two consequences worth pricing in either way. A template with no worked
+example is invisible to the evidence pack, so if C3 wants its attestation
+it needs an `EXAMPLES` entry — which the RFC-032 catalogue can only carry
+if the request schema reaches its assumption objects. And a longevity swap
+whose floating leg reduces across a *book's* realised survival is a pooled
+template (`@pool`), which puts it in the block class regardless of chassis;
+one that settles per life on an external published index is not.
+
+Whichever is chosen, §1.2 is not weakened — the RFC states the class and
+the tests assert against that class, exactly as RFC-061 did for the pooled
+pair.
+
 ### C4 — US health / LTC (RFC-042) — effort M
 `engine/library/long_term_care.py` on the multi-state engine
 (`engine/data/multistate.py`, `engine/library/income_protection.py` is the
@@ -718,12 +751,8 @@ order unless there is a concrete reason not to.
 RFC-041) is the next item — `engine/library/pension_buyout.py` on the
 payout-annuity chassis (joint-life, deferred members) and
 `engine/library/longevity_swap.py` (fixed leg against a floating survival
-index), with closed-form joint-life annuity values as the goldens. Note
-that unlike C1 and C2 these are **templates**, so §1.2's dual-executor
-invariant applies to them directly: they must be bitwise-identical under
-the interpreted and vectorized executors, and a longevity swap that reduces
-across lives would put itself in the block class instead — decide which
-class each belongs to before writing the first `@var`. One dated-set gap
+index), with closed-form joint-life annuity values as the goldens. Read the
+classification note below before writing the first `@var`. One dated-set gap
 is on record from C1 and C2 and neither closed it: the prescribed
 assumption sets and scenario paths (VM-22's Standard Projection Amount, the
 prescribed cash-flow-testing scenarios). B1 (§4) remains unstarted and
