@@ -122,6 +122,14 @@ interest rate downward scenario, and to zero in certain cases**. That is the
 module's `interest_spread_correlation` of 0.25 with A unchanged at 0.5, and it
 corroborates both the value and the fact that only the spread cell moved.
 
+The 2027 consolidated text (`02015R0035 — EN — 30.01.2027`) was retrieved by
+the same Cellar route while closing the residual above, and its Article 164(3)
+carries `B` in the interest/spread cells with *"the parameter B shall be equal
+to 0,25"* and `A` unchanged at 0,5. So this section could be upgraded from
+*published descriptions of the amending act* to **primary text** whenever
+somebody wants to; it is left as it stands because nothing here asserts
+against it yet.
+
 `tests/test_regdiff.py` asserts that last point directly:
 `interest_correlation` does **not** appear among the divergent clauses
 between the two texts, because parameter A against equity and property is 0.5
