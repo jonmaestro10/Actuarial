@@ -66,6 +66,8 @@ is not a rounding.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from engine.data.rates import YieldCurve
@@ -417,7 +419,308 @@ def combined(*triangles: Triangle) -> Triangle:
 
 
 __all__ = [
-    "FACTOR_METHODS", "TIMINGS", "ChainLadder", "Measurement",
-    "RiskAdjustment", "Triangle", "combined", "development_factors",
-    "expedient_error", "measure_lic",
+    "FACTOR_METHODS", "TIMINGS", "BootstrapResult", "ChainLadder",
+    "MackResult", "Measurement", "RiskAdjustment", "Triangle", "combined",
+    "development_factors", "expedient_error", "mack_standard_error",
+    "measure_lic", "odp_bootstrap",
 ]
+
+
+# --------------------------------------------------------------------------
+# Reserve variability: Mack (1993), and the bootstrap
+# --------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class MackResult:
+    """Mack's prediction errors for a chain-ladder reserve.
+
+    ``by_period`` is the standard error of each accident period's reserve
+    and ``total`` that of the whole; the two do **not** add, and the gap is
+    the point of the second formula. Accident periods share the same
+    development factors, so their reserves are positively correlated and the
+    total's error exceeds the square root of the sum of squares — adding in
+    quadrature, the natural thing to do, understates it.
+    """
+
+    by_period: np.ndarray
+    total: float
+    sigma_squared: np.ndarray
+    reserve: np.ndarray
+    total_reserve: float
+
+    @property
+    def coefficient_of_variation(self) -> np.ndarray:
+        """Standard error as a fraction of each reserve.
+
+        The form Mack's Table 3 publishes, and the one worth reporting: an
+        error of 100 means nothing until it is set against the reserve it
+        belongs to. Zero where the reserve is zero — the oldest accident
+        period is fully developed and has no reserve to be uncertain about.
+        """
+        return np.divide(self.by_period, self.reserve,
+                         out=np.zeros_like(self.by_period),
+                         where=self.reserve != 0.0)
+
+    @property
+    def total_coefficient_of_variation(self) -> float:
+        if self.total_reserve == 0.0:
+            return 0.0
+        return self.total / self.total_reserve
+
+    @property
+    def quadrature_total(self) -> float:
+        """What adding the periods in quadrature would give.
+
+        Computed on purpose so the correlation term can be reported rather
+        than assumed away. Always **below** :attr:`total`.
+        """
+        return float(np.sqrt(np.sum(self.by_period ** 2)))
+
+    def __fingerprint__(self):
+        return {"by_period": self.by_period, "total": self.total,
+                "sigma_squared": self.sigma_squared,
+                "reserve": self.reserve,
+                "total_reserve": self.total_reserve}
+
+
+def mack_standard_error(ladder: ChainLadder) -> MackResult:
+    """Mack (1993)'s distribution-free prediction error, exactly as published.
+
+    *Distribution-Free Calculation of the Standard Error of Chain Ladder
+    Reserve Estimates*, ASTIN Bulletin 23(2), 213–225. The estimator is
+    distribution-free in the sense that matters here: it assumes only that
+    ``E[C_{i,j+1} | C_{i,j}] = f_j C_{i,j}`` and that the conditional
+    variance is proportional to ``C_{i,j}``, not that anything is lognormal.
+
+    Three pieces:
+
+    - ``σ²_j``, the proportionality constant in that variance, estimated
+      from the observed factors around ``f_j``;
+    - the per-period mean squared error, which carries **two** terms — the
+      process variance of the future development, and the estimation
+      variance of the factors themselves. The second is what a naive
+      simulation of the fitted model omits;
+    - the total, which adds a **correlation** term because every accident
+      period is developed with the same factors.
+
+    ``σ²`` for the final development period cannot be estimated — there is
+    one observation and no degrees of freedom left — so Mack extrapolates it
+    as ``min(σ⁴_{n-3}/σ²_{n-4}, σ²_{n-4}, σ²_{n-3})``, which is his §3 and
+    is used here rather than a zero. Setting it to zero would declare the
+    last factor known exactly, which is the one place the data says least.
+
+    **Volume-weighted factors only.** The whole derivation is conditional on
+    the volume-weighted estimator being the one used; a simple-average
+    triangle has different factors and these formulae do not describe their
+    error. Refused rather than computed.
+    """
+    if ladder.method != "volume":
+        raise ValueError(
+            f"Mack's formulae are derived for the volume-weighted "
+            f"development factors and this ladder uses {ladder.method!r}. "
+            f"The estimator is not a wrapper around whatever factors it is "
+            f"given — σ² is estimated around f_j, and a different f_j is a "
+            f"different model."
+        )
+    if ladder.tail != 1.0:
+        raise ValueError(
+            f"this ladder carries a tail factor of {ladder.tail}, and Mack's "
+            f"formulae stop at the end of the triangle. A tail's own "
+            f"uncertainty is not in the data and is not invented here."
+        )
+    n = ladder.triangle.n_periods
+    if n < 4:
+        raise ValueError(
+            f"Mack's σ² extrapolation for the final development period "
+            f"needs three earlier ones; a {n}-period triangle has too few"
+        )
+    observed = ladder.triangle.cumulative
+    square = ladder.square
+    factors = ladder.factors
+
+    #: Σ_i C[i, j] over the rows that contribute to f_j — the same rows, so
+    #: the estimation-variance term is scaled by the volume behind it.
+    column_sums = np.array(
+        [np.nansum(observed[:n - 1 - j, j]) for j in range(n - 1)],
+        dtype=np.float64)
+
+    sigma2 = np.zeros(n - 1, dtype=np.float64)
+    for j in range(n - 2):
+        rows = n - 1 - j
+        current = observed[:rows, j]
+        following = observed[:rows, j + 1]
+        sigma2[j] = float(
+            np.sum(current * (following / current - factors[j]) ** 2)
+            / (rows - 1))
+    sigma2[n - 2] = min(sigma2[n - 3] ** 2 / sigma2[n - 4],
+                        sigma2[n - 4], sigma2[n - 3])
+
+    ultimates = square[:, -1]
+    mse = np.zeros(n, dtype=np.float64)
+    for i in range(1, n):
+        terms = range(n - 1 - i, n - 1)
+        mse[i] = ultimates[i] ** 2 * sum(
+            sigma2[j] / factors[j] ** 2
+            * (1.0 / square[i, j] + 1.0 / column_sums[j])
+            for j in terms)
+
+    total_mse = float(mse.sum())
+    for i in range(1, n):
+        terms = range(n - 1 - i, n - 1)
+        total_mse += float(
+            ultimates[i] * ultimates[i + 1:].sum()
+            * sum(2.0 * sigma2[j] / (factors[j] ** 2 * column_sums[j])
+                  for j in terms))
+
+    return MackResult(
+        by_period=np.sqrt(mse), total=float(np.sqrt(total_mse)),
+        sigma_squared=sigma2, reserve=ladder.reserve,
+        total_reserve=ladder.total_reserve,
+    )
+
+
+@dataclass(frozen=True)
+class BootstrapResult:
+    """An over-dispersed Poisson bootstrap of the reserve distribution.
+
+    ``reserves`` is one total reserve per simulation, in the order the
+    pinned stream produced them — so the same seed gives the same array,
+    element for element, which is what makes a *range* reproducible rather
+    than merely stable in distribution.
+    """
+
+    reserves: np.ndarray
+    seed: int
+    scale: float
+    point_estimate: float
+
+    @property
+    def standard_error(self) -> float:
+        """Sample standard deviation of the simulated reserves.
+
+        ``ddof=1``: these are simulations of a distribution, not the
+        population itself.
+        """
+        return float(np.std(self.reserves, ddof=1))
+
+    @property
+    def coefficient_of_variation(self) -> float:
+        if self.point_estimate == 0.0:
+            return 0.0
+        return self.standard_error / self.point_estimate
+
+    def percentile(self, q) -> np.ndarray:
+        """Reserve at the given percentile(s) of the simulated distribution."""
+        return np.percentile(self.reserves, q)
+
+    def __fingerprint__(self):
+        return {"seed": self.seed, "scale": self.scale,
+                "point_estimate": self.point_estimate,
+                "n_samples": int(self.reserves.size),
+                "standard_error": self.standard_error}
+
+
+def odp_bootstrap(triangle: Triangle, *, n_samples: int = 1000,
+                  seed: int = 0, method: str = "volume",
+                  process_variance: bool = False) -> BootstrapResult:
+    """England–Verrall's over-dispersed Poisson bootstrap of the reserve.
+
+    Resample the Pearson residuals of the fitted incremental triangle,
+    refit, and read off a reserve; repeat. The over-dispersion parameter
+    ``φ`` is the scaled Pearson statistic, ``Σ r²/(N − p)``, and residuals
+    are scaled by ``√(N/(N − p))`` so the resampled triangle carries the
+    variance the fit implies rather than the smaller one the residuals show
+    after the parameters have absorbed some of it.
+
+    **The seed is an argument with a default, not a hidden global.** A
+    reserve *range* that cannot be reproduced is an opinion; the same seed
+    gives the same simulations element for element, and that is asserted
+    rather than described.
+
+    ``process_variance`` decides which of two different numbers comes back,
+    and the default is the smaller one:
+
+    - ``False`` — the distribution of the **fitted** reserve, the
+      *estimation* error alone. This is what resampling the residuals
+      measures, and on the Taylor–Ashe triangle it is about 15%.
+    - ``True`` — a gamma draw with mean ``R*`` and variance ``φ R*`` around
+      each simulated reserve, which adds the *process* variance of the
+      future payments and gives a **prediction** error, about 16% there.
+
+    Mack's is a prediction error, so only the second is comparable with it —
+    and they still disagree, because they are different models rather than
+    two estimates of one number. The default is ``False`` because a process
+    step added silently would let an estimation error be quoted against a
+    published prediction error and look close enough to pass.
+    """
+    if n_samples < 2:
+        raise ValueError(
+            f"a bootstrap of {n_samples} sample(s) has no distribution to "
+            f"describe; the standard error would be undefined or zero"
+        )
+    ladder = ChainLadder(triangle, method=method)
+    n = triangle.n_periods
+    observed = triangle.cumulative
+    upper = ~np.isnan(observed)
+
+    # Fitted incremental claims, from the backwards recursion on the fitted
+    # ultimates — the standard ODP fit, which reproduces the chain ladder.
+    fitted = np.array(ladder.square, dtype=np.float64)
+    for i in range(n):
+        for j in range(n - 2, -1, -1):
+            fitted[i, j] = fitted[i, j + 1] / ladder.factors[j]
+    fitted_increments = np.diff(fitted, axis=1, prepend=0.0)
+    increments = np.diff(np.where(upper, observed, np.nan), axis=1,
+                         prepend=0.0)
+
+    cells = upper
+    n_cells = int(cells.sum())
+    n_parameters = 2 * n - 1
+    if n_cells <= n_parameters:
+        raise ValueError(
+            f"a {n}-period triangle has {n_cells} observations and the "
+            f"model has {n_parameters} parameters; there are no degrees of "
+            f"freedom for the over-dispersion to be estimated from"
+        )
+    with np.errstate(invalid="ignore", divide="ignore"):
+        residuals = ((increments - fitted_increments)
+                     / np.sqrt(np.abs(fitted_increments)))
+    pool = residuals[cells & np.isfinite(residuals)]
+    scale = float(np.sum(pool ** 2) / (n_cells - n_parameters))
+    adjustment = np.sqrt(n_cells / (n_cells - n_parameters))
+
+    rng = np.random.default_rng(seed)
+    reserves = np.empty(n_samples, dtype=np.float64)
+    for sample in range(n_samples):
+        drawn = rng.choice(pool, size=n_cells, replace=True) * adjustment
+        resampled = np.array(fitted_increments, dtype=np.float64)
+        resampled[cells] += drawn * np.sqrt(np.abs(
+            fitted_increments[cells]))
+        cumulative = np.cumsum(np.where(cells, resampled, 0.0), axis=1)
+        cumulative[~cells] = np.nan
+        try:
+            refit = ChainLadder(Triangle(cumulative), method=method)
+        except ValueError:
+            # A resampled triangle can go negative in a cell; the draw is
+            # not a triangle and is refused rather than clipped, which would
+            # bias the range toward the point estimate.
+            reserves[sample] = np.nan
+            continue
+        reserves[sample] = refit.total_reserve
+
+    if process_variance:
+        finite = np.isfinite(reserves) & (reserves > 0.0)
+        # Gamma with mean R* and variance φR*: shape R*/φ, scale φ. The
+        # over-dispersed Poisson's continuous analogue, which is what lets
+        # a non-integer claim amount have a Poisson-like variance.
+        reserves[finite] = rng.gamma(reserves[finite] / scale, scale)
+
+    kept = reserves[np.isfinite(reserves)]
+    if kept.size < 2:
+        raise ValueError(
+            f"only {kept.size} of {n_samples} resampled triangles were "
+            f"valid; this triangle's residuals are too large for the "
+            f"bootstrap to describe it"
+        )
+    return BootstrapResult(reserves=kept, seed=int(seed), scale=scale,
+                           point_estimate=ladder.total_reserve)

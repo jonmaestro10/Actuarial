@@ -56,9 +56,10 @@ PUBLISHED_FACTORS = (3.49, 1.75, 1.46, 1.174, 1.104, 1.086, 1.054, 1.077,
 PUBLISHED_RESERVES = (95, 470, 710, 985, 1419, 2178, 3920, 4279, 4626)
 PUBLISHED_TOTAL = 18681
 
-#: Table 3, p. 222 — standard error as a percentage of each reserve. Not
-#: asserted: the repo has no Mack variability (execution plan C5). Recorded
-#: so that C5 arrives with a published target rather than a self-made one.
+#: Table 3, p. 222 — standard error as a percentage of each reserve.
+#: Asserted since C5 (RFC-054); the recording came first, which is the point
+#: — the target was published before the implementation existed, so there
+#: was nothing to tune it toward.
 PUBLISHED_STANDARD_ERROR_PCT = (80, 26, 19, 27, 29, 26, 22, 23, 29)
 PUBLISHED_TOTAL_STANDARD_ERROR_PCT = 13
 
@@ -136,23 +137,32 @@ def test_the_simple_average_disagrees_and_that_is_the_point(taylor_ashe):
         / taylor_ashe.total_reserve < 0.25
 
 
-def test_the_standard_errors_are_recorded_but_nothing_computes_them_yet():
-    """The honest half of this source.
+def test_the_standard_errors_are_macks(taylor_ashe):
+    """Table 3, p. 222 — the reason Mack's paper is famous.
 
-    Table 3 is the reason Mack's paper is famous, and the repo cannot
-    reproduce it: reserve variability is execution-plan item C5 and is
-    unstarted. This asserts that the targets are on record and that nothing
-    here quietly claims to have met them.
+    This test used to assert the opposite: that `mack_standard_error` did
+    **not** exist, and that the targets were on record with nothing claiming
+    to have met them. C5 landed, so it now asserts the thing it was holding
+    a place for.
+
+    That ordering is the point and is worth stating. The targets were
+    transcribed from the paper before any code could produce them, so there
+    was no implementation to tune them toward — which is the difference
+    between a published check and a regression test of one's own output.
     """
-    assert len(PUBLISHED_STANDARD_ERROR_PCT) == len(PUBLISHED_RESERVES)
-    assert PUBLISHED_TOTAL_STANDARD_ERROR_PCT == 13
-    import engine.report.incurred_claims as lic
+    from engine.report.incurred_claims import mack_standard_error
 
-    for absent in ("mack_standard_error", "standard_error", "bootstrap"):
-        assert not hasattr(lic, absent), (
-            f"{absent} exists now — C5 has landed, so wire it to "
-            f"PUBLISHED_STANDARD_ERROR_PCT and delete this test"
-        )
+    mack = mack_standard_error(taylor_ashe)
+    assert len(PUBLISHED_STANDARD_ERROR_PCT) == len(PUBLISHED_RESERVES)
+
+    ours = [round(100 * cv) for cv in mack.coefficient_of_variation[1:]]
+    assert tuple(ours) == PUBLISHED_STANDARD_ERROR_PCT
+    assert round(100 * mack.total_coefficient_of_variation) == \
+        PUBLISHED_TOTAL_STANDARD_ERROR_PCT == 13
+
+    # The paper's own point about the total: it is not the periods added in
+    # quadrature, because they share their development factors.
+    assert mack.total > mack.quadrature_total
 
 
 # --------------------------------------------------------------------------
