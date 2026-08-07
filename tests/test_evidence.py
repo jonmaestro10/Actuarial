@@ -300,10 +300,14 @@ def test_the_pack_is_written_content_addressed(pack, tmp_path):
     directory = pack.write(tmp_path)
     assert directory.name == pack.digest
     written = {path.name for path in directory.iterdir()}
+    # Enumerated rather than derived from `pack.sections`, deliberately: this
+    # is the one place a new section has to be added on purpose. Deriving it
+    # would let a section appear in the pack — and in what a client is handed
+    # as evidence — without anyone having decided it belonged there.
     assert written == {"index.md", "manifest.json", "environment.json",
                        "tests.json", "identities.json", "equivalence.json",
                        "coverage.json", "parity.json", "audit.json",
-                       "benchmarks.json"}
+                       "benchmarks.json", "compliance.json"}
 
     manifest = json.loads((directory / "manifest.json").read_text())
     assert manifest["pack_digest"] == pack.digest

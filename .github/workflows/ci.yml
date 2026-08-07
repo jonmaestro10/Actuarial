@@ -114,6 +114,28 @@ jobs:
           python scripts/evidence_pack.py --out evidence-rebuild
           diff -r evidence evidence-rebuild
 
+  # RFC-079's dependency check. Advisory rather than blocking, and the reason
+  # is stated rather than assumed: engine/core, data, library and report have
+  # NumPy as their only runtime dependency (§1.4), so an advisory here almost
+  # always lands in an optional extra or a test tool. A blocking gate on a feed
+  # that changes daily becomes a gate people disable, and a disabled gate
+  # reports nothing at all — whereas this leaves the finding in the build
+  # record either way, which is what an auditor asks for.
+  #
+  # `continue-on-error` and not `|| true`: the step's own conclusion stays
+  # visible in the run summary, where `|| true` would render it green.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test,data,api,excel]" pip-audit
+      - name: Audit the installed dependency set
+        run: pip-audit --strict --progress-spinner off
+
   # RFC-072's boundary, measured rather than quoted. A separate job because
   # it is the only thing in the repo that needs a compiler: installing it
   # into the matrix above would put a 60 MB llvmlite download in front of

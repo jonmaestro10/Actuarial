@@ -85,6 +85,9 @@ from engine.api.catalogue import (
 )
 from engine.api.examples import example as worked_example, unavailable
 from engine.api.reports import measure_run
+from engine.api.hardening import (
+    API_CSP, SECURITY_HEADERS, UI_CSP, RateLimit,
+)
 from engine.api.store import RunState, RunStore
 from engine.api.tenancy import Tenancy, tenant_of, tenants_in
 from engine.api.ui import UI_FILES, media_type, read_asset
@@ -144,7 +147,8 @@ def create_app(models: dict | None = None, *,
                audit: Any = None,
                artifacts: Any = None,
                evidence: Any = None,
-               dedupe_across_tenants: bool = True) -> "FastAPI":
+               dedupe_across_tenants: bool = True,
+               rate_limit: int = 0) -> "FastAPI":
     """Build the application.
 
     ``models`` restricts the catalogue; ``build`` replaces the whole
@@ -273,6 +277,44 @@ def create_app(models: dict | None = None, *,
     scope = Tenancy(dedupe_across_tenants=dedupe_across_tenants)
     app.state.tenancy = scope
     app.state.tenants = named_tenants
+
+    # RFC-079's hardening. The limiter is off by default (rate_limit=0)
+    # because the library and the local demo must keep behaving as they did,
+    # and a limit is a deployment's decision about its own capacity.
+    limiter = RateLimit(rate=rate_limit) if rate_limit else None
+    app.state.rate_limit = limiter
+
+    @app.middleware("http")
+    async def _harden(request: Request, call_next):
+        """Security headers on every response, and the rate limit before work.
+
+        The limiter is keyed by bearer token rather than by client address:
+        the address is a proxy's, and every tenant behind one NAT would share
+        a bucket. An unauthenticated deployment keys on the address because it
+        has nothing better, and says so in RATE_LIMIT_SCOPE.
+        """
+        if limiter is not None and request.url.path != "/health":
+            token = request.headers.get("authorization") or ""
+            key = token or (request.client.host if request.client else "-")
+            if not limiter.check(key):
+                return JSONResponse(
+                    {"detail": "rate limit exceeded"}, status_code=429,
+                    headers={"Retry-After": str(limiter.retry_after(key)),
+                             **SECURITY_HEADERS},
+                )
+        response = await call_next(request)
+        for header, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        # The UI needs its own two assets; every other route should never
+        # load a subresource at all.
+        is_ui = request.url.path == "/ui" or request.url.path.startswith("/ui/")
+        response.headers.setdefault("Content-Security-Policy",
+                                    UI_CSP if is_ui else API_CSP)
+        if not is_ui:
+            # Results are a tenant's numbers, and a shared cache holding them
+            # is a cross-tenant read no route check can see.
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
 
     def _tenant(request: Request):
         """The tenant this request speaks for."""

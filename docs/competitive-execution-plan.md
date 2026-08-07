@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,630
+   naive implementation otherwise. The suite (`pytest`, currently 2,648
    tests — 2,537 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
@@ -1150,7 +1150,7 @@ factory reads. The compose smoke test is written, marked `slow`, and skipped
 where Docker is absent **rather than simulated**: a stubbed version would
 assert that the stub works.
 
-### G2 — SOC 2 substrate (RFC-058) — effort M
+### G2 — SOC 2 substrate (RFC-079) — effort M — **done**
 Certification is organizational, but the technical substrate an auditor asks
 for is code, and most of it already exists — this item joins it up.
 **Build:** `docs/compliance/soc2-controls.md` mapping each Trust Services
@@ -1166,6 +1166,47 @@ Depends on D1–D3, F1.
 **Accept:** the compliance section builds in CI; every control row in the
 mapping names a test or generated artifact, and a CI check fails if a named
 test disappears.
+
+**Outcome (RFC-079).** Nothing here implements a control; the item is the
+joining up, as the build note says. Nineteen rows across CC, A, PI and C, each
+naming a pytest node id, and `unresolved_evidence` fails the build when one
+stops being collected.
+
+**The document is the source, not generated from code**, which was the harder
+call. A dict of controls that emitted the Markdown would make drift impossible
+and produce a file nobody edits — and the mapping from a criterion to a
+mechanism is a *judgement* ("CC7.2 anomalies are monitored" is satisfied by a
+digest-chained audit log only if you accept that argument), which belongs in
+prose a person signed. Drift stays possible where it matters least, prose going
+stale about a mechanism that still exists, and impossible where it matters
+most.
+
+**Three rows say "not claimed"** — continuity, restore drills, data disposal —
+and a test asserts at least one always does. A control map with no gaps is a
+map nobody audited, and its totals would be a function of what somebody chose
+to write down.
+
+**Its own test found the interesting bug.** `compliance()` computed unresolved
+evidence unconditionally, so a build without a test inventory reported "19
+controls, and 16 cite evidence the suite no longer collects" about a suite it
+had never asked — alarming and false. Not checked is not the same as all
+missing; the same family as a skipped measurement reading like a passing one,
+from the opposite side.
+
+**Both hardening controls are narrower than their names, and say so.** The rate
+limit is in-process, so N replicas admit N times the rate, and it is not a DoS
+control because an attacker without a token never reaches it — `RATE_LIMIT_SCOPE`
+carries both sentences and a test asserts it still does. HSTS is *deliberately
+absent*, with a test for the absence: it promises something about a scheme this
+process cannot know, and a meaningless header is read as coverage.
+
+**`pip-audit` is advisory**, because a blocking gate on a daily-changing feed
+becomes a gate people disable — and `continue-on-error` rather than `|| true`,
+so the step's conclusion stays visible instead of being painted green. That
+produced a second finding: `local_matrix.py` reads the workflow, picked the job
+up automatically, and would have *blocked* on it. A local gate stricter than
+the CI it mirrors is not stricter, it is one that disagrees, and the fix
+everyone reaches for is to stop running it.
 
 ### G3 — Release & support cadence (RFC-059) — effort S
 The open answer to "quarterly vendor library updates on a contractual
