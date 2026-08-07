@@ -58,6 +58,31 @@ named by the pack digest, so `diff -r` fails if any section moved. The cache
 clear is not superstition: a `SyntaxWarning` hidden behind a stale `.pyc`
 reached CI once.
 
+### Before you merge — the whole matrix, locally
+
+```bash
+python scripts/local_matrix.py            # every job in ci.yml, every version
+python scripts/local_matrix.py --list     # what would run, and on what
+python scripts/local_matrix.py --job test # one job
+```
+
+This reads `.github/workflows/ci.yml` and runs each job's own commands, under
+each interpreter that file names, in a throwaway virtualenv. It takes several
+minutes; the four checks above take about two.
+
+**A version it cannot find is a failure, not a footnote.** If `python3.13` is
+not on your PATH the run exits non-zero and names it, because a machine with
+one Python must not be able to print a report that looks like a full matrix —
+the same failure shape as a parametrised test over an empty list.
+`--allow-uncovered` waives *absence* only, never a real failure, and says so
+in the summary next to the verdict.
+
+It is **not CI**: one machine, one architecture, one libm. `np.exp` and `**`
+are not bit-portable across microarchitectures, so the cross-machine float
+difference CI caught once is invisible here. It is the strongest substitute
+available while the repository has no Actions minutes — see RFC-077, and
+§1.9a of the execution plan for what an item verified this way may claim.
+
 ---
 
 ## Benchmarks
