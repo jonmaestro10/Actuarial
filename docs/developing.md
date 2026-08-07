@@ -108,6 +108,7 @@ python scripts/benchmark_nested.py      # nested stochastic
 python scripts/benchmark_lsmc.py        # the proxy model
 python scripts/benchmark_compiled.py    # compiled vs vectorized
 python scripts/benchmark_gpu.py         # the device workload
+python scripts/benchmark_m2.py          # milestone M2's published claim
 ```
 
 Two of them report a **split** rather than one number, deliberately.
