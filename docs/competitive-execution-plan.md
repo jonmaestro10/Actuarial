@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,674
+   naive implementation otherwise. The suite (`pytest`, currently 2,677
    tests — 2,537 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
@@ -468,13 +468,36 @@ sits beside the identity as the *evidence*, and a run made with
 `require_matching_arithmetic=False` records `arithmetic="mixed"` because the
 record is the one place that fact could otherwise not be recovered.
 
-**Milestone M2 — "the unanswerable benchmark":** B1 + B2. Publish the
-nested-stochastic numbers (the 20M-inner-cell benchmark, compiled, across
-N workers) with the bitwise-reproducibility statement no incumbent can make.
-**Not claimed yet** — B2's registry half is outstanding, and the statement
-itself has changed shape: it is now "bitwise across workers that attest
-alike", which is still a claim no incumbent makes and should be published in
-those words rather than the original ones.
+**Milestone M2 — "the unanswerable benchmark":** B1 + B2 — **reached**
+(`scripts/benchmark_m2.py`, `tests/test_m2.py`).
+
+**24.0M inner policy-scenario cells in 103.1s**, 200 policies x 100 outer x
+200 inner over 6 valuation dates, and the same block split four ways is
+**bitwise identical** to the block run whole — 120,000 measured cells compared
+as bit patterns, shape and dtype asserted separately.
+
+Two corrections to this milestone as it was written. **B2's registry half was
+not outstanding**: `record_dispatched_run` carries the shard tree and
+`tests/test_dispatch.py` asserts it survives the round trip. The note was
+stale.
+
+And the property the claim rests on **had never been measured**. RFC-075
+established that a *flat* projection reduces bitwise across shards; a nested
+valuation is a different workload — inner projections launched per outer state
+per valuation date — and whether it shards without moving a bit was assumed.
+It does, and `tests/test_m2.py` now asserts it on every commit.
+
+The statement is published in the words measurement supports:
+
+> This engine reproduces a nested-stochastic valuation **bitwise across
+> workers that attest the same arithmetic**, and **refuses to reduce** across
+> workers that do not.
+
+Not "any topology" — that was the original wording and RFC-075 measured it
+false, because `np.exp` is not bit-portable across microarchitectures. A test
+asserts the script still records that the stronger sentence was refuted, since
+the pressure is always toward the stronger claim. The refusal is the half no
+incumbent offers, because none of them checks.
 
 ### B3 — GPU kernels (RFC-053) — effort L — **machinery built, device unmeasured**
 
