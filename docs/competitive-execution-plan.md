@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,574
-   tests — 2,528 of them without the `[compile]` extra, whose 45 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,579
+   tests — 2,533 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
@@ -95,11 +95,14 @@ them; the acceptance criteria assume them.
    shippable; do not start a second item before the first's RFC is
    `implemented` and CI is green.
 9a. **Run the matrix locally before you merge, and say which claim you are
-   making.** CI triggers only on a push to `main`, so a pull request carries no
-   checks and `python scripts/local_matrix.py` (RFC-077) is the only check a
-   change gets before it lands. It reads `.github/workflows/ci.yml` and runs
-   every job under every version that file names, and a version it could not
-   check **fails** rather than going unmentioned.
+   making.** CI triggers on a pull request into `main` and nothing else — no
+   push trigger, so a merge runs nothing. Run `python scripts/local_matrix.py`
+   (RFC-077) before opening the PR: it reads `.github/workflows/ci.yml` and
+   runs every job under every version that file names, and a version it could
+   not check **fails** rather than going unmentioned. The `test-arm64` job
+   reports `CI ONLY` instead, because an x86 machine cannot stand in for it at
+   any point and failing on it would make the gate unpassable rather than
+   stricter.
 
    It remains a strictly weaker claim than CI — one machine, one architecture,
    one libm. RFC-072's correction is the worked example and is worth knowing
@@ -108,10 +111,10 @@ them; the acceptance criteria assume them.
    false on the runner, and it survived the entire life of the item because it
    was only ever measured in one place.
 
-   So an item is **locally verified**, not done, until the push to `main` has
-   run it — which is now the moment after the merge rather than before. Watch
-   that run; `main` going red is a normal outcome of this arrangement and the
-   response is to fix forward, not to leave it. (The provenance of the term:
+   So an item is **locally verified**, not done, until the pull request's own
+   run has gone green — which is before the merge, so do not merge on a local
+   green alone. The one thing that run covers and no local one can is the
+   `test-arm64` job. (The provenance of the term:
    the account's Actions minutes ran out during RFC-071 and a $0 spending limit
    turns that into *no run object at all* rather than a failure, so six items
    were merged on one interpreter before CI returned and re-ran them.)
@@ -1306,16 +1309,18 @@ already pointed at.
 outage's cause was settled and was never a repository fault: a free GitHub
 plan, its included Actions minutes spent, and a default $0 spending limit that
 turns exhaustion into *no run object created at all* rather than a failed run.
-It resolved on the monthly reset. RFC-077 then cut what the workflow costs
-twice over: the duplicate `push` + `pull_request` pair went first, and then
-`pull_request` itself, leaving **`push` to `main` as the only trigger**. If it
-lapses again, the options are a spending limit or making the repository public,
-where free plans get unlimited Actions minutes.
+It resolved on the monthly reset. RFC-077 then cut what the workflow costs: the
+duplicate `push` + `pull_request` pair went first, and the trigger settled at
+**`pull_request` into `main` and nothing else**, so a merge adds no second run
+on top of the PR that already ran. If it lapses again, the options are a
+spending limit or making the repository public, where free plans get unlimited
+Actions minutes.
 
-**So a pull request carries no checks.** Verify with
-`python scripts/local_matrix.py` before merging — it is now the only check a
-change gets before it lands — then let the push to `main` confirm it, and fix
-forward if it does not.
+**Checks land before the merge, so watch the PR's run and merge on it.** Run
+`python scripts/local_matrix.py` first — it catches most things without
+spending a minute — but it reports `CI ONLY` for `test-arm64`, which is the
+second architecture added precisely because the first CI run found a
+first-architecture bug.
 
 **What the first green run changes.** Every item through F9 is now verified on
 CI across 3.11, 3.12 and 3.13 — the six that were merged on one interpreter no
@@ -1796,18 +1801,30 @@ an open PR ran all four jobs twice against one commit — measured, fourteen of
 the thirty most recent runs, 47% of all billing. One run bills seven minutes,
 because GitHub rounds each *job* up to the whole minute.
 
-The trigger is now **`push: branches: ["main"]` and nothing else.** A branch
-can be pushed as often as the work needs and nothing runs until it lands. The
-`concurrency` block went with it: it existed to cancel superseded *branch*
-runs, and on `main` it was already exempt because cancelling there would
-discard the only evidence that a merged commit is green.
+The trigger settled at **`pull_request: branches: ["main"]` and nothing
+else** — `push` removed entirely, so a merge adds no second run on top of the
+pull request that already ran. Checks land *before* the merge, which is where
+they are worth most: `main` does not go red from a merge nobody verified. The
+`concurrency` group returns with it, now unconditional, because with `push`
+gone every run belongs to a pull request and no ref needs exempting. The cost
+moved rather than vanished — billing scales with pushes rather than merges,
+which is what `cancel-in-progress` bounds.
 
-**What that trades** is stated rather than discovered: a pull request carries
-no checks, so `main` is where a failure is found. Verify locally, merge,
-confirm, fix forward. Coverage of what *lands* is unchanged — every commit
-reaching `main` still meets the whole matrix — but the failure arrives after
-the merge, and `main` can be red in between. Which is what makes the second
-half of this item load-bearing rather than a convenience.
+**A second architecture came with it.** `test-arm64` runs one interpreter on
+`ubuntu-24.04-arm`, because the first CI run found a first-architecture bug and
+arm64 is the sharpest available probe for whatever else is like that: different
+SIMD and a different libm, where Intel-versus-AMD would barely differ. It is
+nearly free — arm64 standard runners reached private repositories in January
+2026, count against included minutes, and bill below the x64 rate — and it
+widens no claim, since executor equivalence and pack identity are both
+within-machine invariants.
+
+Adding it broke the local matrix in a way worth recording: `local_matrix.py`
+would have run the arm64 job's steps on x86 and printed *pass*. The reader
+learned to read `runs-on`, and then the obvious next step — failing on it like
+any other unchecked job — turned out to be wrong, because a gate that can never
+pass makes `--allow-uncovered` reflexive and that flag waives the fixable case
+too. Hence `CI ONLY`: reported in the verdict every run, never fatal.
 
 What was deliberately *not* added is a `paths-ignore` for documentation:
 `test_working_agreement.py`, `test_documentation.py` and

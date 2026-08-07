@@ -250,6 +250,120 @@ def test_a_failing_step_sets_a_failing_exit_status(monkeypatch):
     )
 
 
+def test_a_job_pinned_to_another_architecture_is_not_run_here(tmp_path):
+    """Guards a green line for a job that was never really run.
+
+    The arm64 job exists precisely because the architecture decides the answer
+    — RFC-072's correction is a test that asserted a property of the silicon.
+    Executing its steps on x86 would pass and would mean nothing, which is this
+    module's own failure mode reached from the other side: not a check that was
+    skipped and read as passing, but a check that ran on the wrong thing and
+    read as passing.
+
+    The step here is one that *would* fail if it ran, so a pass could only come
+    from the architecture guard working.
+    """
+    foreign = "x64" if lm.host_architecture() == "arm64" else "arm64"
+    label = "ubuntu-24.04-arm" if foreign == "arm64" else "ubuntu-latest"
+    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    job = lm.Job(name="elsewhere", python_versions=(here,),
+                 steps=(lm.Step(name="would fail if it ran", run="exit 3"),),
+                 runs_on=label)
+
+    outcome = lm.run_job(job, here, echo=False)
+    assert not outcome.checked, "a foreign-architecture job was run anyway"
+    assert outcome.kind == "architecture"
+    assert outcome.verdict == "CI ONLY"
+    assert foreign in outcome.detail and lm.host_architecture() in outcome.detail
+
+
+def test_another_architecture_is_reported_but_does_not_fail_the_run(monkeypatch):
+    """Guards the gate being made useless by being made stricter.
+
+    An x86 machine cannot stand in for the arm64 job at *any* point, so if that
+    failed the run, the documented pre-merge command could never pass. Everyone
+    would then pass `--allow-uncovered` by reflex — and that flag also waives a
+    missing interpreter, which is a real, fixable gap. Being strict here would
+    buy nothing and spend the strictness that matters.
+
+    So: exit 0, and the fact is printed in the verdict rather than a footnote.
+    The companion test below keeps the interpreter case fatal.
+    """
+    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    foreign_label = ("ubuntu-latest" if lm.host_architecture() == "arm64"
+                     else "ubuntu-24.04-arm")
+    job = lm.Job(name="test-elsewhere", python_versions=(here,),
+                 steps=(lm.Step(name="would fail if it ran", run="exit 3"),),
+                 runs_on=foreign_label)
+    monkeypatch.setattr(lm, "read_jobs", lambda *a, **k: (job,))
+
+    assert lm.main([]) == 0, (
+        "a job on another architecture failed the run; the local gate can "
+        "then never pass and --allow-uncovered becomes reflexive"
+    )
+    text = lm.summarise([lm.run_job(job, here, echo=False)],
+                        allow_uncovered=False)
+    assert "Not runnable on this" in text and "test-elsewhere" in text
+    assert "Only CI covers that" in text
+
+
+def test_a_missing_interpreter_still_fails_even_beside_another_architecture():
+    """Guards the architecture exemption leaking onto the fixable case.
+
+    These two are adjacent in the code and it would be easy to widen one into
+    the other. A missing interpreter is a gap in this machine's setup that the
+    developer can close by installing a Python, and it must keep failing.
+    """
+    absent = lm.Outcome("test", "3.99", checked=False, kind="interpreter",
+                        detail="no python3.99 on PATH")
+    elsewhere = lm.Outcome("test-arm64", "3.12", checked=False,
+                           kind="architecture", detail="needs arm64")
+    text = lm.summarise([absent, elsewhere], allow_uncovered=False)
+
+    assert "INCOMPLETE" in text, "the fixable gap stopped being reported"
+    assert "3.99" in text
+    assert absent.verdict == "NOT CHECKED" and elsewhere.verdict == "CI ONLY", (
+        "the two kinds of unchecked render identically, so a reader cannot "
+        "tell which one they can do something about"
+    )
+
+
+def test_the_architecture_comes_from_the_runner_label():
+    """Guards the arm64 job silently becoming an x64 one.
+
+    GitHub spells the architecture in the label suffix. If a rename made
+    `-arm` stop matching, the job would be treated as runnable here and the
+    guard above would never fire — the failure would be invisible rather than
+    loud, which is the shape this whole module is written against.
+    """
+    assert lm.Job("j", ("3.12",), (), "ubuntu-24.04-arm").architecture == "arm64"
+    assert lm.Job("j", ("3.12",), (), "ubuntu-22.04-arm").architecture == "arm64"
+    assert lm.Job("j", ("3.12",), (), "ubuntu-latest").architecture == "x64"
+
+    # And the real workflow still contains a job on each, so the guard has
+    # something to guard. A workflow that lost its arm64 job would leave the
+    # tests above passing over a matrix that no longer crosses architectures.
+    architectures = {j.architecture for j in lm.read_jobs()}
+    assert architectures == {"x64", "arm64"}, (
+        f"ci.yml covers only {architectures}; the second architecture is what "
+        f"catches a test asserting a property of the silicon"
+    )
+
+
+def test_a_job_without_a_runs_on_label_is_an_error(tmp_path):
+    """Guards the reader assuming a job can run here when it cannot say."""
+    path = _workflow(
+        "name: CI\non:\n  pull_request:\njobs:\n"
+        "  test:\n"
+        "    steps:\n      - uses: actions/setup-python@v5\n"
+        "        with:\n          python-version: '3.11'\n"
+        "      - run: pytest -q\n",
+        tmp_path,
+    )
+    with pytest.raises(lm.WorkflowUnreadable, match="runs-on"):
+        lm.read_jobs(path)
+
+
 def test_the_summary_never_claims_more_than_one_machine():
     """Guards the claim CLAUDE.md forbids restoring.
 

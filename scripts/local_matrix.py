@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -102,11 +103,34 @@ class Step:
 
 @dataclass(frozen=True)
 class Job:
-    """A workflow job, and the interpreters it is defined over."""
+    """A workflow job, the interpreters it is defined over, and where it runs.
+
+    ``runs_on`` is carried because a job pinned to a different architecture is
+    one this machine **cannot** stand in for. Running its steps here anyway
+    would produce a green line for a job that was never really run, which is
+    the failure this module exists to prevent, arrived at from the other side.
+    """
 
     name: str
     python_versions: tuple[str, ...]
     steps: tuple[Step, ...]
+    runs_on: str = ""
+
+    @property
+    def architecture(self) -> str:
+        """``arm64`` or ``x64``, from the runner label.
+
+        GitHub spells the architecture in the label suffix — `ubuntu-24.04-arm`
+        against `ubuntu-latest`. Anything without the suffix is x64, which is
+        the same default GitHub applies.
+        """
+        return "arm64" if "-arm" in self.runs_on else "x64"
+
+
+def host_architecture() -> str:
+    """This machine's architecture, in the workflow's vocabulary."""
+    machine = platform.machine().lower()
+    return "arm64" if machine in {"aarch64", "arm64"} else "x64"
 
 
 def _load(path: Path = WORKFLOW) -> dict:
@@ -179,7 +203,16 @@ def read_jobs(path: Path = WORKFLOW) -> tuple[Job, ...]:
         )
         if not steps:
             raise WorkflowUnreadable(f"job {name!r} has no run steps")
-        jobs.append(Job(name=str(name), python_versions=versions, steps=steps))
+
+        runs_on = body.get("runs-on")
+        if not isinstance(runs_on, str) or not runs_on:
+            raise WorkflowUnreadable(
+                f"job {name!r} has no plain `runs-on` label. The reader needs "
+                f"it to tell whether this machine can stand in for the job at "
+                f"all, and will not assume it can."
+            )
+        jobs.append(Job(name=str(name), python_versions=versions, steps=steps,
+                        runs_on=runs_on))
     return tuple(jobs)
 
 
@@ -198,7 +231,25 @@ def interpreter_for(version: str) -> str | None:
 
 @dataclass
 class Outcome:
-    """What happened to one (job, version) pair — including "nothing"."""
+    """What happened to one (job, version) pair — including "nothing".
+
+    ``kind`` separates the two ways a pair goes unchecked, and they are not the
+    same problem:
+
+    ``"interpreter"``
+        A gap in *this machine's setup*. Fixable — install the Python — so it
+        fails the run, because a matrix that quietly skipped a version it could
+        have run is the thing this module was written against.
+
+    ``"architecture"``
+        Not fixable here, ever. An x86 box cannot stand in for the arm64 job at
+        any point. Failing on it would mean the local gate can *never* pass,
+        which trains everyone to reach for ``--allow-uncovered`` as a matter of
+        routine — and that flag also waives the interpreter case. Conflating
+        them would make the gate weaker in exactly the place it is strong. So
+        this one does not fail; it is named in the verdict line instead, every
+        run, where it cannot be read separately from the result.
+    """
 
     job: str
     version: str
@@ -207,19 +258,29 @@ class Outcome:
     failing_step: str = ""
     seconds: float = 0.0
     detail: str = ""
+    kind: str = ""
 
     @property
     def verdict(self) -> str:
         if not self.checked:
-            return "NOT CHECKED"
+            return "CI ONLY" if self.kind == "architecture" else "NOT CHECKED"
         return "pass" if self.passed else "FAIL"
 
 
 def run_job(job: Job, version: str, *, echo: bool = True) -> Outcome:
     """Run one job's steps under one interpreter, in a throwaway virtualenv."""
+    # Architecture first, because this is the check that must not be answered
+    # by running the steps anyway. A job pinned to arm64 executed on x86 would
+    # pass, and would mean nothing — the whole reason that job exists is that
+    # the architecture decides the answer.
+    if job.architecture != host_architecture():
+        return Outcome(job.name, version, checked=False, kind="architecture",
+                       detail=f"needs {job.architecture} ({job.runs_on}), "
+                              f"this machine is {host_architecture()}")
+
     interpreter = interpreter_for(version)
     if interpreter is None:
-        return Outcome(job.name, version, checked=False,
+        return Outcome(job.name, version, checked=False, kind="interpreter",
                        detail=f"no python{version} on PATH")
 
     started = time.monotonic()
@@ -229,6 +290,7 @@ def run_job(job: Job, version: str, *, echo: bool = True) -> Outcome:
                                  capture_output=True, text=True)
         if created.returncode != 0:
             return Outcome(job.name, version, checked=False,
+                           kind="interpreter",
                            detail=f"could not create a venv: {created.stderr.strip()[:200]}")
 
         # The venv's bin first on PATH is what lets the workflow's own command
@@ -276,21 +338,41 @@ def summarise(outcomes: list[Outcome], *, allow_uncovered: bool) -> str:
                      + (f"  at {o.failing_step!r}" if o.checked and not o.passed else ""))
 
     failed = [o for o in outcomes if o.checked and not o.passed]
-    uncovered = [o for o in outcomes if not o.checked]
+    uncovered = [o for o in outcomes if not o.checked and o.kind != "architecture"]
+    foreign = [o for o in outcomes if o.kind == "architecture"]
     lines.append("-" * (width + 26))
 
-    if uncovered and allow_uncovered:
-        missing = ", ".join(sorted({o.version for o in uncovered}))
-        lines.append(f"  INCOMPLETE, and passed anyway by --allow-uncovered: "
-                     f"nothing here ran on {missing}.")
-    elif uncovered:
-        missing = ", ".join(sorted({o.version for o in uncovered}))
-        lines.append(f"  INCOMPLETE: no interpreter for {missing}. A matrix "
-                     f"that skipped a version is not a matrix that passed it.")
+    # Named pair by pair rather than rolled into a version list, because the
+    # two reasons call for different responses: a missing interpreter is
+    # something you can install, and a foreign architecture is not.
+    if uncovered:
+        missing = ", ".join(sorted(f"{o.job}/{o.version}" for o in uncovered))
+        if allow_uncovered:
+            lines.append(f"  INCOMPLETE, and passed anyway by "
+                         f"--allow-uncovered: nothing here ran {missing}.")
+        else:
+            lines.append(f"  INCOMPLETE: could not run {missing}. A matrix "
+                         f"that skipped a job is not a matrix that passed it.")
+        for o in uncovered:
+            lines.append(f"    {o.job}/{o.version}: {o.detail}")
+
+    # Always printed, never fatal, and never below the verdict — an x86 machine
+    # cannot stand in for the arm64 job at any point, so failing on it would
+    # only teach everyone to pass --allow-uncovered by reflex, which would
+    # waive the interpreter case above along with it.
+    if foreign:
+        elsewhere = ", ".join(sorted(f"{o.job}/{o.version}" for o in foreign))
+        lines.append(f"  Not runnable on this {host_architecture()} machine at "
+                     f"all: {elsewhere}. **Only CI covers that**, and it is "
+                     f"where a test asserting a property of the silicon shows "
+                     f"up — RFC-072's correction is the worked example.")
     if failed:
         lines.append(f"  {len(failed)} job/version pair(s) FAILED.")
     if not failed and not uncovered:
-        lines.append("  every job in ci.yml ran on every version it names, and passed.")
+        lines.append(f"  every job in ci.yml this {host_architecture()} machine "
+                     f"can run, ran on every version it names, and passed."
+                     if foreign else
+                     "  every job in ci.yml ran on every version it names, and passed.")
     lines.append("  This is one machine. It cannot see a cross-machine float "
                  "difference; CI still can.")
     lines.append("=" * (width + 26))
@@ -303,7 +385,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="only this job (repeatable); default is all of them")
     parser.add_argument("--allow-uncovered", action="store_true",
                         help="exit 0 even when a version had no interpreter — "
-                             "the summary says so either way")
+                             "the summary says so either way. Does not apply "
+                             "to a job on another architecture, which never "
+                             "fails the run and is always reported")
     parser.add_argument("--list", action="store_true",
                         help="print what would run, and stop")
     args = parser.parse_args(argv)
@@ -318,11 +402,14 @@ def main(argv: list[str] | None = None) -> int:
         jobs = tuple(j for j in jobs if j.name in wanted)
 
     if args.list:
+        print(f"this machine: {host_architecture()}")
         for job in jobs:
             for version in job.python_versions:
-                found = interpreter_for(version)
-                print(f"{job.name} / {version}: "
-                      f"{found or 'NO INTERPRETER'}  ({len(job.steps)} steps)")
+                if job.architecture != host_architecture():
+                    why = f"NEEDS {job.architecture.upper()} ({job.runs_on})"
+                else:
+                    why = interpreter_for(version) or "NO INTERPRETER"
+                print(f"{job.name} / {version}: {why}  ({len(job.steps)} steps)")
         return 0
 
     outcomes = []
@@ -336,7 +423,11 @@ def main(argv: list[str] | None = None) -> int:
 
     print(summarise(outcomes, allow_uncovered=args.allow_uncovered))
     failed = any(o.checked and not o.passed for o in outcomes)
-    uncovered = any(not o.checked for o in outcomes)
+    # `kind != "architecture"` deliberately: a job on another architecture is
+    # not a gap this machine could ever close, so it is reported rather than
+    # failed. See Outcome's docstring for why conflating the two would make
+    # the gate weaker.
+    uncovered = any(not o.checked and o.kind != "architecture" for o in outcomes)
     return 1 if failed or (uncovered and not args.allow_uncovered) else 0
 
 
