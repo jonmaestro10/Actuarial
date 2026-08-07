@@ -114,6 +114,29 @@ jobs:
           python scripts/evidence_pack.py --out evidence-rebuild
           diff -r evidence evidence-rebuild
 
+  # RFC-080's expected-change note, enforced. §3.5 asks that a change moving a
+  # numeric result says what it does to the numbers, because a code diff cannot
+  # show that and a reviewer cannot derive it. The gate asks one question: did
+  # a golden expected value move without CHANGELOG.md moving too?
+  #
+  # `fetch-depth: 0` is not optional. The default shallow clone has no base ref
+  # to diff against, and the gate exits 2 rather than reporting "no golden
+  # value changed" about a comparison it never made — a pass and a
+  # could-not-run must not look alike.
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: A moved number carries an expected-change note
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          python scripts/changelog_gate.py --base "origin/${{ github.base_ref }}"
+
   # RFC-079's dependency check. Advisory rather than blocking, and the reason
   # is stated rather than assumed: engine/core, data, library and report have
   # NumPy as their only runtime dependency (§1.4), so an advisory here almost

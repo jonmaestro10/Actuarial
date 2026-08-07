@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,648
+   naive implementation otherwise. The suite (`pytest`, currently 2,660
    tests — 2,537 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
@@ -1208,7 +1208,7 @@ up automatically, and would have *blocked* on it. A local gate stricter than
 the CI it mirrors is not stricter, it is one that disagrees, and the fix
 everyone reaches for is to stop running it.
 
-### G3 — Release & support cadence (RFC-059) — effort S
+### G3 — Release & support cadence (RFC-080) — effort S — **done**
 The open answer to "quarterly vendor library updates on a contractual
 cadence." **Build:** semantic-versioned releases with a maintained
 `CHANGELOG.md` in which every numeric-result change carries the
@@ -1224,6 +1224,47 @@ published artifact, not a support ticket.
 the changelog gained an entry whenever the golden-test expected values
 changed; the calendar cross-references every dated set present in
 `engine/report/`.
+
+**Outcome (RFC-080).** The cadence turned out not to be the answer. A quarterly
+promise is a promise about timing; what a client needs is that an update does
+not disturb figures they have already filed, and that when something does move
+somebody says what it did.
+
+**A dated set is never removed**, which is what dating them buys. Each update
+lands beside the old constant with an RFC-050 diff between them, so last year's
+valuation still reproduces. Two consequences stated outright: a new dated set
+is **MINOR, not MAJOR** — if `DELEGATED_2026` were major, every client would
+face an upgrade decision over a regulation that does not apply to them yet —
+and dated sets are **exempt from the deprecation policy entirely**, because
+reproducibility of a prior period is not a feature that expires. They
+accumulate by design.
+
+**The gate asks the one question a diff cannot answer.** A reviewer seeing
+`0.0415` where `0.0410` was can see the edit and cannot see what it did to a
+reserve; only the author knows, and only then. `scripts/changelog_gate.py`
+fails a commit that moves a numeric literal in `tests/` without touching
+`CHANGELOG.md`. Bare integers are excluded — `range(5)` and `proj_len=20`
+would fire on every diff, and a gate that fires on every diff is one nobody
+reads — but **exponent literals count**, because loosening `1e-12` to `1e-9`
+moves what the suite guarantees without touching an expected value, and a
+tolerance chosen to make a test pass is not a tolerance.
+
+It errs toward asking and proved it on its first real run, flagging model-point
+fixtures and rate-limit windows on this item's own branch. The response was to
+write the note, not to loosen the rule; `No expected change` is a legitimate
+entry because it records that the question was considered.
+
+**Could-not-run is a third status.** The gate exits 2 when it cannot reach the
+base ref, so `actions/checkout` needs `fetch-depth: 0`. The natural
+implementation would report "no golden value changed" about a comparison it
+never made — indistinguishable from a clean run, and this repository's oldest
+failure shape. A test drives it against a nonexistent ref and asserts the
+distinct status.
+
+The completeness check has its own guard: a test asserts the dated-set scan
+finds at least three, because a regex that stopped matching would find none,
+report none missing, and pass while asserting that a document lists all of
+nothing.
 
 ### G4 — The pilot playbook (RFC-060) — effort S
 The A-workstream builds the tools; this makes the *process* a rehearsed,
