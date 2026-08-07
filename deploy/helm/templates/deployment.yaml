@@ -1,0 +1,98 @@
+{{- if and (gt (int .Values.replicaCount) 1) (eq .Values.persistence.accessMode "ReadWriteOnce") }}
+{{- fail "replicaCount > 1 needs persistence.accessMode: ReadWriteMany. Two replicas on a ReadWriteOnce volume either fail to schedule or, on some drivers, both mount it and race on the registry. The registry is content-addressed so equal digests write equal bytes, but partial writes are not equal bytes." }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        # Roll the pods when the principals Secret changes. Without this a
+        # revoked token keeps working until something unrelated restarts the
+        # pod, which is a revocation that did not happen.
+        checksum/principals: {{ .Values.principals.secretName | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      containers:
+        - name: api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+          env:
+            - name: ACTUARIAL_PRINCIPALS
+              value: /etc/actuarial/{{ .Values.principals.key }}
+            - name: ACTUARIAL_REGISTRY
+              value: /var/lib/actuarial/registry
+            - name: ACTUARIAL_AUDIT
+              value: /var/lib/actuarial/audit.log
+            - name: ACTUARIAL_MAX_WORKERS
+              value: {{ .Values.engine.maxWorkers | quote }}
+            - name: ACTUARIAL_UI
+              value: {{ .Values.engine.ui | ternary "1" "0" | quote }}
+            - name: ACTUARIAL_DEDUPE_ACROSS_TENANTS
+              value: {{ .Values.engine.dedupeAcrossTenants | ternary "1" "0" | quote }}
+          # The engine is NumPy-bound and NumPy threads on its own. Without a
+          # cap each projection thread opens a full BLAS pool and they contend
+          # against the CPU limit rather than within it.
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: principals
+              mountPath: /etc/actuarial
+              readOnly: true
+            - name: registry
+              mountPath: /var/lib/actuarial
+            - name: tmp
+              mountPath: /tmp
+          # The one route with no role requirement, which is why it has none.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: principals
+          secret:
+            secretName: {{ .Values.principals.secretName }}
+        - name: tmp
+          emptyDir: {}
+        - name: registry
+        {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-registry
+        {{- else }}
+          emptyDir: {}
+        {{- end }}

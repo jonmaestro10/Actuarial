@@ -1,0 +1,10 @@
+apiVersion: v2
+name: actuarial-engine
+description: The actuarial projection engine's API, as a Kubernetes release.
+type: application
+# Chart version and appVersion move together with the engine's own version.
+# tests/test_deploy.py asserts appVersion equals engine.__version__, because a
+# chart that reports a version the image does not carry is a chart that makes
+# a rollback land somewhere nobody expected.
+version: 0.0.1
+appVersion: "0.0.1"

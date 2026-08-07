@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,583
+   naive implementation otherwise. The suite (`pytest`, currently 2,630
    tests — 2,537 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
@@ -1082,7 +1082,7 @@ and customers; this workstream builds every part of it that *can* be built
 with commits, so that when the first customer arrives, the operational story
 is already true.
 
-### G1 — Multi-tenant SaaS packaging (RFC-057) — effort L
+### G1 — Multi-tenant SaaS packaging (RFC-078) — effort L — **done**
 **Build:** a `deploy/` directory — Dockerfile for the API/worker images, a
 docker-compose profile for single-box deployment, and a Helm chart for
 k8s — plus the tenancy model in code: a tenant is a namespace prefix over
@@ -1098,6 +1098,57 @@ identical fingerprint (the fingerprint stays global and content-true; the
 identical submissions from two tenants deduplicate compute but not
 visibility; the compose profile boots and serves a run end-to-end in a
 smoke test (marked slow).
+
+**Outcome (RFC-078).** The parenthesis in the build note turned out to rule
+out the obvious implementation. `RunStore.identify` fingerprints the request,
+so two tenants submitting identical work **already collide on one `Run`**
+before any tenancy code sees them — a run therefore cannot have an owner. It
+has a *set* of tenants who may see it, and the second submitter joins the set.
+Ownership would have handed the second tenant a run id from `POST /runs` that
+it is then forbidden to `GET`, which is self-inflicted and silent, so a test
+asserts both can read the shared run.
+
+Three refusals carry the item. **404 and never 403** on every run-scoped
+route: run ids *are* request fingerprints, so a 403 would let one tenant
+confirm that another submitted a request it can construct — a membership
+oracle delivered by the authorisation layer. **An unclaimed run is invisible**,
+which is the opposite of the natural code; permissive-by-default would make
+every run predating tenancy readable by every tenant at once, and a
+single-tenant deployment still sees everything so the strict answer cannot be
+satisfied by refusing everyone. And a **partly tenanted principals file is
+refused at startup**, because "absent means its own tenant" and "absent means
+sees everything" are both defensible and differ by exactly the amount that
+matters.
+
+The leak is stated rather than argued away. Deduplicating compute across
+tenants — which this item asks for — leaves a cross-tenant *liveness oracle*:
+a tenant learns that somebody has already run a request it can construct. Not
+who, no results, and only for a request it could already build in full.
+`shared_compute_leak()` says so in words, `/health` carries it, and
+`dedupe_across_tenants=False` folds the tenant into the fingerprint as a salt
+and recomputes. The salt never reaches the *stored* request, asserted by a
+test, because a privacy control that rewrites history to achieve itself has
+traded one problem for a worse one — and another test asserts the caveat
+*disappears* when deduplication is off, since a warning present where it does
+not apply is a warning ignored where it does.
+
+**The deployment's one real bug was the entrypoint.** `uvicorn
+engine.api:create_app --factory` calls `create_app()` with no arguments, so a
+compose file that carefully mounts a principals file would serve an
+**unauthenticated** API on the port the authenticated one was meant to occupy,
+with a healthy healthcheck and nothing in the logs. `engine/api/deployment.py`
+is the seam between a library that takes arguments and a container configured
+by environment; it raises on an unreadable principals file rather than falling
+back, and refuses an ambiguous boolean rather than defaulting it.
+
+No container runtime exists in CI, so nothing boots. What is checked instead
+is every place `deploy/` restates something the code already decides — the
+port in four places, the entrypoint's importability, the extras (pip only
+*warns* on an unknown one), the chart version against `engine.__version__`,
+and every `ACTUARIAL_*` variable the manifests set against the ones the
+factory reads. The compose smoke test is written, marked `slow`, and skipped
+where Docker is absent **rather than simulated**: a stubbed version would
+assert that the stub works.
 
 ### G2 — SOC 2 substrate (RFC-058) — effort M
 Certification is organizational, but the technical substrate an auditor asks

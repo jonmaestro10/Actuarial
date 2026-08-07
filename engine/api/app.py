@@ -86,6 +86,7 @@ from engine.api.catalogue import (
 from engine.api.examples import example as worked_example, unavailable
 from engine.api.reports import measure_run
 from engine.api.store import RunState, RunStore
+from engine.api.tenancy import Tenancy, tenant_of, tenants_in
 from engine.api.ui import UI_FILES, media_type, read_asset
 from engine.core.approvals import (
     ApprovalRegistry, ApprovalRequired, assumptions_digest, check_approved,
@@ -142,7 +143,8 @@ def create_app(models: dict | None = None, *,
                require_approval: bool = False,
                audit: Any = None,
                artifacts: Any = None,
-               evidence: Any = None) -> "FastAPI":
+               evidence: Any = None,
+               dedupe_across_tenants: bool = True) -> "FastAPI":
     """Build the application.
 
     ``models`` restricts the catalogue; ``build`` replaces the whole
@@ -261,6 +263,35 @@ def create_app(models: dict | None = None, *,
     app.state.artifacts = artifact_log
     app.state.evidence = evidence_root
 
+    # RFC-078. Derived from the principals file rather than configured
+    # separately: a deployment that has written tenants into its identities
+    # has already said what it wants, and a second switch that could disagree
+    # with the first is a switch that eventually will. `tenants_in` refuses a
+    # partly tenanted file, so this raises at startup rather than serving a
+    # deployment whose separation is half there.
+    named_tenants = tenants_in(identities)
+    scope = Tenancy(dedupe_across_tenants=dedupe_across_tenants)
+    app.state.tenancy = scope
+    app.state.tenants = named_tenants
+
+    def _tenant(request: Request):
+        """The tenant this request speaks for."""
+        return tenant_of(principal_of(request))
+
+    def _visible_run(run_id: str, request: Request):
+        """Fetch a run this caller is allowed to see, or 404.
+
+        **404 and not 403.** A 403 confirms the run exists, which hands one
+        tenant a membership oracle over another's run ids — and run ids are
+        request fingerprints, so a tenant who can guess a request could
+        confirm a competitor submitted it. Indistinguishable from "no such
+        run" is the only answer that says nothing.
+        """
+        run = store.get(run_id)
+        if run is None or not scope.may_see(run_id, _tenant(request)):
+            raise HTTPException(404, f"unknown run {run_id!r}")
+        return run
+
     @app.get("/health")
     def health() -> dict:
         """Liveness, and how much of it a stranger is told.
@@ -272,10 +303,16 @@ def create_app(models: dict | None = None, *,
         something an unauthenticated caller needs.
         """
         if identities is not None:
+            # RFC-078: whether the deployment is tenanted is said here, and
+            # nothing else is. The tenant *names* are inventory in exactly
+            # the way the model and run counts are, and a stranger who can
+            # enumerate a SaaS platform's customers has learned something
+            # worth having.
             return {"status": "ok", "engine_version": ENGINE_VERSION,
-                    "auth": "required"}
+                    "auth": "required",
+                    "tenancy": "enabled" if named_tenants else "disabled"}
         return {"status": "ok", "engine_version": ENGINE_VERSION,
-                "auth": "disabled",
+                "auth": "disabled", "tenancy": "disabled",
                 "models": len(resolved), "runs": len(store)}
 
     @app.get("/principals", dependencies=[Depends(administers)])
@@ -749,7 +786,15 @@ def create_app(models: dict | None = None, *,
                     assumptions_digest(built["assumptions"]))
                 if not submitter or name != submitter.name
             ]
-        run = store.submit(payload)
+        # RFC-078. The tenant joins the run's visibility set *before* the
+        # submission is recorded, so there is no window in which the run
+        # exists and its submitter cannot see it. With deduplication on, a
+        # second tenant submitting identical work joins the same set and
+        # shares the computation; with it off, `key` folds the tenant in and
+        # the two runs are separate objects with different ids.
+        here = _tenant(request)
+        run = store.submit(payload, scope.salt(here))
+        scope.note(run.run_id, here)
         summary = run.summary()
         if approved_by is not None:
             summary["approved_by"] = approved_by
@@ -760,7 +805,8 @@ def create_app(models: dict | None = None, *,
         return summary
 
     @app.get("/runs", dependencies=[Depends(reads)])
-    def list_runs(state: str | None = Query(default=None),
+    def list_runs(request: Request,
+                  state: str | None = Query(default=None),
                   model: str | None = Query(default=None),
                   q: str | None = Query(default=None),
                   limit: int = Query(default=200, ge=1, le=10_000)) -> dict:
@@ -783,7 +829,12 @@ def create_app(models: dict | None = None, *,
             raise HTTPException(
                 422, f"state must be one of "
                      f"{[s.value for s in RunState]}") from exc
-        rows = [run.summary() for run in store.list(wanted)]
+        # RFC-078: scoped *before* the search filters, not after. Filtering a
+        # list the caller should never have held would still be correct here,
+        # and would stop being correct the first time a `total` or a facet
+        # count is computed from the wrong list.
+        rows = [run.summary()
+                for run in scope.visible(store.list(wanted), _tenant(request))]
         if model:
             rows = [row for row in rows
                     if model.lower() in str(row.get("model") or "").lower()]
@@ -803,7 +854,7 @@ def create_app(models: dict | None = None, *,
                 "truncated": len(rows) > limit}
 
     @app.get("/runs/{run_id}", dependencies=[Depends(reads)])
-    def get_run(run_id: str) -> dict:
+    def get_run(run_id: str, request: Request) -> dict:
         """One run, with the request that produced it.
 
         The list omits the request and this includes it, which is the whole
@@ -812,14 +863,13 @@ def create_app(models: dict | None = None, *,
         that had to keep its own copy of what it submitted would be a
         client that can only diff its own runs.
         """
-        run = store.get(run_id)
-        if run is None:
-            raise HTTPException(404, f"unknown run {run_id!r}")
+        run = _visible_run(run_id, request)
         return {**run.summary(), "request": run.request}
 
     @app.get("/runs/{run_id}/results", response_class=response_class,
              dependencies=[Depends(reads)])
     def get_results(run_id: str,
+                    request: Request,
                     aggregate: bool = Query(default=False),
                     variable: str | None = Query(default=None),
                     modelpoint: str | None = Query(default=None)):
@@ -847,9 +897,7 @@ def create_app(models: dict | None = None, *,
         body is a selection, so a client cannot check a subset against a
         digest that covers the whole.
         """
-        run = store.get(run_id)
-        if run is None:
-            raise HTTPException(404, f"unknown run {run_id!r}")
+        run = _visible_run(run_id, request)
         if run.state is RunState.FAILED:
             raise HTTPException(409, run.error or "the run failed")
         if run.state is not RunState.SUCCEEDED:
@@ -917,7 +965,7 @@ def create_app(models: dict | None = None, *,
 
     @app.post("/runs/{run_id}/reports/ifrs17", response_class=response_class,
               dependencies=[Depends(runs)])
-    def ifrs17_report(run_id: str, spec: dict):
+    def ifrs17_report(run_id: str, spec: dict, request: Request):
         """Measure a completed run's block as one IFRS 17 group.
 
         A view of a run rather than a calculator: the request names series
@@ -930,9 +978,7 @@ def create_app(models: dict | None = None, *,
         non-finite float into ``null``, and a CSM of ``null`` is a worse
         answer than an error.
         """
-        run = store.get(run_id)
-        if run is None:
-            raise HTTPException(404, f"unknown run {run_id!r}")
+        run = _visible_run(run_id, request)
         if run.state is RunState.FAILED:
             raise HTTPException(409, run.error or "the run failed")
         if run.state is not RunState.SUCCEEDED:
@@ -963,18 +1009,31 @@ def create_app(models: dict | None = None, *,
         same events through ``on_event``.
         """
         queue = store.subscribe()
+        # RFC-078. Resolved once, here, rather than inside the generator:
+        # the stream outlives the request scope and `request.state` is not
+        # something to be reading from a coroutine that may still be running
+        # after the handler returned.
+        here = _tenant(request)
 
         async def stream():
             deadline = None if timeout is None else (
                 asyncio.get_event_loop().time() + timeout)
             try:
-                for run in store.list():
+                for run in scope.visible(store.list(), here):
                     yield f"data: {json.dumps(run.summary())}\n\n"
                 while True:
                     if await request.is_disconnected():
                         return
                     while queue:
-                        yield f"data: {json.dumps(queue.pop(0))}\n\n"
+                        event = queue.pop(0)
+                        # Both halves of the stream are scoped, and the live
+                        # half is the one that matters: the backlog can only
+                        # leak runs that already existed, while this leaks
+                        # every run any tenant submits from now on — a live
+                        # feed of another tenant's activity.
+                        if not scope.may_see(event.get("run_id", ""), here):
+                            continue
+                        yield f"data: {json.dumps(event)}\n\n"
                     if deadline is not None and \
                             asyncio.get_event_loop().time() >= deadline:
                         return

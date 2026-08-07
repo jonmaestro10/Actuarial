@@ -1,0 +1,42 @@
+# Single-box deployment. The smallest thing that is a real deployment rather
+# than a demonstration of one: authentication on, tenancy on, a registry that
+# survives a restart, and nothing listening that does not need to.
+#
+# `docker compose -f deploy/docker-compose.yml up --build`
+#
+# The principals file is a **mount, not a build argument**. Baking identities
+# into an image means the image is a secret, and an image that is a secret
+# gets pushed to a registry by somebody who did not know that.
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    # 127.0.0.1 rather than 0.0.0.0: single-box means a reverse proxy in
+    # front, and a compose file whose default binds a public interface is a
+    # compose file that puts an unencrypted API on the internet the first
+    # time somebody runs it on a cloud VM.
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Read by the factory wrapper below rather than by create_app, so the
+      # library keeps taking its configuration as arguments.
+      ACTUARIAL_PRINCIPALS: /etc/actuarial/principals.json
+      ACTUARIAL_REGISTRY: /var/lib/actuarial/registry
+      ACTUARIAL_AUDIT: /var/lib/actuarial/audit.log
+    volumes:
+      - ./principals.example.json:/etc/actuarial/principals.json:ro
+      - registry:/var/lib/actuarial
+    restart: unless-stopped
+    # The engine is NumPy-bound and NumPy is already threaded. Without a cap
+    # each worker thread spawns a full BLAS pool and they contend; the number
+    # is here so the container's CPU limit means what it says.
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+
+volumes:
+  registry:
