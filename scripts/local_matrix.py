@@ -114,7 +114,7 @@ class Job:
     name: str
     python_versions: tuple[str, ...]
     steps: tuple[Step, ...]
-    runs_on: str = ""
+    runs_on: str
 
     @property
     def architecture(self) -> str:
@@ -124,6 +124,13 @@ class Job:
         against `ubuntu-latest`. Anything without the suffix is x64, which is
         the same default GitHub applies.
         """
+        if not self.runs_on:
+            raise WorkflowUnreadable(
+                f"job {self.name!r} has no runs-on label, so its architecture "
+                f"is unknown. This used to default to x64, which read as "
+                f"correct on an x64 machine and silently exempted the job on "
+                f"an arm64 one."
+            )
         return "arm64" if "-arm" in self.runs_on else "x64"
 
 

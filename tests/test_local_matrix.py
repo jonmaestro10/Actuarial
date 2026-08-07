@@ -47,6 +47,25 @@ def _workflow(text: str, tmp_path: Path) -> Path:
     return path
 
 
+def _runs_here() -> str:
+    """A runner label matching whatever machine the tests are on.
+
+    Every synthetic `Job` below uses this rather than a literal. That is the
+    third time this file has been bitten by a literal describing the machine —
+    a hard-coded "3.11" made a step NOT CHECKED on a 3.12-only runner, and then
+    an omitted `runs-on` (defaulting to x64) made every synthetic job look
+    foreign on the arm64 runner and exempted it. Both times the test that
+    exists to catch an unnoticed gap was the one that quietly stopped
+    asserting.
+    """
+    return "ubuntu-24.04-arm" if lm.host_architecture() == "arm64" else "ubuntu-latest"
+
+
+def _elsewhere() -> str:
+    """A runner label for the architecture this machine is *not*."""
+    return "ubuntu-latest" if lm.host_architecture() == "arm64" else "ubuntu-24.04-arm"
+
+
 # --------------------------------------------------------------------------
 # The real workflow
 # --------------------------------------------------------------------------
@@ -217,7 +236,8 @@ def test_an_uncovered_version_sets_a_failing_exit_status(monkeypatch):
     asserts on what the shell would see.
     """
     job = lm.Job(name="test", python_versions=("3.99",),
-                 steps=(lm.Step(name="noop", run="true"),))
+                 steps=(lm.Step(name="noop", run="true"),),
+                 runs_on=_runs_here())
     monkeypatch.setattr(lm, "read_jobs", lambda *a, **k: (job,))
     monkeypatch.setattr(lm, "interpreter_for", lambda version: None)
 
@@ -241,7 +261,8 @@ def test_a_failing_step_sets_a_failing_exit_status(monkeypatch):
     """
     here = f"{sys.version_info.major}.{sys.version_info.minor}"
     job = lm.Job(name="test", python_versions=(here,),
-                 steps=(lm.Step(name="deliberate failure", run="exit 3"),))
+                 steps=(lm.Step(name="deliberate failure", run="exit 3"),),
+                 runs_on=_runs_here())
     monkeypatch.setattr(lm, "read_jobs", lambda *a, **k: (job,))
 
     assert lm.main([]) == 1, "a failing step exited zero"
@@ -264,11 +285,10 @@ def test_a_job_pinned_to_another_architecture_is_not_run_here(tmp_path):
     from the architecture guard working.
     """
     foreign = "x64" if lm.host_architecture() == "arm64" else "arm64"
-    label = "ubuntu-24.04-arm" if foreign == "arm64" else "ubuntu-latest"
     here = f"{sys.version_info.major}.{sys.version_info.minor}"
     job = lm.Job(name="elsewhere", python_versions=(here,),
                  steps=(lm.Step(name="would fail if it ran", run="exit 3"),),
-                 runs_on=label)
+                 runs_on=_elsewhere())
 
     outcome = lm.run_job(job, here, echo=False)
     assert not outcome.checked, "a foreign-architecture job was run anyway"
@@ -290,11 +310,9 @@ def test_another_architecture_is_reported_but_does_not_fail_the_run(monkeypatch)
     The companion test below keeps the interpreter case fatal.
     """
     here = f"{sys.version_info.major}.{sys.version_info.minor}"
-    foreign_label = ("ubuntu-latest" if lm.host_architecture() == "arm64"
-                     else "ubuntu-24.04-arm")
     job = lm.Job(name="test-elsewhere", python_versions=(here,),
                  steps=(lm.Step(name="would fail if it ran", run="exit 3"),),
-                 runs_on=foreign_label)
+                 runs_on=_elsewhere())
     monkeypatch.setattr(lm, "read_jobs", lambda *a, **k: (job,))
 
     assert lm.main([]) == 0, (
@@ -340,6 +358,14 @@ def test_the_architecture_comes_from_the_runner_label():
     assert lm.Job("j", ("3.12",), (), "ubuntu-22.04-arm").architecture == "arm64"
     assert lm.Job("j", ("3.12",), (), "ubuntu-latest").architecture == "x64"
 
+    # An absent label must raise rather than resolve. It used to default to
+    # x64, which read as correct on an x64 machine and silently exempted every
+    # such job on the arm64 runner — where two exit-status tests then passed
+    # by not running at all. A default that guesses an architecture is wrong
+    # in a way that only the other architecture can see.
+    with pytest.raises(lm.WorkflowUnreadable, match="no runs-on label"):
+        _ = lm.Job("j", ("3.12",), (), "").architecture
+
     # And the real workflow still contains a job on each, so the guard has
     # something to guard. A workflow that lost its arm64 job would leave the
     # tests above passing over a matrix that no longer crosses architectures.
@@ -347,6 +373,41 @@ def test_the_architecture_comes_from_the_runner_label():
     assert architectures == {"x64", "arm64"}, (
         f"ci.yml covers only {architectures}; the second architecture is what "
         f"catches a test asserting a property of the silicon"
+    )
+
+
+@pytest.mark.parametrize("machine,expected", [
+    ("x86_64", "x64"), ("AMD64", "x64"),
+    ("aarch64", "arm64"), ("arm64", "arm64"),
+])
+def test_both_architectures_are_exercised_without_owning_both(
+        monkeypatch, machine, expected):
+    """Guards arch-dependent logic that only the *other* architecture breaks.
+
+    The defect this replaces was invisible on x86 by construction: an omitted
+    `runs-on` defaulted to x64, which is right on an x64 box and wrong on an
+    arm64 one, where it exempted every synthetic job and let two exit-status
+    tests pass by never running. It took a real arm64 runner to see it, and
+    that is a slow and expensive way to find something this cheap.
+
+    `host_architecture` reads `platform.machine`, so both answers are
+    reachable here. A test suite that can only produce the answer its own
+    hardware gives is the same defect one level up.
+    """
+    monkeypatch.setattr(lm.platform, "machine", lambda: machine)
+    assert lm.host_architecture() == expected
+
+    # The real workflow must contain a job this host can run and one it
+    # cannot, whichever host it claims to be — otherwise the CI ONLY path or
+    # the ordinary path goes unexercised on that architecture.
+    jobs = lm.read_jobs()
+    architectures = {j.architecture for j in jobs}
+    assert expected in architectures, (
+        f"simulating {machine}, no job in ci.yml runs on {expected}"
+    )
+    assert architectures - {expected}, (
+        f"simulating {machine}, every job runs here — the CI ONLY path would "
+        f"never be taken and the arch guard would go untested"
     )
 
 
