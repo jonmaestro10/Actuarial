@@ -1286,33 +1286,40 @@ order unless there is a concrete reason not to.
 ---
 
 *Next action for the implementing agent: **take one of the two measured items
-below.** Workstream B (B1, B2, B3) and workstream H (H1–H4) have both landed,
-and F9 has removed CI's status as a blocker without restoring CI. What is left
-is G (platform operations), A3 (MoSes/RAFM readers, deliberately gated on
-pilot demand), and two pieces of engineering that measurement has already
-pointed at.
+below.** Workstream B (B1, B2, B3) and workstream H (H1–H4) have both landed.
+What is left is G (platform operations), A3 (MoSes/RAFM readers, deliberately
+gated on pilot demand), and two pieces of engineering that measurement has
+already pointed at.
 
-**Read the CI situation exactly, because it is no longer what it was.** The
-cause is settled: the account is on a free GitHub plan, its included Actions
-minutes are spent, and the default $0 spending limit turns that into *no run
-object created at all* rather than a failed run. Nothing in the repository can
-fix that; it is resolved by the monthly reset, by a spending limit, or by
-making the repository public (free plans get unlimited Actions minutes on
-public repositories, which also fits a project whose `pyproject.toml` calls it
-an open engine). RFC-077 halved what a run costs, so the same allowance now
-goes about twice as far when it returns.
+**CI is running again, and the first thing it did was find two defects.** The
+outage's cause was settled and was never a repository fault: a free GitHub
+plan, its included Actions minutes spent, and a default $0 spending limit that
+turns exhaustion into *no run object created at all* rather than a failed run.
+It resolved on the monthly reset. RFC-077 halved what a run costs — the
+duplicate `push` + `pull_request` pair is gone and superseded runs are
+cancelled — so the allowance now goes about twice as far. If it lapses again,
+the options are a spending limit or making the repository public, where free
+plans get unlimited Actions minutes.
 
-Meanwhile `python scripts/local_matrix.py` runs every job in `ci.yml` under
-every version it names, and **fails on a version it could not check** rather
-than passing quietly. As of F9, Python 3.12 and 3.13 are green, the
-`bitwise-boundary` job is green with zero skips, and the evidence pack digest
-is identical across all three interpreters. Those six items are **locally
-verified**, per §1.9a — a strictly weaker claim than CI, since one machine
-cannot see a cross-machine float difference, and they stay marked that way
-until a runner has run them. Two ways a red is still not a red when runs do
-return: a superseded run reports `failure` with zero failed jobs, and a job
-that never got a runner reports `cancelled` — check whether a job ever
-*started*.
+**What the first green run changes.** Every item through F9 is now verified on
+CI across 3.11, 3.12 and 3.13 — the six that were merged on one interpreter no
+longer carry §1.9a's weaker claim. What the outage cost is recorded in F8's
+correction and is worth reading before trusting any single-machine
+measurement: the bitwise boundary had asserted that §9.2's operations *do*
+differ from the compiler, which is true on an AVX-512 machine and false on the
+runner, and it had been measured in exactly one place for the item's whole
+life.
+
+`python scripts/local_matrix.py` remains the pre-merge check — it runs every
+job in `ci.yml` under every version it names and **fails on a version it could
+not check**. It is a strictly weaker claim than CI, and F8's correction is the
+worked example of the gap: one machine cannot see a difference that is a
+property of the silicon.
+
+Two ways a red is not a red: a superseded run reports `failure` with zero
+failed jobs, and a job that never got a runner reports `cancelled` — check
+whether a job ever *started*, and note that matrix fail-fast also cancels
+siblings, which looks the same and is not.
 
 Two pieces of engineering are named by measurement rather than guessed, and
 either is a good first item. **B1's remaining order of magnitude**: the
