@@ -55,6 +55,37 @@ irreducible, and concluded that widening the boundary was the way to move it —
 without asking what the boundary currently *is*. The answer was one query away
 from the code it was already reading.
 
+## Stage 0: what the arrays actually are
+
+`untracked-array` is one label over **two** root causes, and neither is an
+anonymous computed intermediate — which was the outcome that would have made
+this ceiling permanent.
+
+| root cause | what it is | templates blocked |
+|---|---|---|
+| `self.at(slab, t)` | a per-policy-per-period **setup slab**, sliced | LongTermCare, LongevitySwap, PayoutAnnuity, PensionBuyout, GeneralInsurance |
+| `self.assumptions.periodic_q(...)` | a mortality **table gather** | 7 templates, all via `q_x` |
+
+Everything else in the pass-1 trace is a *cascade* from those two: a variable
+reading a not-yet-hoisted variable sees a raw array, and later passes resolve
+it into a `ref`. The roots are the two rows above.
+
+**Both already have names that survive to run time**, which is the property the
+fix needs and the reason it is available at all. A setup slab is built by
+`setup()` from the batch, so another batch builds its own; `periodic_q` is a
+lookup against a basis the run already carries.
+
+### Where the slab leaves the trace
+
+`Model.at` is one line: `value = slab[..., t]`. `_Traced` implements the ufunc
+and array-function protocols and **not `__getitem__`**, so a slab cannot be
+carried through that slice as a traced value — it arrives at the operand as a
+plain array and the variable hoists.
+
+That is a smaller defect than the symptom suggests. The boundary is not being
+set by what a kernel may contain; it is being set by an indexing operation the
+tracer cannot follow.
+
 ## What it would take, and why the cheap fixes are wrong
 
 The tracer marks an array opaque because it has **no name that survives to run
