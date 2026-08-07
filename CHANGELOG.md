@@ -53,6 +53,18 @@ reporting on `DELEGATED_2015`. See `docs/regulatory-calendar.md`.
   optional in-process rate limit, both off or narrow by default.
 - **`scripts/local_matrix.py`** (RFC-077) and a second architecture in CI
   (`test-arm64`).
+- **The pilot playbook** (RFC-081), executed end to end in CI against synthetic
+  fixtures, with `--prove-it-bites` requiring the reconciliation to fail on one
+  part in ten million.
+- **Regulatory calendar and this changelog** (RFC-080), with a CI gate refusing
+  a moved golden value that carries no expected-change note.
+
+### Known advisories
+- `pip-audit`'s first run reports findings in `urllib3` and `wheel`. Both are
+  transitive dependencies of the `[test]` and `[api]` extras, not of the
+  calculation core — `engine/core`, `data`, `library` and `report` depend on
+  NumPy alone (§1.4). This is the case the advisory-not-blocking decision was
+  made for, and it landed on the first run.
 
 ### Changed
 - CI triggers on a pull request into `main` and nothing else.

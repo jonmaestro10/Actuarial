@@ -486,3 +486,44 @@ def test_advisory_is_read_from_the_workflow_and_not_assumed():
     jobs = {j.name: j.advisory for j in lm.read_jobs()}
     assert any(jobs.values()), "no job in ci.yml is continue-on-error"
     assert not all(jobs.values()), "every job in ci.yml is advisory"
+
+
+def test_a_step_containing_an_actions_expression_is_refused(tmp_path):
+    """Guards running different text than CI runs.
+
+    A `${{ }}` expression is expanded by Actions and by nothing else. A step
+    carrying one would execute here as literal characters — a different
+    command — and this module's whole argument is that an adapted command is
+    not evidence about the original.
+
+    It bit once, on a changelog job using `${{ github.base_ref }}`: the local
+    run failed for a reason unrelated to what the step checks. That is the
+    *good* case. The bad one is an expression inside a longer script, which
+    changes what runs without stopping it.
+    """
+    path = _workflow(
+        "name: CI\non:\n  pull_request:\njobs:\n"
+        "  gate:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: actions/setup-python@v5\n"
+        "        with:\n          python-version: '3.12'\n"
+        "      - run: echo ${{ github.base_ref }}\n",
+        tmp_path,
+    )
+    with pytest.raises(lm.WorkflowUnreadable, match="expression"):
+        lm.read_jobs(path)
+
+
+def test_the_real_workflow_uses_no_expressions_in_run_steps():
+    """The companion: the rule is only useful if ci.yml obeys it.
+
+    Asserted against the real file so a future step reintroducing one is
+    caught here rather than by a confusing local-matrix failure.
+    """
+    jobs = lm.read_jobs()
+    assert jobs, "no jobs read"
+    for job in jobs:
+        for step in job.steps:
+            assert "${{" not in step.run, (
+                f"{job.name}/{step.name} uses an Actions expression; use an "
+                f"environment variable the runner sets, with a local default"
+            )

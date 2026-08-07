@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,660
+   naive implementation otherwise. The suite (`pytest`, currently 2,672
    tests — 2,537 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
@@ -1266,7 +1266,7 @@ finds at least three, because a regex that stopped matching would find none,
 report none missing, and pass while asserting that a document lists all of
 nothing.
 
-### G4 — The pilot playbook (RFC-060) — effort S
+### G4 — The pilot playbook (RFC-081) — effort S — **done**
 The A-workstream builds the tools; this makes the *process* a rehearsed,
 reproducible artifact. **Build:** `docs/pilot-playbook.md` — the
 step-by-step client pilot: ingest their model points (A2/A3), scaffold
@@ -1281,7 +1281,42 @@ been run a thousand times before it is run once. Depends on M1, F1.
 **Accept:** the dry-run script passes in CI and its outputs (parity report,
 evidence pack, workbook) are produced into a content-addressed directory.
 
-**Milestone M6 — "operable, auditable, sellable":** G1–G4 shipped.
+**Outcome (RFC-081).** The tools all existed; what did not was any assurance
+that stage 3's output is stage 4's input. Six stages — ingest, map, run,
+reconcile, register, hand over — run on every commit, and the test asserts the
+stage list **in order** rather than that each key exists, because the
+playbook's six numbered sections and the script's six stages are the same six
+steps and a stage added to one without the other turns a rehearsed process back
+into a described one.
+
+**The data-handling rule is asserted, not promised.** Client model points are
+policyholder data and this repository holds none; the dry run reads only from
+`tests/fixtures/`, and a test checks that, because a future edit pointing it at
+a real extract is the mistake that matters most and looks least like one. Two
+consequences the playbook plans around: the engine runs where the data is
+(which is what G1's `deploy/` is for), and when a reconciliation disagrees the
+client sends **the cell, not the file** — a parity report names the model
+point, period and variable, which is enough to ask a precise question without
+moving a book.
+
+**`--prove-it-bites`** perturbs one cell by one part in ten million and
+requires the reconciliation to fail. Without it every other assertion is
+consistent with a reconciliation that always passes, and it is the first thing
+a sceptical actuary asks. Coverage is asserted beside the verdict for the same
+reason: a reconciliation that matched everything it looked at, having looked at
+very little, is the failure a pilot most easily talks itself into.
+
+**What it does not rehearse is said out loud** and tested for: not that any
+particular client's file parses. A synthetic fixture proves the reader's
+behaviour, not the format's variety, so the playbook says to expect the first
+real ingest to need a dialect adjustment and to budget for it. The exit
+criteria name their own opposites — "the numbers matched" (at what tolerance,
+over what coverage), "the actuary was happy" (in writing or it did not happen),
+"it ran fast" (not the pilot's question) — and a test asserts that section
+survives, because it is the one most likely to be trimmed as negative.
+
+**Milestone M6 — "operable, auditable, sellable":** G1–G4 shipped ✅
+(RFC-078, RFC-079, RFC-080, RFC-081).
 
 ---
 

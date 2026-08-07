@@ -132,10 +132,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # `$GITHUB_BASE_REF` and not `${{ github.base_ref }}`, deliberately. A
+      # `${{ }}` expression is expanded by Actions and by nothing else, so
+      # scripts/local_matrix.py — which runs this file's own command strings —
+      # would execute the literal text and fail for a reason that has nothing
+      # to do with the changelog. The environment variable is set by the runner
+      # and absent locally, where `main` is the right default.
       - name: A moved number carries an expected-change note
         run: |
-          git fetch --no-tags origin "${{ github.base_ref }}"
-          python scripts/changelog_gate.py --base "origin/${{ github.base_ref }}"
+          BASE="${GITHUB_BASE_REF:-main}"
+          git fetch --no-tags origin "$BASE"
+          python scripts/changelog_gate.py --base "origin/$BASE"
 
   # RFC-079's dependency check. Advisory rather than blocking, and the reason
   # is stated rather than assumed: engine/core, data, library and report have
@@ -156,8 +163,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[test,data,api,excel]" pip-audit
+      # `--skip-editable` and not `--strict`. This package is installed
+      # editable and is not on PyPI, so `--strict` fails on *it* — every run,
+      # for a reason that is not a vulnerability. An advisory job that always
+      # fails is noise, and noise gets ignored exactly when it stops being
+      # noise. Real findings still exit non-zero and land in the run summary.
       - name: Audit the installed dependency set
-        run: pip-audit --strict --progress-spinner off
+        run: pip-audit --skip-editable --progress-spinner off
 
   # RFC-072's boundary, measured rather than quoted. A separate job because
   # it is the only thing in the repo that needs a compiler: installing it

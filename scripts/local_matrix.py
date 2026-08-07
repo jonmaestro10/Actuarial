@@ -213,6 +213,22 @@ def read_jobs(path: Path = WORKFLOW) -> tuple[Job, ...]:
                  env={str(k): str(v) for k, v in (s.get("env") or {}).items()})
             for s in raw_steps if "run" in s
         )
+        # A `${{ }}` expression is expanded by Actions and by nothing else.
+        # Running the step anyway executes the literal text — a *different*
+        # command — and this module's entire argument is that an adapted
+        # command is not evidence about the original. It failed loudly once,
+        # for a reason unrelated to what the step checks, which is the good
+        # case; the bad case is an expression inside a longer script that
+        # changes what runs without stopping it.
+        for step in steps:
+            if "${{" in step.run:
+                raise WorkflowUnreadable(
+                    f"job {name!r} step {step.name!r} contains a ${{{{ }}}} "
+                    f"expression, which only Actions expands. Running it here "
+                    f"would execute different text than CI does. Use an "
+                    f"environment variable the runner sets (GITHUB_BASE_REF, "
+                    f"GITHUB_SHA, ...) with a local default instead."
+                )
         if not steps:
             raise WorkflowUnreadable(f"job {name!r} has no run steps")
 
