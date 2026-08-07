@@ -1,11 +1,25 @@
 name: CI
 
-# `push` is deliberately restricted to main while `pull_request` covers
-# everything else. The pair `push: ["**"]` + `pull_request` fires *both* events
-# for every push to a PR branch, so each push ran the four jobs twice for one
-# commit's worth of signal. Nothing is less covered by this: every branch here
-# reaches main through a PR, so the matrix still runs on every commit that can
-# land — once instead of twice.
+# **One trigger: a push to main.** No pull_request, no other branches.
+#
+# This is a deliberate trade of pre-merge signal for minutes, and it is worth
+# stating plainly rather than discovering. The pair `push: ["**"]` +
+# `pull_request` used to fire *both* events for every push to a branch with an
+# open PR, running all four jobs twice for one commit's worth of signal —
+# roughly half of every run this repository has ever billed. Restricting `push`
+# to main removed that half. Removing `pull_request` removes the other: a
+# branch can be pushed and re-pushed as often as the work needs, and nothing
+# runs until it lands.
+#
+# What it costs: **a PR carries no checks, so main is where a failure is
+# found.** The model is verify locally, merge, confirm here, fix forward. That
+# is only honest if the local check is real, which is what
+# `scripts/local_matrix.py` (RFC-077) is for — it reads *this file* and runs
+# every job below under every version the matrix names, and fails on a version
+# it could not check. Run it before merging, not the four quick checks alone.
+#
+# What it does not cost: coverage of what lands. Every commit that reaches main
+# is still run against the whole matrix. The difference is when, not whether.
 #
 # There is no `paths-ignore` here and there must not be one. A docs-only change
 # is not a no-op in this repo: tests/test_working_agreement.py,
@@ -15,18 +29,12 @@ name: CI
 on:
   push:
     branches: ["main"]
-  pull_request:
 
-# A superseded run costs the same minutes as a live one. Force-pushing a branch
-# three times used to leave three full matrices running against commits nobody
-# would merge; only the newest can tell you anything.
-#
-# main is exempt by construction — the group is keyed by ref, and cancelling an
-# in-progress run on main would discard the only evidence that a merged commit
-# is green.
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+# No `concurrency` block. It existed to cancel superseded runs on branches that
+# were force-pushed, and there are no branch runs left to supersede. On main it
+# was already exempt, because cancelling an in-progress run there would discard
+# the only evidence that a merged commit is green — and that is still true, so
+# two merges landing close together should each get their own run.
 
 jobs:
   test:
