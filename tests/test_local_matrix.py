@@ -231,8 +231,16 @@ def test_a_failing_step_sets_a_failing_exit_status(monkeypatch):
     Paired with the test above so that the two ways of not passing are each
     pinned to the exit code separately — a `main` that returned 1 only for
     absent interpreters would satisfy the other test alone.
+
+    The version is the *running* interpreter's rather than a literal, because
+    a literal is an assumption about the machine: this test first ran on a CI
+    job that had only 3.12 on PATH, where a hard-coded "3.11" made the step
+    NOT CHECKED, so the failing command never executed and the run this test
+    exists to catch exited zero. A test about unnoticed absence should not
+    have been the thing that assumed presence.
     """
-    job = lm.Job(name="test", python_versions=("3.11",),
+    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    job = lm.Job(name="test", python_versions=(here,),
                  steps=(lm.Step(name="deliberate failure", run="exit 3"),))
     monkeypatch.setattr(lm, "read_jobs", lambda *a, **k: (job,))
 

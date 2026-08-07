@@ -13,16 +13,23 @@ one that matters:
   that the refusal names the operation responsible.
 - The **measurement** needs the ``[compile]`` extra. It asserts that every
   operation IEEE-754 requires to be correctly rounded really is reproduced
-  bit for bit, and — the other direction, which is what keeps the module
-  from being paranoia — that the operations it declines to trust really do
-  differ.
+  bit for bit, and — the other direction — that the operations it declines
+  to trust are refused *however the measurement comes out here*.
 
-Both directions are asserted because both can rot. If a future NumPy or
-compiler release made ``exp`` agree, ``test_the_ops_it_declines_to_trust_really_do_differ``
-fails, and the right response is to look again rather than to keep hoisting
-an operation that no longer needs it. If one made ``multiply`` disagree, the
-first test fails and B1 is off, which is a thing to find out from a test
-rather than from a reserve.
+The asymmetry between those two is the whole point, and it was learned the
+hard way. §5's guarantee is a specification: if ``multiply`` ever disagrees,
+the first test fails and B1 is off, which is a thing to find out from a test
+rather than from a reserve. §9.2's *absence* of a guarantee is not
+symmetrical with it — an operation it declines to require correct rounding
+for may still happen to agree, and whether it does is a property of the CPU.
+
+This module originally asserted that ``exp``, ``log`` and ``power`` really do
+differ. That held here and failed on a GitHub runner the first time CI ever
+ran the job: NumPy dispatches AVX-512 kernels for the transcendentals while
+the compiler calls libm, so on a CPU with AVX-512 they are a last bit apart
+and on a CPU without it they agree exactly. The category therefore cannot be
+justified by measurement on one machine, and is not. It is justified by the
+standard, and the measurement is recorded beside it.
 """
 
 from __future__ import annotations
@@ -237,20 +244,21 @@ def test_what_the_standard_guarantees_is_reproduced_bit_for_bit(op, kind):
     )
 
 
-@needs_compiler
-def test_the_ops_it_declines_to_trust_really_do_differ():
-    """The other direction, so the module is a measurement and not a
-    superstition. If nothing in :data:`IMPLEMENTATION_DEFINED` actually
-    differed, hoisting them all would be cost with no benefit and the
-    category would want revisiting.
+#: The operations §9.2 declines to require correct rounding for, measured
+#: here against the compiler. Named once because three tests share them.
+DECLINED = ("exp", "log", "log1p", "expm1", "power", "log2", "log10")
 
-    They differ. ``exp``, ``log``, ``log1p``, ``expm1`` and ``power`` are
-    each a last-bit apart on ordinary, finite, positive data — not at the
-    extremes, not on NaN, but on the numbers a projection is made of.
+
+def _measure_declined():
+    """Which of :data:`DECLINED` differ between NumPy and the compiler *here*.
+
+    A list, deliberately, rather than a verdict: which way this comes out is a
+    property of the machine, and the tests below are written so that neither
+    answer changes what the boundary permits.
     """
     a, b = sample("ordinary")
     differing = []
-    for op in ("exp", "log", "log1p", "expm1", "power", "log2", "log10"):
+    for op in DECLINED:
         ufunc = getattr(np, op)
         binary = ufunc.nin == 2
         src = (f"lambda p, q: np.{op}(p, q)" if binary
@@ -260,19 +268,160 @@ def test_the_ops_it_declines_to_trust_really_do_differ():
             compiled = _numba.njit(eval(src, {"np": np}))(a, b)
         if not np.array_equal(_bits(reference), _bits(compiled)):
             differing.append(op)
-        assert op in IMPLEMENTATION_DEFINED
+    return differing
 
-    assert set(differing) >= {"exp", "log", "power"}, (
-        f"only {differing} differed. If the transcendentals now agree, that "
-        f"is worth knowing and worth acting on — but it is a coincidence of "
-        f"two library versions rather than a guarantee, so widening "
-        f"CORRECTLY_ROUNDED needs an argument, not just this measurement"
+
+@needs_compiler
+def test_the_ops_it_declines_to_trust_are_refused_however_the_measurement_comes_out():
+    """**The classification follows the standard, not this machine's answer.**
+
+    This test used to assert that ``exp``, ``log`` and ``power`` *do* differ
+    under the compiler, on the reasoning that a category which never caught
+    anything would be paranoia. That assertion was true here and false on a
+    GitHub runner, and CI failed on it the first time it ever ran.
+
+    The cause is not a library version. NumPy dispatches hand-written AVX-512
+    kernels for the transcendentals; the compiler calls libm. On a CPU with
+    AVX-512 the two are a last bit apart, and on a CPU without it NumPy falls
+    back to the same scalar path the compiler takes and **all seven agree
+    exactly**. Disabling AVX-512 dispatch on one machine reproduces both
+    answers — see the test below, which pins that.
+
+    So agreement is a property of the silicon, and a measurement taken on any
+    one machine cannot classify an operation. The classification rests on
+    IEEE-754 §9.2 declining to *require* correct rounding, which is a
+    specification and does not vary. What is asserted here is the mechanism:
+    whichever way the measurement comes out, these operations are still
+    refused. The measurement is recorded rather than believed.
+
+    This makes the case for hoisting stronger, not weaker. An operation that
+    agrees on one CPU and disagrees on another is precisely one that cannot go
+    in a kernel claiming bitwise equivalence — and a machine where it happens
+    to agree is the dangerous place to be standing, because that is where
+    someone is tempted to widen CORRECTLY_ROUNDED on the strength of a green
+    run.
+    """
+    differing = _measure_declined()
+
+    for op in DECLINED:
+        assert op in IMPLEMENTATION_DEFINED, (
+            f"{op} is measured here but not classified; a measurement with no "
+            f"category behind it decides nothing"
+        )
+
+    # The mechanism, which does not consult the measurement at all.
+    ok, reasons = compilable(list(DECLINED))
+    assert not ok, (
+        f"compilable() admitted {DECLINED} into a kernel. On this machine "
+        f"{differing or 'none of them'} differed from the compiler — but the "
+        f"refusal must not depend on that, because it comes out the other way "
+        f"on a CPU without AVX-512."
     )
-    # And the difference is exactly what an ulp looks like, not a bug: one
-    # step in the integer representation, never more.
-    with np.errstate(all="ignore"):
-        ref, got = np.exp(a), _numba.njit(lambda p: np.exp(p))(a)
-    assert np.abs(_bits(ref) - _bits(got)).max() == 1
+    for op in DECLINED:
+        assert any(op in reason for reason in reasons), (
+            f"the refusal does not name {op}, so a reader cannot tell which "
+            f"operation cost them the kernel"
+        )
+
+    # Where they do differ, it is one ulp — a rounding difference, not a bug.
+    # Guarded on the measurement rather than assumed, because on a machine
+    # where they agree the difference is zero and this would be asserting
+    # that a correct answer is wrong.
+    if "exp" in differing:
+        a, _ = sample("ordinary")
+        with np.errstate(all="ignore"):
+            ref, got = np.exp(a), _numba.njit(lambda p: np.exp(p))(a)
+        assert np.abs(_bits(ref) - _bits(got)).max() == 1
+
+
+def _numpy_cpu_features():
+    """What NumPy reports *finding*, which is not what it reports using."""
+    try:
+        return np._core._multiarray_umath.__cpu_features__
+    except AttributeError:  # pragma: no cover - older layouts
+        from numpy.core._multiarray_umath import __cpu_features__
+        return __cpu_features__
+
+
+@needs_compiler
+@pytest.mark.skipif(
+    not _numpy_cpu_features().get("AVX512F"),
+    reason="no AVX-512 to disable, so the dispatch difference cannot be shown "
+           "here; this is the CPU on which the transcendentals already agree",
+)
+def test_whether_the_transcendentals_agree_is_decided_by_simd_dispatch():
+    """**The finding CI produced that no local run could.**
+
+    Turning AVX-512 dispatch off makes every operation in :data:`DECLINED`
+    agree bitwise with the compiler; turning it on makes every one of them
+    differ. Same NumPy, same numba, same Python, same data — only the kernel
+    NumPy selects changes.
+
+    That is the same fact as ``REPRODUCIBILITY_SCOPE``'s, met a third time: a
+    pack digest is an identity on a machine, `np.exp` is not bit-portable
+    across microarchitectures, and now — the operational consequence — a
+    *measurement* of bitwise agreement is not portable either. A green
+    boundary run says what this CPU does, not what the arithmetic guarantees.
+
+    Run in a subprocess because ``NPY_DISABLE_CPU_FEATURES`` is read when
+    NumPy initialises, so it cannot be set from inside a running test. Naming
+    a feature NumPy does not report finding is a silent no-op that looks
+    exactly like no difference existing, which is why the skip above keys off
+    what NumPy actually reports.
+    """
+    import subprocess
+    import sys as _sys
+    import textwrap
+
+    program = textwrap.dedent(
+        """
+        import numpy as np, numba
+        rng = np.random.default_rng(20260807)
+        a = rng.uniform(0.1, 10.0, 50_000)
+        b = rng.uniform(0.5, 3.0, 50_000)
+        differing = []
+        for op in ("exp", "log", "log1p", "expm1", "power", "log2", "log10"):
+            u = getattr(np, op)
+            binary = u.nin == 2
+            src = ("lambda p, q: np.%s(p, q)" % op if binary
+                   else "lambda p, q: np.%s(p)" % op)
+            with np.errstate(all="ignore"):
+                ref = u(a, b) if binary else u(a)
+                got = numba.njit(eval(src, {"np": np}))(a, b)
+            if not np.array_equal(ref.view(np.int64), got.view(np.int64)):
+                differing.append(op)
+        print(",".join(differing))
+        """
+    )
+
+    def run(disabled: str | None) -> list[str]:
+        environment = dict(os.environ)
+        if disabled:
+            environment["NPY_DISABLE_CPU_FEATURES"] = disabled
+        else:
+            environment.pop("NPY_DISABLE_CPU_FEATURES", None)
+        done = subprocess.run([_sys.executable, "-c", program],
+                              capture_output=True, text=True, env=environment)
+        assert done.returncode == 0, done.stderr[-2000:]
+        return [op for op in done.stdout.strip().split(",") if op]
+
+    with_simd = run(None)
+    # Every AVX-512 tier NumPy might dispatch through, because disabling only
+    # the top one leaves it selecting the next.
+    without_simd = run("AVX512_SPR,AVX512_ICL,AVX512_SKX,AVX512_CLX,"
+                       "AVX512_CNL,AVX512F,X86_V4")
+
+    assert with_simd, (
+        "AVX-512 is present and reported, yet nothing differed with SIMD "
+        "dispatch enabled — the premise of the boundary's second category "
+        "has changed and wants reading, not patching"
+    )
+    assert not without_simd, (
+        f"{without_simd} still differed with AVX-512 dispatch disabled, so "
+        f"SIMD selection is not the whole explanation and the remaining "
+        f"difference is unaccounted for"
+    )
+    assert set(with_simd) > set(without_simd)
 
 
 @needs_compiler

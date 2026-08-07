@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,573
+   naive implementation otherwise. The suite (`pytest`, currently 2,574
    tests — 2,528 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
@@ -1702,6 +1702,18 @@ trigonometric functions, and no library provides it. NumPy 2.4.6 against
 Numba 0.66.0 on one machine, on ordinary finite data: the first group is
 bitwise, the second is one ulp apart. Reductions are a third case with no
 safe length.
+
+**Corrected by F9's first CI run.** "The second is one ulp apart" is what an
+AVX-512 machine measures. NumPy dispatches SIMD kernels for the
+transcendentals while the compiler calls libm; on a CPU without AVX-512 NumPy
+falls back to the same scalar path and all seven **agree exactly**. The
+assertion that they differ failed the first time CI ever ran the job, having
+been measured in only one place for the item's whole life. The category is
+justified by §9.2 — a specification — and not by the measurement, which is now
+recorded rather than asserted; what the tests pin is that `compilable()`
+refuses these operations however the measurement comes out. It is the same
+fact as `REPRODUCIBILITY_SCOPE`'s met a third time: a *measurement* of bitwise
+agreement is no more portable across microarchitectures than `np.exp` is.
 
 Four things worth carrying forward.
 
