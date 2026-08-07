@@ -47,7 +47,12 @@ and an ulp is a different bit pattern.
 
 Measured here, NumPy 2.4.6 against Numba 0.66.0 on one machine, on ordinary
 finite positive data — not at the extremes, not on NaN, but on the numbers a
-projection is made of:
+projection is made of.
+
+**Read the ❌ rows as "not guaranteed", not as "observed to differ".** The
+`1 ulp` entries are what an AVX-512 machine measures; on a CPU without it
+every one of them agrees exactly, and the classification does not move. See
+the correction under *Acceptance*.
 
 | operation | bitwise | note |
 |---|---|---|
@@ -65,6 +70,12 @@ They are classified as **must-hoist anyway**, because agreement the standard
 does not require is a coincidence of two versions rather than a contract, and
 the next NumPy release can withdraw it without breaking any promise — and it
 would withdraw it silently, in a reserve.
+
+That judgement was made on caution and turned out to be understated: the
+coincidence is not only of two versions but of a **CPU**, and it does not need
+a release to withdraw it. Moving a job to a different runner is enough. Every
+❌ row above is a ⚠️ row on a machine without AVX-512, which is why the
+category is settled by §9.2 and not by this table.
 
 `x ** 3` is the quiet one. NumPy special-cases small integer exponents into
 repeated multiplication; the compiler calls `pow`. An integer power looks
@@ -166,7 +177,7 @@ be unmeasured with nothing saying so.
 
 ## Acceptance
 
-`tests/test_bitwise_boundary.py` — 45 tests, of which 39 are the measurement
+`tests/test_bitwise_boundary.py` — 48 tests, of which 42 are the measurement
 and run only where a compiler is present.
 
 Both directions are asserted, because both can rot. Every operation the
@@ -174,10 +185,44 @@ module claims is guaranteed is measured to be bitwise-reproducible, on
 ordinary projection data **and** on an adversarial set (signed zero,
 subnormals, the full exponent range) — because the module makes the claim
 unconditionally and a claim that only holds on well-behaved inputs is a
-different claim. And the operations it declines to trust are measured to
-actually differ, so the category is a finding rather than a superstition: if
-a future release made `exp` agree, the test fails and the right response is
-to look again, not to keep hoisting an operation that no longer needs it.
+different claim. And the operations it declines to trust are measured, with
+the result **recorded rather than asserted** — see the correction below.
+
+## Correction: the second direction was not symmetrical with the first
+
+This RFC originally asserted that the operations in the second group *do*
+differ, reasoning that a category which never caught anything would be
+paranoia. That assertion held on the machine it was written on and **failed
+on a GitHub runner the first time CI ever ran the job** — the account had no
+Actions minutes for the entire life of this item, so it had only ever been
+measured in one place.
+
+The cause is not a library version, which is what the failure message
+guessed. NumPy dispatches hand-written **AVX-512** kernels for the
+transcendentals; the compiler calls libm. On a CPU with AVX-512 the two are a
+last bit apart. On a CPU without it, NumPy falls back to the same scalar path
+the compiler takes and **all seven agree exactly**. Both answers are
+reproducible on one machine by toggling `NPY_DISABLE_CPU_FEATURES`, and
+`tests/test_bitwise_boundary.py` now pins that.
+
+The asymmetry is the lesson. §5's *requirement* of correct rounding is a
+specification: if `multiply` ever disagreed, that is a real finding and B1 is
+off. §9.2's *absence* of a requirement is not the mirror image of it — an
+operation it declines to constrain may still happen to agree, and whether it
+does is a property of the silicon. So the second category cannot be justified
+by measurement at all, on any number of machines, and it is not: it is
+justified by the standard, with the measurement recorded beside it. What the
+tests assert is the mechanism — that `compilable()` refuses these operations
+**however the measurement comes out here**.
+
+This strengthens the hoisting design rather than weakening it. An operation
+that agrees on one CPU and disagrees on another is exactly one that cannot sit
+in a kernel claiming bitwise equivalence, and a machine where it happens to
+agree is the dangerous place to stand: that is where a green run tempts
+someone into widening `CORRECTLY_ROUNDED`. It is also the same fact as
+`REPRODUCIBILITY_SCOPE`'s, met a third time — a pack digest is an identity on
+a machine, `np.exp` is not bit-portable across microarchitectures, and now a
+*measurement* of bitwise agreement is not portable either.
 
 The refusals: an unclassified operation; a verdict that does not name the
 operation responsible; a reduction at any length; and — the one that guards
