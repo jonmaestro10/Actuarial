@@ -36,6 +36,7 @@ PAGES = ROOT / "docs" / "findings"
 #: catalogue is meant to grow; shrinking it is the thing worth noticing.
 CATALOGUED = {
     "aos-ordering",
+    "hoist-boundary",
     "counterparty-band-cliff",
     "pool-of-one",
     "reduction-order",

@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,677
+   naive implementation otherwise. The suite (`pytest`, currently 2,679
    tests — 2,537 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
@@ -391,9 +391,25 @@ assumes those phases are all there is. It now times `run_compiled` directly and
 the median is **1.66x**.
 
 What would move the slow templates is a smaller hoisted set, not a better
-schedule — and RFC-072 settled that boundary against IEEE-754, which does not
-move for a performance argument. The opening is to ask which variables are
-hoisted for reasons weaker than the standard. No item covers that.
+schedule. That question was then asked, and the answer is
+[`docs/findings/hoist-boundary.md`](findings/hoist-boundary.md): **the
+operative boundary is not RFC-072's.** Twelve of thirteen templates hoist
+because of `untracked-array` — a raw ndarray arriving mid-expression, which the
+tracer cannot follow — against **one** blocked by the standard. RFC-072's table
+is right about what a kernel may contain; it is simply not what decides the
+hoist set.
+
+So "the pre-pass is a median 54% of the runtime, Amdahl's law, not a defect in
+the fusion" is true and slightly misleading: Amdahl over a denominator set by a
+**tracing limitation**, not by IEEE-754. A ceiling attributed to the standard
+sounds permanent, and this one is not.
+
+The fix is to give basis arrays names that survive to run time, so a kernel can
+take them as arguments and the next block can supply its own. The cheap
+versions are unsafe and the finding says why — capturing the array at trace
+time specialises the kernel to the traced batch, which is RFC-070's bug through
+a different door. **No item covers that**, and it is now the largest remaining
+piece of engineering in the plan.
 
 Two findings worth carrying forward. **A variable is hoisted whole, never in
 part** — a sub-expression is an anonymous intermediate with no name that
