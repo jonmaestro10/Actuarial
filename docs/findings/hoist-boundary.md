@@ -82,9 +82,24 @@ and array-function protocols and **not `__getitem__`**, so a slab cannot be
 carried through that slice as a traced value — it arrives at the operand as a
 plain array and the variable hoists.
 
-That is a smaller defect than the symptom suggests. The boundary is not being
-set by what a kernel may contain; it is being set by an indexing operation the
-tracer cannot follow.
+The obvious repair — give `_Traced` a `__getitem__` so the slice stays traced —
+is **dead code**, and measuring said so before it was written. Instrumenting
+`Model.at` during a trace finds the slab is a plain `ndarray` every time, 28 of
+28 on `PayoutAnnuity`. It never enters the trace, so there is nothing for
+`__getitem__` to preserve.
+
+`setup()` shows why. Slabs are built by date and calendar machinery —
+`DateArray.coerce(self.mp.dob)`, `born.year[:, None]`, `np.atleast_1d(np.asarray(...))` —
+which sits entirely outside the ufunc and array-function protocols the tracer
+hooks. The slab is not a traced expression that got dropped at an index. **It
+can never be a traced expression**, and making it one would mean tracing the
+calendar.
+
+That is the useful conclusion, because it says what the fix is *not*. A slab
+does not need to be traced. It needs to be **named and passed in** — it is an
+input, exactly like a hoisted variable's slab, and it already has a name:
+the attribute `setup()` assigned it to. The work is registration and argument
+plumbing, not tracer coverage.
 
 ## What it would take, and why the cheap fixes are wrong
 
