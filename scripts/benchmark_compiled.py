@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
 
-from engine.core.compiled import cached_plan, compile_kernel
+from engine.core.compiled import cached_plan, compile_kernel, run_compiled
 from engine.core.vector import run_vectorized
 from engine.data.modelpoints import to_batch
 
@@ -66,15 +66,26 @@ def measure(name, model_cls, modelpoints, assumptions, proj_len,
     pre_pass = _time(hoist_pass) if compilation.hoisted else 0.0
     kernel(batch.n, proj_len, *arguments)
     fused = _time(lambda: kernel(batch.n, proj_len, *arguments))
+
+    # RFC-082: end to end is **measured**, not modelled. It used to be
+    # `vectorized / (pre_pass + fused)`, which is a sum of two things timed
+    # separately — it silently assumed the two phases are all there is, and
+    # after interleaving they are not even sequential. A headline figure
+    # derived from two other figures is a figure nobody ran.
+    end_to_end = _time(lambda: run_compiled(model_cls, batch, assumptions,
+                                            proj_len))
     return {
         "name": name, "compiled": True,
         "policies": policies, "periods": proj_len,
         "fused_vars": len(compilation.fused),
         "hoisted_vars": len(compilation.hoisted),
+        "interleaved": compilation.interleaves,
+        "recomputed_vars": len(compilation.recomputed),
         "vectorized_ms": vectorized * 1000,
         "pre_pass_ms": pre_pass * 1000,
         "kernel_ms": fused * 1000,
-        "end_to_end_speedup": vectorized / (pre_pass + fused),
+        "compiled_ms": end_to_end * 1000,
+        "end_to_end_speedup": vectorized / end_to_end,
         "kernel_speedup": vectorized / fused,
         "pre_pass_share": pre_pass / vectorized,
     }
@@ -87,9 +98,10 @@ def main() -> int:
         print("the worked examples need the [api] extra")
         return 1
 
-    print(f"{'template':20} {'fused':>5} {'hoist':>5} {'vector':>9} "
-          f"{'pre-pass':>9} {'kernel':>8} {'end-to-end':>11} {'kernel':>8}")
-    print("-" * 82)
+    print(f"{'template':20} {'fused':>5} {'hoist':>5} {'recomp':>6} "
+          f"{'vector':>9} {'compiled':>9} {'kernel':>8} {'end-to-end':>11} "
+          f"{'kernel':>8}")
+    print("-" * 96)
     rows = []
     for specimen in default_specimens():
         if specimen.get("scenarios") is not None:
@@ -103,7 +115,8 @@ def main() -> int:
                   f"{row['why'][:34]}")
             continue
         print(f"{name[:20]:20} {row['fused_vars']:>5} {row['hoisted_vars']:>5} "
-              f"{row['vectorized_ms']:>8.1f}ms {row['pre_pass_ms']:>8.1f}ms "
+              f"{row['recomputed_vars']:>6} "
+              f"{row['vectorized_ms']:>8.1f}ms {row['compiled_ms']:>8.1f}ms "
               f"{row['kernel_ms']:>7.1f}ms {row['end_to_end_speedup']:>10.2f}x "
               f"{row['kernel_speedup']:>7.1f}x")
 
@@ -113,14 +126,19 @@ def main() -> int:
         print(f"{'median':20} {'':>5} {'':>5} {'':>9} {'':>9} {'':>8} "
               f"{np.median([r['end_to_end_speedup'] for r in ran]):>10.2f}x "
               f"{np.median([r['kernel_speedup'] for r in ran]):>7.1f}x")
-        print(f"\nThe kernel is worth an order of magnitude. The end-to-end "
-              f"figure is lower because the\nhoist pre-pass is "
+        print(f"\nThe kernel is worth an order of magnitude. End-to-end is "
+              f"lower because the hoist\npre-pass is "
               f"{np.median([r['pre_pass_share'] for r in ran]):.0%} of the "
-              f"vectorized runtime and the kernel cannot remove it — "
-              f"Amdahl's law,\nnot a defect in the fusion. Interleaving the "
-              f"pre-pass with the kernel per period is the\nnext thing to "
-              f"attack, and it is a real piece of work rather than a tuning "
-              f"knob.")
+              f"vectorized runtime and the kernel cannot remove it.\n\n"
+              f"RFC-082 tried removing it by interleaving the pre-pass with "
+              f"the kernel per period,\nand measured that it does not pay: "
+              f"splitting one fused kernel into one per segment\ngives back "
+              f"the fusion, and per-period dispatch across segments and "
+              f"chunks costs more\nthan the recomputation it avoids. The "
+              f"'recomp' column is the work a pre-pass\nduplicates, and it "
+              f"does not predict the outcome — which is why the answer had "
+              f"to be\nmeasured. What would change it is a smaller hoisted "
+              f"set, not a better schedule.")
     return 0
 
 

@@ -128,8 +128,14 @@ def test_a_model_with_nothing_to_fuse_is_refused_rather_than_wrapped():
     assert result.fused  # the real one does fuse
 
     from engine.core.compiled import CompilationPlan
-    empty = CompilationPlan("X", ("a",), (), ("a",), (), (), {}, "",
-                            ("every variable is hoisted",), 10)
+    # Keyword-constructed: this was positional and broke the day the plan
+    # gained a field, which is a test failing for a reason unrelated to what
+    # it asserts.
+    empty = CompilationPlan(
+        model="X", order=("a",), fused=(), hoisted=("a",), fields=(),
+        scalars=(), segments=((True, ("a",)),), recomputed=(),
+        constants={}, source="",
+        refusals=("every variable is hoisted",), proj_len=10)
     assert not empty.compilable
     with pytest.raises(CompilationRefused, match="every variable is hoisted"):
         compile_kernel(empty)
@@ -238,3 +244,61 @@ def test_the_catalogue_compiles_and_agrees_or_says_why_not():
     )
     for name, reason in refused.items():
         assert len(reason) > 30, (name, reason)
+
+
+@needs_compiler
+def test_the_interleaved_path_stays_bitwise_though_it_is_switched_off():
+    """RFC-082's path is kept, so it must keep working.
+
+    `CompilationPlan.interleaves` returns False: measured, interleaving the
+    pre-pass costs more than the recomputation it avoids. The machinery is
+    kept because it is what a future attempt needs, and code that is kept and
+    never run is code that has already stopped working — so this drives it
+    directly and asserts the thing that matters, which is not speed.
+    """
+    from engine.core.compiled import CompilationPlan, run_compiled
+    from engine.core.vector import run_vectorized
+
+    points, assumptions, proj_len = build()
+    original = CompilationPlan.interleaves
+    try:
+        CompilationPlan.interleaves = property(lambda self: True)
+        interleaved = run_compiled(FixedAnnuity, points, assumptions, proj_len)
+    finally:
+        CompilationPlan.interleaves = original
+    whole = run_compiled(FixedAnnuity, points, assumptions, proj_len)
+    vector = run_vectorized(FixedAnnuity, points, assumptions, proj_len)
+
+    for name in sorted(vector._stacked):
+        want = vector.array(name)
+        for got, label in ((whole.array(name), "whole"),
+                           (interleaved.array(name), "interleaved")):
+            assert got.shape == want.shape, f"{label} {name}: shape"
+            assert got.dtype == want.dtype, f"{label} {name}: dtype"
+            assert np.array_equal(got.view(np.int64), want.view(np.int64)), (
+                f"{label} {name} is not bitwise identical to the vectorized "
+                f"executor"
+            )
+
+
+def test_the_plan_records_what_a_pre_pass_would_recompute():
+    """Guards the measurement RFC-082 rests on going stale.
+
+    `recomputed` is the fused work a pre-pass over the hoisted set duplicates,
+    and it is the number that says whether interleaving *could* pay. It is
+    asserted in both directions: TermLife duplicates nearly everything, and
+    PayoutAnnuity duplicates nothing at all — which is why the plan's original
+    diagnosis, that the pre-pass is a second traversal recomputing the fused
+    variables, is true only sometimes.
+    """
+    points, assumptions, proj_len = build()
+    result = cached_plan(FixedAnnuity, points, assumptions, proj_len)
+
+    # Every recomputed variable is fused and reachable from the hoisted set —
+    # the definition, asserted rather than trusted.
+    assert set(result.recomputed) <= set(result.fused)
+    # And the segments cover the order exactly once, in order: interleaving
+    # walks them, so a variable dropped or duplicated here would be a period
+    # that computed the wrong thing.
+    flattened = [n for _, names in result.segments for n in names]
+    assert flattened == list(result.order)

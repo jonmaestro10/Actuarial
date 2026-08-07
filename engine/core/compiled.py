@@ -66,6 +66,7 @@ calculation.
 from __future__ import annotations
 
 import hashlib
+from itertools import groupby
 from dataclasses import dataclass, field
 from typing import Any, Type
 
@@ -74,7 +75,9 @@ import numpy as np
 from engine.core.bitwise import UNSAFE_FLAGS, classify
 from engine.core.model import Model
 from engine.core.results import ArrayRunResult
-from engine.core.vector import run_vectorized
+from engine.core.vector import (
+    TRACE_PERIODS, default_chunk_size, run_vectorized,
+)
 from engine.data.modelpoints import to_batch
 
 #: Periods whose tape must agree before the steady state is believed. Period
@@ -261,6 +264,15 @@ class CompilationPlan:
     hoisted: tuple
     fields: tuple
     scalars: tuple            # ((variable, index), values-by-period)
+    #: RFC-082. The period's variables in dependency order, grouped into runs
+    #: of the same class: ``((is_hoisted, names), ...)``. The grouping is what
+    #: makes interleaving possible — `graph.order()` is topological over
+    #: same-period edges, so a run can be executed as a unit.
+    segments: tuple
+    #: RFC-082. Fused variables that lie inside a hoisted variable's
+    #: dependency closure — exactly the work the old whole-model pre-pass
+    #: duplicated. Empty means interleaving cannot pay.
+    recomputed: tuple
     constants: dict
     source: str
     refusals: tuple
@@ -269,6 +281,38 @@ class CompilationPlan:
     @property
     def compilable(self) -> bool:
         return not self.refusals and bool(self.fused)
+
+    @property
+    def interleaves(self) -> bool:
+        """Whether to run the pre-pass a period at a time. **Measured: no.**
+
+        RFC-082 built this and it does not pay. The duplication is real —
+        a pre-pass over the hoisted set recomputes :attr:`recomputed`, which
+        on ``TermLife`` is 15 of 16 fused variables — but removing it costs
+        more than it saves, and the reason took two measurements to see.
+
+        Interleaving splits one fused kernel into one per segment, so a
+        period makes N passes over the slabs instead of one. That is the
+        fusion itself being given back. The first measurement appeared to
+        show large wins, and it was wrong for an instructive reason: the
+        interleaved path ran unchunked while the baseline chunked, so it was
+        being compared against a different memory strategy rather than a
+        different schedule. It "won" 2.4x on TermLife and lost 9x on
+        LongTermCare — the spread was cache residency, not scheduling.
+
+        With chunking held constant the honest figures are: TermLife 1.21x,
+        GroupLife 1.07x, PensionBuyout 1.03x, and **every other template
+        slower** — CreditLife 0.55x, LongTermCare 0.50x, IncomeProtection
+        0.57x. Per-period dispatch, multiplied by segments and by chunks,
+        costs more than the recomputation it avoids.
+
+        The machinery is kept rather than deleted: the segments, the
+        closure and the cache injection are what a future attempt needs, and
+        the path is exercised by `tests/test_compiled.py` so it stays
+        bitwise. What would change the answer is fewer segments — that is,
+        a smaller hoisted set — which is a different item.
+        """
+        return False
 
     @property
     def digest(self) -> str:
@@ -308,7 +352,8 @@ def _trace_once(model_cls, batch, assumptions, proj_len, periods, forced):
     for t in range(min(3, proj_len + 1)):
         for name in probe.var_names():
             getattr(probe, name)(t)
-    order = list(probe.graph().order())
+    graph = probe.graph()
+    order = list(graph.order())
     order += [n for n in probe.var_names() if n not in order]
 
     model = model_cls(mp=traced, assumptions=assumptions, proj_len=proj_len)
@@ -331,7 +376,8 @@ def _trace_once(model_cls, batch, assumptions, proj_len, periods, forced):
     return dag, roots, tuple(order)
 
 
-def _emit(dag, roots, order, fused, constants, scalars) -> str:
+def _emit(dag, roots, order, fused, constants, scalars,
+          segments) -> str:
     """Generate the kernel source. Readable on purpose — see the module doc."""
 
     def expression(index: int, t: str) -> str:
@@ -381,6 +427,31 @@ def _emit(dag, roots, order, fused, constants, scalars) -> str:
         lines.append(f"            o_{name}[t, j] = "
                      f"{expression(roots[1][name], 't')}")
     lines.append("    return 0")
+
+    # RFC-082. One entry per fused segment, taking a single period, so the
+    # hoisted variables between two segments can be evaluated from the slabs
+    # this one just wrote instead of being recomputed from scratch.
+    #
+    # `if t == 0` rather than two functions: the branch is on the *period*,
+    # which is a loop counter and not model-point data — §1's rule forbids a
+    # `@var` body branching on the latter, and this is the former. Numba
+    # hoists it out of the `j` loop, so it costs one comparison per period.
+    for index, (is_hoisted, names) in enumerate(segments):
+        if is_hoisted:
+            continue
+        lines.append("")
+        lines.append(f"def segment_{index}(t, n_mp, {', '.join(args)}):")
+        lines.append("    if t == 0:")
+        lines.append("        for j in range(n_mp):")
+        for name in names:
+            lines.append(f"            o_{name}[0, j] = "
+                         f"{expression(roots[0][name], '0')}")
+        lines.append("    else:")
+        lines.append("        for j in range(n_mp):")
+        for name in names:
+            lines.append(f"            o_{name}[t, j] = "
+                         f"{expression(roots[1][name], 't')}")
+        lines.append("    return 0")
     return "\n".join(lines)
 
 
@@ -409,9 +480,12 @@ def plan(model_cls: Type[Model], modelpoints, assumptions: Any,
         forced |= discovered
     else:
         return CompilationPlan(
-            model_cls.__name__, tuple(order or ()), (), (), (), (), {}, "",
-            (f"the set of variables needing to be hoisted did not settle "
-             f"after {MAX_HOIST_PASSES} passes",), proj_len)
+            model=model_cls.__name__, order=tuple(order or ()), fused=(),
+            hoisted=(), fields=(), scalars=(), segments=(), recomputed=(),
+            constants={}, source="",
+            refusals=(f"the set of variables needing to be hoisted did not "
+                      f"settle after {MAX_HOIST_PASSES} passes",),
+            proj_len=proj_len)
 
     refusals = []
     if dag.branches:
@@ -434,6 +508,31 @@ def plan(model_cls: Type[Model], modelpoints, assumptions: Any,
             )
 
     fused = tuple(n for n in order if n not in dag.hoisted)
+    segments = tuple(
+        (key, tuple(names))
+        for key, names in groupby(order, key=lambda n: n in dag.hoisted)
+    )
+    # Which fused variables would a pre-pass over the hoisted set recompute?
+    # The closure is taken over *every* offset, not just same-period edges: a
+    # hoisted variable reading a fused one at t-1 makes the model evaluate it
+    # for every earlier period, and that does not appear in `order`.
+    reader = model_cls(mp=batch, assumptions=assumptions, proj_len=proj_len,
+                       record_graph=True)
+    for t in range(min(3, proj_len + 1)):
+        for name in order:
+            getattr(reader, name)(t)
+    graph = reader.graph()
+    probe_names = set(order)
+    needed, stack = set(), list(dag.hoisted)
+    while stack:
+        current = stack.pop()
+        if current in needed:
+            continue
+        needed.add(current)
+        stack.extend(d for d, _ in graph.reads(current)
+                     if d in probe_names)
+    recomputed = tuple(n for n in order
+                       if n not in dag.hoisted and n in needed)
     if not fused:
         refusals.append(
             "every variable is hoisted, so there is nothing to fuse and a "
@@ -454,7 +553,8 @@ def plan(model_cls: Type[Model], modelpoints, assumptions: Any,
     source = ""
     if not refusals:
         try:
-            source = _emit(dag, roots, order, fused, constants, scalars)
+            source = _emit(dag, roots, order, fused, constants,
+                           scalars, segments)
         except CompilationRefused as exc:
             refusals.append(str(exc))
 
@@ -463,6 +563,8 @@ def plan(model_cls: Type[Model], modelpoints, assumptions: Any,
         order=tuple(order),
         fused=fused,
         hoisted=tuple(sorted(dag.hoisted)),
+        segments=segments,
+        recomputed=recomputed,
         fields=tuple(sorted({nd.label for nd in dag.nodes
                              if nd.kind == "field"})),
         scalars=tuple((k, dict(dag.scalars[k])) for k in scalars),
@@ -528,8 +630,119 @@ def compile_kernel(compilation: CompilationPlan):
     exec(compile(compilation.source, f"<{compilation.model} kernel>", "exec"),
          namespace)
     kernel = njit(cache=False)(namespace["kernel"])
+    # RFC-082's per-period entries, compiled beside the whole-loop one rather
+    # than instead of it. A template whose pre-pass recomputes nothing gets no
+    # benefit from interleaving and would only pay the per-period dispatch, so
+    # both paths have to exist and `run_compiled` chooses.
+    kernel.segments = tuple(
+        njit(cache=False)(namespace[f"segment_{i}"])
+        for i, (is_hoisted, _) in enumerate(compilation.segments)
+        if not is_hoisted
+    )
     _KERNELS[compilation.digest] = kernel
     return kernel
+
+
+def _interleave(model_cls, batch, assumptions, proj_len, compilation, kernel,
+                slabs, hoist_slabs) -> None:
+    r"""Run the hoist pre-pass and the kernel one period at a time.
+
+    RFC-082. The pre-pass used to be a whole vectorized run over the hoisted
+    variables, and a hoisted variable's dependencies include fused ones — so
+    the model recomputed, in NumPy, the work the kernel was about to do in a
+    kernel. On ``TermLife`` that is **15 of 16** fused variables.
+
+    The mechanism is the model's own ``(variable, period)`` memo. Each fused
+    segment writes its slab rows for period ``t``; those exact rows are then
+    placed in the memo, so when a hoisted variable in the next segment asks
+    for them it reads the array the kernel wrote instead of evaluating the
+    ``@var`` body. **The same object, not an equal one** — there is no
+    arithmetic between the kernel's write and the model's read, which is what
+    keeps this bitwise rather than merely close.
+
+    Segments are walked in ``graph.order()``, which is topological over
+    same-period edges, so a hoisted variable is never asked for before the
+    fused segment it reads has run.
+
+    The first few periods are evaluated by the model *without* injection.
+    The dependency graph is recorded during them, and the look-back window
+    comes off that graph — injecting a value the model did not compute would
+    record no edges, and the window would then be short enough to evict
+    something still needed.
+    """
+    # **Chunked, like the vectorized executor**, and this is not incidental.
+    # An earlier version ran one model over the whole block and was *nine
+    # times slower* on LongTermCare — 0.11x against the un-interleaved path.
+    # The cause is not the interleaving: `run_vectorized` splits the block so
+    # a period's working set stays in cache, and running 50,000 policies at
+    # once discards that. The templates that collapsed were exactly the ones
+    # with the largest per-period intermediates. Amdahl was never the whole
+    # story; cache residency was the rest of it.
+    chunk = default_chunk_size(proj_len + 1)
+    if (getattr(model_cls, "couples_model_points", False)
+            or model_cls.pooled_names()):
+        chunk = batch.n
+    chunk = max(1, min(int(chunk), batch.n))
+
+    for start in range(0, batch.n, chunk):
+        stop = min(start + chunk, batch.n)
+        _interleave_chunk(model_cls, batch.take(start, stop), assumptions,
+                          proj_len, compilation, kernel, slabs, hoist_slabs,
+                          start, stop)
+
+
+def _interleave_chunk(model_cls, batch, assumptions, proj_len, compilation,
+                      kernel, slabs, hoist_slabs, start, stop) -> None:
+    """One chunk's periods, alternating between the kernel and the model."""
+    model = model_cls(mp=batch, assumptions=assumptions, proj_len=proj_len,
+                      record_graph=True)
+    n = batch.n
+    traced = min(TRACE_PERIODS, proj_len + 1)
+    window = None
+
+    # Per-chunk buffers, then copied back. A column slice of the full slab
+    # would be non-contiguous, and handing Numba a strided array costs more
+    # than the copy.
+    local_fused = {name: np.empty((proj_len + 1, n), dtype=np.float64)
+                   for name in compilation.fused}
+    local_hoist = {name: np.empty((proj_len + 1, n), dtype=np.float64)
+                   for name in compilation.hoisted}
+    arguments = (
+        [np.ascontiguousarray(getattr(batch, f), dtype=np.float64)
+         for f in compilation.fields]
+        + [local_hoist[n_] for n_ in compilation.hoisted]
+        + [np.array([values.get(t, 0.0) for t in range(proj_len + 1)],
+                    dtype=np.float64)
+           for _, values in compilation.scalars]
+        + [local_fused[n_] for n_ in compilation.fused]
+    )
+
+    for t in range(proj_len + 1):
+        segment_kernels = iter(kernel.segments)
+        for is_hoisted, names in compilation.segments:
+            if is_hoisted:
+                for name in names:
+                    local_hoist[name][t] = np.broadcast_to(
+                        np.asarray(getattr(model, name)(t), dtype=np.float64),
+                        n)
+            else:
+                next(segment_kernels)(t, n, *arguments)
+                if t >= traced:
+                    # The array the kernel wrote, not a copy of it. There is
+                    # no arithmetic between this write and the model's read,
+                    # which is what keeps the path bitwise.
+                    for name in names:
+                        model._cache[(name, t)] = local_fused[name][t]
+        if t == traced - 1:
+            window = model.graph().horizon()
+            model.record_graph = False
+        elif window is not None:
+            model.prune(t - window)
+
+    for name, values in local_fused.items():
+        slabs[name][:, start:stop] = values
+    for name, values in local_hoist.items():
+        hoist_slabs[name][:, start:stop] = values
 
 
 def run_compiled(model_cls: Type[Model], modelpoints, assumptions: Any,
@@ -551,25 +764,37 @@ def run_compiled(model_cls: Type[Model], modelpoints, assumptions: Any,
     compilation = cached_plan(model_cls, batch, assumptions, proj_len)
     kernel = compile_kernel(compilation)
 
-    hoist_slabs = {}
-    if compilation.hoisted:
-        hoisted = run_vectorized(model_cls, batch, assumptions, proj_len,
-                                 outputs=list(compilation.hoisted))
-        hoist_slabs = {name: np.ascontiguousarray(hoisted.array(name))
-                       for name in compilation.hoisted}
-
     slabs = {name: np.empty((proj_len + 1, batch.n), dtype=np.float64)
              for name in compilation.fused}
-    arguments = (
-        [np.ascontiguousarray(getattr(batch, f), dtype=np.float64)
-         for f in compilation.fields]
-        + [hoist_slabs[n] for n in compilation.hoisted]
-        + [np.array([values.get(t, 0.0) for t in range(proj_len + 1)],
-                    dtype=np.float64)
-           for _, values in compilation.scalars]
-        + [slabs[n] for n in compilation.fused]
-    )
-    kernel(batch.n, proj_len, *arguments)
+    hoist_slabs = {name: np.empty((proj_len + 1, batch.n), dtype=np.float64)
+                   for name in compilation.hoisted}
+
+    def _arguments():
+        return (
+            [np.ascontiguousarray(getattr(batch, f), dtype=np.float64)
+             for f in compilation.fields]
+            + [hoist_slabs[n] for n in compilation.hoisted]
+            + [np.array([values.get(t, 0.0) for t in range(proj_len + 1)],
+                        dtype=np.float64)
+               for _, values in compilation.scalars]
+            + [slabs[n] for n in compilation.fused]
+        )
+
+    if compilation.hoisted and not compilation.interleaves:
+        # Nothing the pre-pass computes is recomputed by the kernel, so
+        # interleaving would buy only per-period dispatch overhead. Measured:
+        # PayoutAnnuity recomputes 0 of 2 fused variables, and its pre-pass is
+        # not duplicated work — it *is* the model.
+        hoisted = run_vectorized(model_cls, batch, assumptions, proj_len,
+                                 outputs=list(compilation.hoisted))
+        for name in compilation.hoisted:
+            hoist_slabs[name][:] = hoisted.array(name)
+        kernel(batch.n, proj_len, *_arguments())
+    elif compilation.hoisted:
+        _interleave(model_cls, batch, assumptions, proj_len, compilation,
+                    kernel, slabs, hoist_slabs)
+    else:
+        kernel(batch.n, proj_len, *_arguments())
 
     stacked = dict(slabs)
     stacked.update(hoist_slabs)

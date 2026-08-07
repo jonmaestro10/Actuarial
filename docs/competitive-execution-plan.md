@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,672
+   naive implementation otherwise. The suite (`pytest`, currently 2,674
    tests — 2,537 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
@@ -353,7 +353,8 @@ the vectorized executor with extra steps.
 
 **The speed result is two numbers, and both are published.** The kernel alone
 is a median **14.6x** (range 5.4x to 261x), clearing the >=5x target. End to
-end the median is **1.36x** (range 0.92x to 9.94x), and the reason is Amdahl's
+end the median is **1.66x** (measured, not modelled — see RFC-082), and the
+reason is Amdahl's
 law rather than a defect in the fusion: the hoist pre-pass is a median 55% of
 the vectorized runtime and the kernel cannot remove it. On `PayoutAnnuity` the
 pre-pass is slower than the entire vectorized run and the compiled path is a
@@ -361,10 +362,38 @@ net loss. Reported rather than tuned away — the honest claim is that the fused
 arithmetic is worth an order of magnitude and most templates today spend more
 time outside it than in it.
 
-**The next piece of work is named by the measurement**, not guessed:
-interleave the pre-pass with the kernel per period, so a hoisted variable is
-computed from the kernel's own slabs rather than from a second traversal that
-recomputes the fused variables as dependencies.
+**The next piece of work was named by the measurement, built, and refused**
+— RFC-082. Interleaving the pre-pass with the kernel per period is bitwise and
+does not pay: it splits one fused kernel into one per segment, and per-period
+dispatch across segments and chunks costs more than the recomputation it
+avoids. Three corrections came out of it, and they matter more than the
+attempt.
+
+*The diagnosis above is true only sometimes.* `CompilationPlan.recomputed` now
+measures the fused work a pre-pass duplicates. `TermLife` duplicates 15 of 16
+— and **`PayoutAnnuity`, named here as the worst case, duplicates 0 of 2.** No
+hoisted variable reads a fused one at any offset; its pre-pass is not a second
+traversal, it *is* the model. `PensionBuyout` 0 of 3, `GeneralInsurance` 0 of
+7. The three worst end-to-end templates are precisely the three the named fix
+could not touch.
+
+*The first A/B was wrong in a way worth recording.* It showed TermLife 2.39x
+and LongTermCare 0.11x, a ninefold spread that invites a story about which
+models suit interleaving. There is no such story: the interleaved path ran
+unchunked against a chunked baseline, so it compared two **memory strategies**
+and was read as comparing two schedules. With chunking held constant nearly
+every figure inverts, and `recomputed` does not predict the outcome — 17% gains
+where 23% loses.
+
+*The 1.36x above was never measured.* `benchmark_compiled.py` computed it as
+`vectorized / (pre_pass + fused)`, a sum of two separately-timed pieces, which
+assumes those phases are all there is. It now times `run_compiled` directly and
+the median is **1.66x**.
+
+What would move the slow templates is a smaller hoisted set, not a better
+schedule — and RFC-072 settled that boundary against IEEE-754, which does not
+move for a performance argument. The opening is to ask which variables are
+hoisted for reasons weaker than the standard. No item covers that.
 
 Two findings worth carrying forward. **A variable is hoisted whole, never in
 part** — a sub-expression is an anonymous intermediate with no name that
@@ -1510,13 +1539,18 @@ failed jobs, and a job that never got a runner reports `cancelled` — check
 whether a job ever *started*, and note that matrix fail-fast also cancels
 siblings, which looks the same and is not.
 
-Two pieces of engineering are named by measurement rather than guessed, and
-either is a good first item. **B1's remaining order of magnitude**: the
-kernel is a median 14.6x but end-to-end is 1.36x, because the hoist pre-pass
-is a median 55% of the runtime — interleave the pre-pass with the kernel per
-period so a hoisted variable is computed from the kernel's own slabs instead
-of a second traversal. **B3's device measurement**: the machinery and both
-guarantees are built and tested, and nothing has run on silicon.
+One piece of engineering is named by measurement rather than guessed.
+**B3's device measurement**: the machinery and both guarantees are built and
+tested, and nothing has run on silicon — it needs hardware, not effort.
+
+**B1's remaining order of magnitude was attempted and refused** (RFC-082).
+Interleaving the pre-pass with the kernel per period was built, is bitwise, and
+does not pay: it splits one fused kernel into one per segment, and per-period
+dispatch across segments and chunks costs more than the recomputation it
+avoids. The premise held only sometimes — PayoutAnnuity, the case the plan
+named as worst, recomputes **0 of 2** fused variables. What would move those
+templates is a smaller hoisted set, not a better schedule, and that is an item
+nobody has written.
 
 After those, workstream G is the largest untouched block: G1 multi-tenant
 packaging, G2 the SOC 2 substrate, G3 release cadence, G4 the pilot playbook.
