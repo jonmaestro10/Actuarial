@@ -76,21 +76,57 @@ lands. The `concurrency` block went with it — it existed to cancel superseded
 *branch* runs, and on `main` it was already exempt, because cancelling there
 would discard the only evidence that a merged commit is green.
 
-**What this trades.** A pull request carries no checks, so `main` is where a
-failure is found: verify locally, merge, confirm, fix forward. Coverage of what
-*lands* is unchanged — every commit reaching `main` still meets the whole
-matrix — but the failure arrives after the merge rather than before it, and
-`main` can be red in between.
+The trigger then settled at **`pull_request: branches: ["main"]` and nothing
+else** — `push` removed entirely, so a merge adds no second run on top of the
+pull request that already ran. Checks land *before* the merge, which is where
+they are worth most: `main` does not go red from a merge nobody verified. The
+`concurrency` group returns with it, now unconditional, because with `push`
+gone every run belongs to a pull request and no ref needs exempting.
 
-That trade is only honest if the local check is real, which is what the rest of
-this RFC is about, and it raises `scripts/local_matrix.py` from a second
-opinion to **the only opinion a change gets before it lands**. Two consequences
-follow directly. Its refusal to pass a version it could not check stops being a
-nicety and becomes the thing standing between an unverified interpreter and
-`main`. And its one genuine blind spot — one machine, one architecture, one
-libm — is now unguarded until after a merge; RFC-072's correction is the worked
-example, an assertion about the silicon that survived the entire life of an
-item because it was only ever measured in one place.
+The cost moved rather than vanished: billing scales with how often a branch is
+pushed rather than how often it is merged, which is precisely what
+`cancel-in-progress` is there to bound.
+
+## A second architecture, because the first CI run found a first-architecture bug
+
+RFC-072 asserted that the operations §9.2 declines to require correct rounding
+for really do differ under a compiler. True on the machine it was written on,
+false on the runner, and it survived the whole life of the item because it had
+only ever been measured in one place. `test-arm64` exists for whatever else is
+like that: different SIMD (NEON/SVE) and a different libm, where Intel-versus-
+AMD would barely differ. It is also nearly free — arm64 standard runners
+reached private repositories in January 2026, count against the plan's included
+minutes, and bill *below* the x64 rate. One interpreter, not the matrix: the
+question is what changes with the architecture, and asking it three times pays
+three times for one answer.
+
+It widens no claim. §1.2's executor equivalence is a within-machine invariant
+and stays one; a pack digest is an identity on a machine, and the arm64 job's
+two pack builds are compared against each other on that runner, never against
+x64.
+
+### `CI ONLY` is a third answer, and it had to be
+
+Adding that job broke the local matrix in a way worth recording, because the
+first fix was wrong. `scripts/local_matrix.py` would have run the arm64 job's
+steps on x86 and printed **pass** — this module's own failure mode arrived at
+from the other side: not a check that was skipped and read as passing, but one
+that ran on the wrong thing and read as passing.
+
+So the reader learned to read `runs-on`, and a foreign-architecture job stopped
+being run. The obvious next step was to make it fail like any other unchecked
+job, and that would have been a mistake. An x86 box cannot stand in for arm64
+at *any* point, so failing on it means the documented pre-merge command can
+never pass — and everyone then passes `--allow-uncovered` by reflex, which
+waives a missing interpreter too. Being stricter there would have spent the
+strictness that matters.
+
+The two are therefore separated. A missing interpreter is a gap in *this
+machine's setup*, fixable by installing a Python, and still fails. A foreign
+architecture is not fixable here ever, so it reports **`CI ONLY`**, exits zero,
+and is named in the verdict line every run — where it cannot be read separately
+from the result. The final line changes with it: not "every job in ci.yml
+passed" but "every job in ci.yml *this x64 machine can run*" passed.
 
 ## The design problem is the silence, not the matrix
 

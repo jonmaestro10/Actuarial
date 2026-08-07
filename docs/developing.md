@@ -60,9 +60,9 @@ reached CI once.
 
 ### Before you merge — the whole matrix, locally
 
-**CI runs only on a push to `main`.** A pull request carries no checks at all,
-so this is not a second opinion — it is the only one you get before the code
-lands. Run it.
+**CI triggers on a pull request into `main`, and nothing else** — there is no
+push trigger, so merging runs nothing. Run this before you open the PR and you
+find out on your machine instead of on a runner.
 
 ```bash
 python scripts/local_matrix.py            # every job in ci.yml, every version
@@ -81,11 +81,18 @@ the same failure shape as a parametrised test over an empty list.
 `--allow-uncovered` waives *absence* only, never a real failure, and says so
 in the summary next to the verdict.
 
+**`test-arm64` is different, and reports `CI ONLY`.** On an x86 box it is not a
+gap you can close — it is not runnable here at any point — so it does not fail
+the run. Making it fatal would mean the local gate could never pass, and
+`--allow-uncovered` would become reflexive, waiving the fixable case above
+along with it. It is printed in the verdict every run instead.
+
 It is **not CI**: one machine, one architecture, one libm. `np.exp` and `**`
-are not bit-portable across microarchitectures, so the cross-machine float
-difference CI caught once is invisible here. It is the strongest substitute
-available while the repository has no Actions minutes — see RFC-077, and
-§1.9a of the execution plan for what an item verified this way may claim.
+are not bit-portable across microarchitectures, so a difference that lives
+there is invisible here — RFC-072's correction is the worked example, an
+assertion about AVX-512 dispatch that survived an entire item because it was
+only ever measured in one place. See RFC-077, and §1.9a of the execution plan
+for what an item verified this way may claim.
 
 ---
 

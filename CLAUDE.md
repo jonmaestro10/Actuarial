@@ -148,9 +148,8 @@ find . -name __pycache__ -exec rm -rf {} + ; python -W error::SyntaxWarning -m p
 The pack must rebuild **byte-identically**. The cache clear is not
 superstition: a `SyntaxWarning` masked by a stale `.pyc` reached CI once.
 
-Before you **merge**, one more. **CI runs only on a push to `main`** — a pull
-request carries no checks — so this is the only check a change gets before it
-lands:
+Before you open the PR, one more. **CI triggers on a pull request into `main`
+and nothing else** — no push trigger, so a merge runs nothing:
 
 ```bash
 python scripts/local_matrix.py
@@ -159,10 +158,16 @@ python scripts/local_matrix.py
 It reads `.github/workflows/ci.yml` and runs every job under every interpreter
 that file names. **A version it cannot find fails the run**, because a machine
 with one Python must not be able to print a report shaped like a full matrix.
+
+The `test-arm64` job is the exception, and the distinction is deliberate: an
+x86 box can never stand in for it, so it reports **`CI ONLY`** and does *not*
+fail — making it fatal would mean the local gate can never pass, and everyone
+would reach for `--allow-uncovered`, which waives the fixable case too.
+
 It is not CI and says so: one machine cannot see a cross-machine float
-difference, and the worked example of that gap is RFC-072's correction — the
-bitwise boundary asserted a property of the silicon for the life of the item.
-See [`docs/rfc-077-local-matrix.md`](docs/rfc-077-local-matrix.md).
+difference, and the worked example is RFC-072's correction — the bitwise
+boundary asserted a property of the silicon for the life of the item. See
+[`docs/rfc-077-local-matrix.md`](docs/rfc-077-local-matrix.md).
 
 **CI runs several Python versions and this container is one.** Three defects
 have been invisible locally and caught only by CI: a cross-test import, a

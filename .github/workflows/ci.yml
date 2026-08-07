@@ -1,25 +1,18 @@
 name: CI
 
-# **One trigger: a push to main.** No pull_request, no other branches.
+# **One trigger: a pull request into main.** No push, no other base branch.
 #
-# This is a deliberate trade of pre-merge signal for minutes, and it is worth
-# stating plainly rather than discovering. The pair `push: ["**"]` +
-# `pull_request` used to fire *both* events for every push to a branch with an
-# open PR, running all four jobs twice for one commit's worth of signal —
-# roughly half of every run this repository has ever billed. Restricting `push`
-# to main removed that half. Removing `pull_request` removes the other: a
-# branch can be pushed and re-pushed as often as the work needs, and nothing
-# runs until it lands.
+# The history is worth keeping, because each step removed real waste. The pair
+# `push: ["**"]` + `pull_request` fired *both* events for every push to a
+# branch with an open PR, running every job twice for one commit's worth of
+# signal — fourteen of thirty consecutive runs, 47% of all billing. Restricting
+# `push` to main removed that half. Dropping `push` entirely removes the
+# duplicate a merge would otherwise add on top of the PR that already ran.
 #
-# What it costs: **a PR carries no checks, so main is where a failure is
-# found.** The model is verify locally, merge, confirm here, fix forward. That
-# is only honest if the local check is real, which is what
-# `scripts/local_matrix.py` (RFC-077) is for — it reads *this file* and runs
-# every job below under every version the matrix names, and fails on a version
-# it could not check. Run it before merging, not the four quick checks alone.
-#
-# What it does not cost: coverage of what lands. Every commit that reaches main
-# is still run against the whole matrix. The difference is when, not whether.
+# So checks land **before** the merge, which is where they are worth most: main
+# does not go red from a merge that was never verified. The cost is that
+# billing scales with how often a branch is pushed rather than how often it is
+# merged — which is what the `concurrency` block below is for.
 #
 # There is no `paths-ignore` here and there must not be one. A docs-only change
 # is not a no-op in this repo: tests/test_working_agreement.py,
@@ -27,14 +20,16 @@ name: CI
 # docs/, and the evidence pack embeds documented figures. Skipping CI on a
 # docs-only diff would skip exactly the tests that diff can break.
 on:
-  push:
+  pull_request:
     branches: ["main"]
 
-# No `concurrency` block. It existed to cancel superseded runs on branches that
-# were force-pushed, and there are no branch runs left to supersede. On main it
-# was already exempt, because cancelling an in-progress run there would discard
-# the only evidence that a merged commit is green — and that is still true, so
-# two merges landing close together should each get their own run.
+# A superseded run costs the same minutes as a live one, and with `push` gone
+# every run belongs to a pull request — so there is no longer any ref that must
+# be exempt. Force-push a branch three times and only the third run survives;
+# the first two were answering questions about commits nobody will merge.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -72,6 +67,47 @@ jobs:
       # the same source is byte-identical — the directory is named by the
       # pack digest, so `diff -r` fails if either the digest or any section
       # moved.
+      - name: Build the validation evidence pack, twice
+        run: |
+          python scripts/evidence_pack.py --out evidence
+          python scripts/evidence_pack.py --out evidence-rebuild
+          diff -r evidence evidence-rebuild
+
+  # **A second architecture, for the class of bug the first CI run found.**
+  #
+  # RFC-072 asserted that the operations §9.2 declines to require correct
+  # rounding for really do differ under a compiler. That was true on the
+  # machine it was written on and false on this runner — NumPy dispatches
+  # AVX-512 kernels for the transcendentals while the compiler calls libm, so
+  # the answer is a property of the silicon. It survived the whole life of the
+  # item because it had only ever been measured in one place.
+  #
+  # arm64 is the sharpest available probe for whatever else is like that:
+  # different SIMD (NEON/SVE) and a different libm, where Intel-versus-AMD
+  # would barely differ. It is also nearly free — arm64 standard runners
+  # reached private repositories in January 2026, count against the plan's
+  # included minutes, and bill *below* the x64 rate.
+  #
+  # One version, not the matrix. The question is what changes with the
+  # architecture, and asking it three times over three interpreters would pay
+  # three times for one answer.
+  #
+  # What this does **not** do is widen any reproducibility claim. §1.2's
+  # executor equivalence is a within-machine invariant and stays one; a pack
+  # digest is an identity on a machine (REPRODUCIBILITY_SCOPE) and the two
+  # pack builds below are compared against each other on this runner, never
+  # against x64. If this job goes red, read it as a finding about a test that
+  # asserted something architectural, not as a portability defect to paper
+  # over.
+  test-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test,data,api,excel]"
+      - run: pytest -q
       - name: Build the validation evidence pack, twice
         run: |
           python scripts/evidence_pack.py --out evidence
