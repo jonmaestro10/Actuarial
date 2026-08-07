@@ -139,7 +139,7 @@ class RunStore:
     # --- identity ---------------------------------------------------------
 
     @staticmethod
-    def identify(request: dict) -> str:
+    def identify(request: dict, salt: str | None = None) -> str:
         """A provisional identifier for a request, before it is run.
 
         The registry's ``run_id`` is only available once the model class and
@@ -151,14 +151,24 @@ class RunStore:
         Dictionaries fingerprint by sorted key, so JSON key order does not
         move it — asserted in the tests rather than assumed, because the
         whole idempotency guarantee rests on it.
+
+        ``salt`` is RFC-078's opt-out from cross-tenant deduplication. It is
+        folded into the fingerprint but **never into the stored request**, so
+        the request a run reports is still exactly the request submitted —
+        two tenants that salt differently get two runs whose recorded
+        requests are identical, which is the honest description of what
+        happened. Unsalted is the default and collides as before.
         """
-        return fingerprint(_canonical(request))
+        canonical = _canonical(request)
+        if salt is not None:
+            canonical = ("tenant-salted", salt, canonical)
+        return fingerprint(canonical)
 
     # --- lifecycle --------------------------------------------------------
 
-    def submit(self, request: dict) -> Run:
+    def submit(self, request: dict, salt: str | None = None) -> Run:
         """Queue a run, or return the existing one for an identical request."""
-        run_id = self.identify(request)
+        run_id = self.identify(request, salt)
         with self._lock:
             existing = self._runs.get(run_id)
             if existing is not None:

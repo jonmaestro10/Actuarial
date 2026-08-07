@@ -61,7 +61,7 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,583
+   naive implementation otherwise. The suite (`pytest`, currently 2,672
    tests — 2,537 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
@@ -1082,7 +1082,7 @@ and customers; this workstream builds every part of it that *can* be built
 with commits, so that when the first customer arrives, the operational story
 is already true.
 
-### G1 — Multi-tenant SaaS packaging (RFC-057) — effort L
+### G1 — Multi-tenant SaaS packaging (RFC-078) — effort L — **done**
 **Build:** a `deploy/` directory — Dockerfile for the API/worker images, a
 docker-compose profile for single-box deployment, and a Helm chart for
 k8s — plus the tenancy model in code: a tenant is a namespace prefix over
@@ -1099,7 +1099,58 @@ identical submissions from two tenants deduplicate compute but not
 visibility; the compose profile boots and serves a run end-to-end in a
 smoke test (marked slow).
 
-### G2 — SOC 2 substrate (RFC-058) — effort M
+**Outcome (RFC-078).** The parenthesis in the build note turned out to rule
+out the obvious implementation. `RunStore.identify` fingerprints the request,
+so two tenants submitting identical work **already collide on one `Run`**
+before any tenancy code sees them — a run therefore cannot have an owner. It
+has a *set* of tenants who may see it, and the second submitter joins the set.
+Ownership would have handed the second tenant a run id from `POST /runs` that
+it is then forbidden to `GET`, which is self-inflicted and silent, so a test
+asserts both can read the shared run.
+
+Three refusals carry the item. **404 and never 403** on every run-scoped
+route: run ids *are* request fingerprints, so a 403 would let one tenant
+confirm that another submitted a request it can construct — a membership
+oracle delivered by the authorisation layer. **An unclaimed run is invisible**,
+which is the opposite of the natural code; permissive-by-default would make
+every run predating tenancy readable by every tenant at once, and a
+single-tenant deployment still sees everything so the strict answer cannot be
+satisfied by refusing everyone. And a **partly tenanted principals file is
+refused at startup**, because "absent means its own tenant" and "absent means
+sees everything" are both defensible and differ by exactly the amount that
+matters.
+
+The leak is stated rather than argued away. Deduplicating compute across
+tenants — which this item asks for — leaves a cross-tenant *liveness oracle*:
+a tenant learns that somebody has already run a request it can construct. Not
+who, no results, and only for a request it could already build in full.
+`shared_compute_leak()` says so in words, `/health` carries it, and
+`dedupe_across_tenants=False` folds the tenant into the fingerprint as a salt
+and recomputes. The salt never reaches the *stored* request, asserted by a
+test, because a privacy control that rewrites history to achieve itself has
+traded one problem for a worse one — and another test asserts the caveat
+*disappears* when deduplication is off, since a warning present where it does
+not apply is a warning ignored where it does.
+
+**The deployment's one real bug was the entrypoint.** `uvicorn
+engine.api:create_app --factory` calls `create_app()` with no arguments, so a
+compose file that carefully mounts a principals file would serve an
+**unauthenticated** API on the port the authenticated one was meant to occupy,
+with a healthy healthcheck and nothing in the logs. `engine/api/deployment.py`
+is the seam between a library that takes arguments and a container configured
+by environment; it raises on an unreadable principals file rather than falling
+back, and refuses an ambiguous boolean rather than defaulting it.
+
+No container runtime exists in CI, so nothing boots. What is checked instead
+is every place `deploy/` restates something the code already decides — the
+port in four places, the entrypoint's importability, the extras (pip only
+*warns* on an unknown one), the chart version against `engine.__version__`,
+and every `ACTUARIAL_*` variable the manifests set against the ones the
+factory reads. The compose smoke test is written, marked `slow`, and skipped
+where Docker is absent **rather than simulated**: a stubbed version would
+assert that the stub works.
+
+### G2 — SOC 2 substrate (RFC-079) — effort M — **done**
 Certification is organizational, but the technical substrate an auditor asks
 for is code, and most of it already exists — this item joins it up.
 **Build:** `docs/compliance/soc2-controls.md` mapping each Trust Services
@@ -1116,7 +1167,48 @@ Depends on D1–D3, F1.
 mapping names a test or generated artifact, and a CI check fails if a named
 test disappears.
 
-### G3 — Release & support cadence (RFC-059) — effort S
+**Outcome (RFC-079).** Nothing here implements a control; the item is the
+joining up, as the build note says. Nineteen rows across CC, A, PI and C, each
+naming a pytest node id, and `unresolved_evidence` fails the build when one
+stops being collected.
+
+**The document is the source, not generated from code**, which was the harder
+call. A dict of controls that emitted the Markdown would make drift impossible
+and produce a file nobody edits — and the mapping from a criterion to a
+mechanism is a *judgement* ("CC7.2 anomalies are monitored" is satisfied by a
+digest-chained audit log only if you accept that argument), which belongs in
+prose a person signed. Drift stays possible where it matters least, prose going
+stale about a mechanism that still exists, and impossible where it matters
+most.
+
+**Three rows say "not claimed"** — continuity, restore drills, data disposal —
+and a test asserts at least one always does. A control map with no gaps is a
+map nobody audited, and its totals would be a function of what somebody chose
+to write down.
+
+**Its own test found the interesting bug.** `compliance()` computed unresolved
+evidence unconditionally, so a build without a test inventory reported "19
+controls, and 16 cite evidence the suite no longer collects" about a suite it
+had never asked — alarming and false. Not checked is not the same as all
+missing; the same family as a skipped measurement reading like a passing one,
+from the opposite side.
+
+**Both hardening controls are narrower than their names, and say so.** The rate
+limit is in-process, so N replicas admit N times the rate, and it is not a DoS
+control because an attacker without a token never reaches it — `RATE_LIMIT_SCOPE`
+carries both sentences and a test asserts it still does. HSTS is *deliberately
+absent*, with a test for the absence: it promises something about a scheme this
+process cannot know, and a meaningless header is read as coverage.
+
+**`pip-audit` is advisory**, because a blocking gate on a daily-changing feed
+becomes a gate people disable — and `continue-on-error` rather than `|| true`,
+so the step's conclusion stays visible instead of being painted green. That
+produced a second finding: `local_matrix.py` reads the workflow, picked the job
+up automatically, and would have *blocked* on it. A local gate stricter than
+the CI it mirrors is not stricter, it is one that disagrees, and the fix
+everyone reaches for is to stop running it.
+
+### G3 — Release & support cadence (RFC-080) — effort S — **done**
 The open answer to "quarterly vendor library updates on a contractual
 cadence." **Build:** semantic-versioned releases with a maintained
 `CHANGELOG.md` in which every numeric-result change carries the
@@ -1133,7 +1225,48 @@ the changelog gained an entry whenever the golden-test expected values
 changed; the calendar cross-references every dated set present in
 `engine/report/`.
 
-### G4 — The pilot playbook (RFC-060) — effort S
+**Outcome (RFC-080).** The cadence turned out not to be the answer. A quarterly
+promise is a promise about timing; what a client needs is that an update does
+not disturb figures they have already filed, and that when something does move
+somebody says what it did.
+
+**A dated set is never removed**, which is what dating them buys. Each update
+lands beside the old constant with an RFC-050 diff between them, so last year's
+valuation still reproduces. Two consequences stated outright: a new dated set
+is **MINOR, not MAJOR** — if `DELEGATED_2026` were major, every client would
+face an upgrade decision over a regulation that does not apply to them yet —
+and dated sets are **exempt from the deprecation policy entirely**, because
+reproducibility of a prior period is not a feature that expires. They
+accumulate by design.
+
+**The gate asks the one question a diff cannot answer.** A reviewer seeing
+`0.0415` where `0.0410` was can see the edit and cannot see what it did to a
+reserve; only the author knows, and only then. `scripts/changelog_gate.py`
+fails a commit that moves a numeric literal in `tests/` without touching
+`CHANGELOG.md`. Bare integers are excluded — `range(5)` and `proj_len=20`
+would fire on every diff, and a gate that fires on every diff is one nobody
+reads — but **exponent literals count**, because loosening `1e-12` to `1e-9`
+moves what the suite guarantees without touching an expected value, and a
+tolerance chosen to make a test pass is not a tolerance.
+
+It errs toward asking and proved it on its first real run, flagging model-point
+fixtures and rate-limit windows on this item's own branch. The response was to
+write the note, not to loosen the rule; `No expected change` is a legitimate
+entry because it records that the question was considered.
+
+**Could-not-run is a third status.** The gate exits 2 when it cannot reach the
+base ref, so `actions/checkout` needs `fetch-depth: 0`. The natural
+implementation would report "no golden value changed" about a comparison it
+never made — indistinguishable from a clean run, and this repository's oldest
+failure shape. A test drives it against a nonexistent ref and asserts the
+distinct status.
+
+The completeness check has its own guard: a test asserts the dated-set scan
+finds at least three, because a regex that stopped matching would find none,
+report none missing, and pass while asserting that a document lists all of
+nothing.
+
+### G4 — The pilot playbook (RFC-081) — effort S — **done**
 The A-workstream builds the tools; this makes the *process* a rehearsed,
 reproducible artifact. **Build:** `docs/pilot-playbook.md` — the
 step-by-step client pilot: ingest their model points (A2/A3), scaffold
@@ -1148,7 +1281,42 @@ been run a thousand times before it is run once. Depends on M1, F1.
 **Accept:** the dry-run script passes in CI and its outputs (parity report,
 evidence pack, workbook) are produced into a content-addressed directory.
 
-**Milestone M6 — "operable, auditable, sellable":** G1–G4 shipped.
+**Outcome (RFC-081).** The tools all existed; what did not was any assurance
+that stage 3's output is stage 4's input. Six stages — ingest, map, run,
+reconcile, register, hand over — run on every commit, and the test asserts the
+stage list **in order** rather than that each key exists, because the
+playbook's six numbered sections and the script's six stages are the same six
+steps and a stage added to one without the other turns a rehearsed process back
+into a described one.
+
+**The data-handling rule is asserted, not promised.** Client model points are
+policyholder data and this repository holds none; the dry run reads only from
+`tests/fixtures/`, and a test checks that, because a future edit pointing it at
+a real extract is the mistake that matters most and looks least like one. Two
+consequences the playbook plans around: the engine runs where the data is
+(which is what G1's `deploy/` is for), and when a reconciliation disagrees the
+client sends **the cell, not the file** — a parity report names the model
+point, period and variable, which is enough to ask a precise question without
+moving a book.
+
+**`--prove-it-bites`** perturbs one cell by one part in ten million and
+requires the reconciliation to fail. Without it every other assertion is
+consistent with a reconciliation that always passes, and it is the first thing
+a sceptical actuary asks. Coverage is asserted beside the verdict for the same
+reason: a reconciliation that matched everything it looked at, having looked at
+very little, is the failure a pilot most easily talks itself into.
+
+**What it does not rehearse is said out loud** and tested for: not that any
+particular client's file parses. A synthetic fixture proves the reader's
+behaviour, not the format's variety, so the playbook says to expect the first
+real ingest to need a dialect adjustment and to budget for it. The exit
+criteria name their own opposites — "the numbers matched" (at what tolerance,
+over what coverage), "the actuary was happy" (in writing or it did not happen),
+"it ran fast" (not the pilot's question) — and a test asserts that section
+survives, because it is the one most likely to be trimmed as negative.
+
+**Milestone M6 — "operable, auditable, sellable":** G1–G4 shipped ✅
+(RFC-078, RFC-079, RFC-080, RFC-081).
 
 ---
 

@@ -504,6 +504,54 @@ REPRODUCIBILITY_SCOPE = (
 )
 
 
+def soc2_controls(inventory: Section, root: Path | str = ".") -> Section:
+    """RFC-079's control map, with every named test checked against the suite.
+
+    The evidence the audit binder rests on is *this pack*, so the check runs
+    here rather than only in a test: a control citing a test that no longer
+    exists is exactly the failure a compliance document normally has, and the
+    only way to keep it out is to recompute it whenever the binder is built.
+
+    Reuses ``inventory``'s collection rather than running pytest again. Asking
+    the same question twice would be slow and, worse, could answer differently
+    — and then the pack would contain two counts of the same thing.
+    """
+    from engine.report.compliance import CONTROLS, compliance
+
+    path = Path(root) / CONTROLS
+    collected = []
+    if inventory.content.get("available"):
+        for file, names in inventory.content.get("files", {}).items():
+            collected.extend(f"{file}::{name}" for name in names)
+
+    try:
+        content = compliance(collected, path)
+    except (FileNotFoundError, ValueError) as exc:
+        return Section(
+            "compliance", "SOC 2 control map",
+            f"Not read: {exc}. This pack claims nothing about the control "
+            f"map.",
+            {"available": False, "reason": str(exc)},
+        )
+
+    unresolved = content["unresolved_evidence"]
+    if unresolved:
+        summary = (f"{content['n_controls']} controls, and "
+                   f"{len(unresolved)} cite evidence the suite no longer "
+                   f"collects: {sorted(unresolved)}.")
+    elif not content["evidence_checked"]:
+        summary = (f"{content['n_controls']} controls "
+                   f"({content['n_not_claimed']} deliberately not claimed). "
+                   f"Evidence references were NOT checked — no test inventory "
+                   f"was collected for this pack.")
+    else:
+        summary = (f"{content['n_controls']} controls, "
+                   f"{content['n_claimed']} claimed and "
+                   f"{content['n_not_claimed']} deliberately not, every named "
+                   f"test still collected.")
+    return Section("compliance", "SOC 2 control map", summary, content)
+
+
 def benchmarks(records: Sequence[Mapping[str, Any]] | None = None) -> Section:
     """Benchmark numbers, if somebody measured some.
 
@@ -758,6 +806,7 @@ def build_pack(*, root: Path | str = ".",
         parity_reports(registry),
         audit_chain(audit_log),
         benchmarks(benchmark_records),
+        soc2_controls(inventory, root),
     )
     return EvidencePack(
         sections=sections, context=environment(),

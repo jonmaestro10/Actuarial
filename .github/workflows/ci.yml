@@ -114,6 +114,63 @@ jobs:
           python scripts/evidence_pack.py --out evidence-rebuild
           diff -r evidence evidence-rebuild
 
+  # RFC-080's expected-change note, enforced. §3.5 asks that a change moving a
+  # numeric result says what it does to the numbers, because a code diff cannot
+  # show that and a reviewer cannot derive it. The gate asks one question: did
+  # a golden expected value move without CHANGELOG.md moving too?
+  #
+  # `fetch-depth: 0` is not optional. The default shallow clone has no base ref
+  # to diff against, and the gate exits 2 rather than reporting "no golden
+  # value changed" about a comparison it never made — a pass and a
+  # could-not-run must not look alike.
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # `$GITHUB_BASE_REF` and not `${{ github.base_ref }}`, deliberately. A
+      # `${{ }}` expression is expanded by Actions and by nothing else, so
+      # scripts/local_matrix.py — which runs this file's own command strings —
+      # would execute the literal text and fail for a reason that has nothing
+      # to do with the changelog. The environment variable is set by the runner
+      # and absent locally, where `main` is the right default.
+      - name: A moved number carries an expected-change note
+        run: |
+          BASE="${GITHUB_BASE_REF:-main}"
+          git fetch --no-tags origin "$BASE"
+          python scripts/changelog_gate.py --base "origin/$BASE"
+
+  # RFC-079's dependency check. Advisory rather than blocking, and the reason
+  # is stated rather than assumed: engine/core, data, library and report have
+  # NumPy as their only runtime dependency (§1.4), so an advisory here almost
+  # always lands in an optional extra or a test tool. A blocking gate on a feed
+  # that changes daily becomes a gate people disable, and a disabled gate
+  # reports nothing at all — whereas this leaves the finding in the build
+  # record either way, which is what an auditor asks for.
+  #
+  # `continue-on-error` and not `|| true`: the step's own conclusion stays
+  # visible in the run summary, where `|| true` would render it green.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[test,data,api,excel]" pip-audit
+      # `--skip-editable` and not `--strict`. This package is installed
+      # editable and is not on PyPI, so `--strict` fails on *it* — every run,
+      # for a reason that is not a vulnerability. An advisory job that always
+      # fails is noise, and noise gets ignored exactly when it stops being
+      # noise. Real findings still exit non-zero and land in the run summary.
+      - name: Audit the installed dependency set
+        run: pip-audit --skip-editable --progress-spinner off
+
   # RFC-072's boundary, measured rather than quoted. A separate job because
   # it is the only thing in the repo that needs a compiler: installing it
   # into the matrix above would put a 60 MB llvmlite download in front of

@@ -1,0 +1,22 @@
+{
+  "principals": [
+    {
+      "name": "acme-ops",
+      "token_sha256": "REPLACE-with-the-sha256-of-a-minted-token-64-hex-chars-000000000",
+      "roles": ["viewer", "runner"],
+      "tenant": "acme"
+    },
+    {
+      "name": "acme-actuary",
+      "token_sha256": "REPLACE-with-the-sha256-of-a-minted-token-64-hex-chars-111111111",
+      "roles": ["viewer", "approver"],
+      "tenant": "acme"
+    },
+    {
+      "name": "platform-admin",
+      "token_sha256": "REPLACE-with-the-sha256-of-a-minted-token-64-hex-chars-222222222",
+      "roles": ["admin"],
+      "tenant": "platform"
+    }
+  ]
+}

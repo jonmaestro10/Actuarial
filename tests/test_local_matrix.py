@@ -437,3 +437,93 @@ def test_the_summary_never_claims_more_than_one_machine():
     text = lm.summarise([passing], allow_uncovered=False)
     assert "one machine" in text
     assert "cross-machine" in text
+
+
+def test_an_advisory_job_is_reported_and_does_not_block(monkeypatch):
+    """Guards a local gate that is stricter than the CI it claims to mirror.
+
+    `dependency-audit` is `continue-on-error: true` in ci.yml — a finding, not
+    a gate, because a blocking check on a feed that changes daily becomes a
+    check people disable. A local matrix that failed on it would disagree with
+    CI in the direction that gets the local matrix switched off.
+    """
+    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    job = lm.Job(name="dependency-audit", python_versions=(here,),
+                 steps=(lm.Step(name="audit", run="exit 1"),),
+                 runs_on=_runs_here(), advisory=True)
+    monkeypatch.setattr(lm, "read_jobs", lambda *a, **k: (job,))
+
+    assert lm.main([]) == 0, "an advisory job blocked the run"
+
+    outcome = lm.run_job(job, here, echo=False)
+    assert outcome.verdict == "advisory"
+    assert not outcome.blocking_failure
+    text = lm.summarise([outcome], allow_uncovered=False)
+    assert "Advisory failure" in text and "dependency-audit" in text
+
+
+def test_a_blocking_job_that_fails_still_blocks(monkeypatch):
+    """The companion, so the exemption cannot widen to every job.
+
+    These two differ only by `advisory`, which is the whole point: the flag has
+    to come from the workflow and must not be reachable any other way.
+    """
+    here = f"{sys.version_info.major}.{sys.version_info.minor}"
+    job = lm.Job(name="test", python_versions=(here,),
+                 steps=(lm.Step(name="suite", run="exit 1"),),
+                 runs_on=_runs_here(), advisory=False)
+    monkeypatch.setattr(lm, "read_jobs", lambda *a, **k: (job,))
+    assert lm.main([]) == 1
+
+
+def test_advisory_is_read_from_the_workflow_and_not_assumed():
+    """Guards the flag drifting from ci.yml's own continue-on-error.
+
+    Asserted against the real workflow in both directions: at least one job
+    must be advisory and at least one must not, or the distinction is being
+    tested against a set where it does not appear.
+    """
+    jobs = {j.name: j.advisory for j in lm.read_jobs()}
+    assert any(jobs.values()), "no job in ci.yml is continue-on-error"
+    assert not all(jobs.values()), "every job in ci.yml is advisory"
+
+
+def test_a_step_containing_an_actions_expression_is_refused(tmp_path):
+    """Guards running different text than CI runs.
+
+    A `${{ }}` expression is expanded by Actions and by nothing else. A step
+    carrying one would execute here as literal characters — a different
+    command — and this module's whole argument is that an adapted command is
+    not evidence about the original.
+
+    It bit once, on a changelog job using `${{ github.base_ref }}`: the local
+    run failed for a reason unrelated to what the step checks. That is the
+    *good* case. The bad one is an expression inside a longer script, which
+    changes what runs without stopping it.
+    """
+    path = _workflow(
+        "name: CI\non:\n  pull_request:\njobs:\n"
+        "  gate:\n    runs-on: ubuntu-latest\n"
+        "    steps:\n      - uses: actions/setup-python@v5\n"
+        "        with:\n          python-version: '3.12'\n"
+        "      - run: echo ${{ github.base_ref }}\n",
+        tmp_path,
+    )
+    with pytest.raises(lm.WorkflowUnreadable, match="expression"):
+        lm.read_jobs(path)
+
+
+def test_the_real_workflow_uses_no_expressions_in_run_steps():
+    """The companion: the rule is only useful if ci.yml obeys it.
+
+    Asserted against the real file so a future step reintroducing one is
+    caught here rather than by a confusing local-matrix failure.
+    """
+    jobs = lm.read_jobs()
+    assert jobs, "no jobs read"
+    for job in jobs:
+        for step in job.steps:
+            assert "${{" not in step.run, (
+                f"{job.name}/{step.name} uses an Actions expression; use an "
+                f"environment variable the runner sets, with a local default"
+            )

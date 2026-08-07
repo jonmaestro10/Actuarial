@@ -115,6 +115,11 @@ class Job:
     python_versions: tuple[str, ...]
     steps: tuple[Step, ...]
     runs_on: str
+    #: The workflow's ``continue-on-error``. Carried because a local gate that
+    #: blocks on a job CI treats as advisory is not a stricter gate, it is a
+    #: gate that disagrees with the thing it claims to mirror — and the fix
+    #: everyone reaches for is to stop running it.
+    advisory: bool = False
 
     @property
     def architecture(self) -> str:
@@ -208,6 +213,22 @@ def read_jobs(path: Path = WORKFLOW) -> tuple[Job, ...]:
                  env={str(k): str(v) for k, v in (s.get("env") or {}).items()})
             for s in raw_steps if "run" in s
         )
+        # A `${{ }}` expression is expanded by Actions and by nothing else.
+        # Running the step anyway executes the literal text — a *different*
+        # command — and this module's entire argument is that an adapted
+        # command is not evidence about the original. It failed loudly once,
+        # for a reason unrelated to what the step checks, which is the good
+        # case; the bad case is an expression inside a longer script that
+        # changes what runs without stopping it.
+        for step in steps:
+            if "${{" in step.run:
+                raise WorkflowUnreadable(
+                    f"job {name!r} step {step.name!r} contains a ${{{{ }}}} "
+                    f"expression, which only Actions expands. Running it here "
+                    f"would execute different text than CI does. Use an "
+                    f"environment variable the runner sets (GITHUB_BASE_REF, "
+                    f"GITHUB_SHA, ...) with a local default instead."
+                )
         if not steps:
             raise WorkflowUnreadable(f"job {name!r} has no run steps")
 
@@ -219,7 +240,8 @@ def read_jobs(path: Path = WORKFLOW) -> tuple[Job, ...]:
                 f"all, and will not assume it can."
             )
         jobs.append(Job(name=str(name), python_versions=versions, steps=steps,
-                        runs_on=runs_on))
+                        runs_on=runs_on,
+                        advisory=bool(body.get("continue-on-error", False))))
     return tuple(jobs)
 
 
@@ -266,12 +288,20 @@ class Outcome:
     seconds: float = 0.0
     detail: str = ""
     kind: str = ""
+    advisory: bool = False
 
     @property
     def verdict(self) -> str:
         if not self.checked:
             return "CI ONLY" if self.kind == "architecture" else "NOT CHECKED"
-        return "pass" if self.passed else "FAIL"
+        if self.passed:
+            return "pass"
+        return "advisory" if self.advisory else "FAIL"
+
+    @property
+    def blocking_failure(self) -> bool:
+        """A failure that should stop a merge, as opposed to one CI tolerates."""
+        return self.checked and not self.passed and not self.advisory
 
 
 def run_job(job: Job, version: str, *, echo: bool = True) -> Outcome:
@@ -282,12 +312,14 @@ def run_job(job: Job, version: str, *, echo: bool = True) -> Outcome:
     # the architecture decides the answer.
     if job.architecture != host_architecture():
         return Outcome(job.name, version, checked=False, kind="architecture",
+                       advisory=job.advisory,
                        detail=f"needs {job.architecture} ({job.runs_on}), "
                               f"this machine is {host_architecture()}")
 
     interpreter = interpreter_for(version)
     if interpreter is None:
         return Outcome(job.name, version, checked=False, kind="interpreter",
+                       advisory=job.advisory,
                        detail=f"no python{version} on PATH")
 
     started = time.monotonic()
@@ -325,12 +357,12 @@ def run_job(job: Job, version: str, *, echo: bool = True) -> Outcome:
                 tail = (result.stdout + result.stderr).strip().splitlines()
                 return Outcome(
                     job.name, version, checked=True, passed=False,
-                    failing_step=step.name,
+                    advisory=job.advisory, failing_step=step.name,
                     seconds=time.monotonic() - started,
                     detail="\n".join(tail[-25:]),
                 )
     return Outcome(job.name, version, checked=True, passed=True,
-                   seconds=time.monotonic() - started)
+                   advisory=job.advisory, seconds=time.monotonic() - started)
 
 
 def summarise(outcomes: list[Outcome], *, allow_uncovered: bool) -> str:
@@ -344,7 +376,9 @@ def summarise(outcomes: list[Outcome], *, allow_uncovered: bool) -> str:
                      + (f"  ({o.detail})" if not o.checked else "")
                      + (f"  at {o.failing_step!r}" if o.checked and not o.passed else ""))
 
-    failed = [o for o in outcomes if o.checked and not o.passed]
+    failed = [o for o in outcomes if o.blocking_failure]
+    advisory = [o for o in outcomes
+                if o.checked and not o.passed and o.advisory]
     uncovered = [o for o in outcomes if not o.checked and o.kind != "architecture"]
     foreign = [o for o in outcomes if o.kind == "architecture"]
     lines.append("-" * (width + 26))
@@ -373,6 +407,11 @@ def summarise(outcomes: list[Outcome], *, allow_uncovered: bool) -> str:
                      f"all: {elsewhere}. **Only CI covers that**, and it is "
                      f"where a test asserting a property of the silicon shows "
                      f"up — RFC-072's correction is the worked example.")
+    if advisory:
+        which = ", ".join(sorted(f"{o.job}/{o.version}" for o in advisory))
+        lines.append(f"  Advisory failure, not blocking here because ci.yml "
+                     f"marks it continue-on-error: {which}. CI records it the "
+                     f"same way; it is a finding, not a gate.")
     if failed:
         lines.append(f"  {len(failed)} job/version pair(s) FAILED.")
     if not failed and not uncovered:
@@ -429,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(outcome.detail, file=sys.stderr)
 
     print(summarise(outcomes, allow_uncovered=args.allow_uncovered))
-    failed = any(o.checked and not o.passed for o in outcomes)
+    failed = any(o.blocking_failure for o in outcomes)
     # `kind != "architecture"` deliberately: a job on another architecture is
     # not a gap this machine could ever close, so it is reported rather than
     # failed. See Outcome's docstring for why conflating the two would make

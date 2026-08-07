@@ -1,0 +1,40 @@
+image:
+  repository: actuarial-engine
+  tag: ""          # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  type: ClusterIP
+  port: 8000
+
+# The principals file is a Secret, not a ConfigMap, and not a value in here.
+# It contains token digests — not tokens — but the set of digests is still the
+# thing that decides who gets in, and `helm get values` prints values.
+principals:
+  secretName: actuarial-principals
+  key: principals.json
+
+persistence:
+  enabled: true
+  size: 20Gi
+  # The registry is content-addressed, so two replicas writing the same digest
+  # write the same bytes. ReadWriteMany is still required for replicaCount > 1
+  # and the chart refuses that combination rather than corrupting a volume.
+  accessMode: ReadWriteOnce
+
+resources:
+  limits:
+    cpu: "4"
+    memory: 8Gi
+  requests:
+    cpu: "1"
+    memory: 2Gi
+
+engine:
+  maxWorkers: 1
+  ui: true
+  # false makes identical work from two tenants compute twice, closing the
+  # liveness signal engine.api.tenancy.shared_compute_leak describes.
+  dedupeAcrossTenants: true

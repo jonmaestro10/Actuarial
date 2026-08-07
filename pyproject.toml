@@ -39,3 +39,10 @@ include = ["engine*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Registered rather than left implicit: an unknown mark is a warning today
+# and the pre-push sequence runs `-W error::SyntaxWarning`, so the next
+# person to widen that to `-W error` would find the suite failing on a typo
+# in a decorator.
+markers = [
+    "slow: needs a container runtime or otherwise takes minutes; skipped where the dependency is absent, never simulated",
+]

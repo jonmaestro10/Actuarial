@@ -80,18 +80,27 @@ def mint_token(nbytes: int = 32) -> str:
 
 @dataclass(frozen=True)
 class Principal:
-    """One identity and the roles it carries."""
+    """One identity, the roles it carries, and the tenant it belongs to.
+
+    ``tenant`` is ``None`` on a single-tenant deployment, which is every
+    deployment that has not opted in — RFC-078 keeps tenancy off by default
+    for the same reason this module keeps identity off by default.
+    """
 
     name: str
     roles: frozenset[Role]
+    tenant: str | None = None
 
     def has(self, *roles: Role) -> bool:
         """Does this principal carry **every** role named?"""
         return all(role in self.roles for role in roles)
 
     def summary(self) -> dict:
-        return {"name": self.name,
-                "roles": sorted(role.value for role in self.roles)}
+        out = {"name": self.name,
+               "roles": sorted(role.value for role in self.roles)}
+        if self.tenant is not None:
+            out["tenant"] = self.tenant
+        return out
 
 
 class Principals:
@@ -190,8 +199,22 @@ class Principals:
                 )
             if any(p.name == name for p in principals):
                 raise PrincipalsError(f"duplicate principal {name!r}")
+            # RFC-078. Validated here rather than where it is used, because a
+            # tenant becomes a registry prefix and a directory name, and the
+            # place to reject `../other` is before anything has been named
+            # after it. Absent is legal and means single-tenant; a file that
+            # mixes present and absent is refused by `tenants_in`, not here,
+            # because that is a property of the file rather than of an entry.
+            tenant = entry.get("tenant")
+            if tenant is not None:
+                from engine.api.tenancy import TenancyError, valid_tenant
+                try:
+                    tenant = valid_tenant(tenant)
+                except TenancyError as exc:
+                    raise PrincipalsError(f"principal {name!r}: {exc}") from None
             digests[digest] = name
-            principals.append(Principal(name=name, roles=frozenset(roles)))
+            principals.append(Principal(name=name, roles=frozenset(roles),
+                                        tenant=tenant))
         return cls(principals, digests)
 
     @classmethod
