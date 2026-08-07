@@ -61,8 +61,8 @@ them; the acceptance criteria assume them.
 3. **Golden tests or it didn't happen.** New calculation code ships with
    closed-form or hand-computed golden tests in `tests/`, exact (`==`) where
    the mathematics is exact, `1e-12` reconciliation against an independent
-   naive implementation otherwise. The suite (`pytest`, currently 2,561
-   tests — 2,515 of them without the `[compile]` extra, whose 46 are
+   naive implementation otherwise. The suite (`pytest`, currently 2,573
+   tests — 2,528 of them without the `[compile]` extra, whose 45 are
    RFC-072's bitwise measurement and RFC-074's compiled executor)
    must pass on every commit.
 4. **Dependency discipline.** `engine/core`, `engine/data`, `engine/library`,
@@ -94,6 +94,16 @@ them; the acceptance criteria assume them.
 9. **Ship in the order of §10 unless blocked.** Items are independently
    shippable; do not start a second item before the first's RFC is
    `implemented` and CI is green.
+9a. **When CI cannot run, say which claim you are making.** The account's
+   Actions minutes ran out during RFC-071 and a $0 spending limit turns that
+   into *no run object at all* rather than a failure, so six items were merged
+   on one interpreter. `python scripts/local_matrix.py` (RFC-077) is the
+   substitute: it reads `.github/workflows/ci.yml` and runs every job under
+   every version that file names, and a version it could not check **fails**
+   rather than going unmentioned. It is a strictly weaker claim than CI — one
+   machine, one architecture, one libm, so it cannot see the cross-machine
+   float difference CI caught once. An item verified that way is marked
+   **locally verified**, not done, and stays marked until a runner has run it.
 
 ---
 
@@ -1275,24 +1285,37 @@ order unless there is a concrete reason not to.
 
 ---
 
-*Next action for the implementing agent: **get CI running, then take one of
-the two measured items below.** Workstream B (B1, B2, B3) and workstream H
-(H1–H4) have both landed. What is left is G (platform operations), A3
-(MoSes/RAFM readers, deliberately gated on pilot demand), and two pieces of
-engineering that measurement has already pointed at.
+*Next action for the implementing agent: **take one of the two measured items
+below.** Workstream B (B1, B2, B3) and workstream H (H1–H4) have both landed,
+and F9 has removed CI's status as a blocker without restoring CI. What is left
+is G (platform operations), A3 (MoSes/RAFM readers, deliberately gated on
+pilot demand), and two pieces of engineering that measurement has already
+pointed at.
 
-**CI is the blocker before anything else.** GitHub Actions has scheduled no
-run since PR #69: runs are either not created at all, or created and then
-cancelled at the 15-minute mark with `runner_id: 0`, which is an exhausted
-allowance rather than a backlog. Everything from RFC-071 onward is merged on
-**local verification only** — Python 3.11, full suite, pack byte-identity,
-`-W error::SyntaxWarning` with caches cleared. 3.12 and 3.13 are unverified,
-and the `bitwise-boundary` job has never executed anywhere. Note two ways a
-red is not a red: a superseded run reports `failure` with zero failed jobs,
-and a job that never got a runner reports `cancelled`.
+**Read the CI situation exactly, because it is no longer what it was.** The
+cause is settled: the account is on a free GitHub plan, its included Actions
+minutes are spent, and the default $0 spending limit turns that into *no run
+object created at all* rather than a failed run. Nothing in the repository can
+fix that; it is resolved by the monthly reset, by a spending limit, or by
+making the repository public (free plans get unlimited Actions minutes on
+public repositories, which also fits a project whose `pyproject.toml` calls it
+an open engine). RFC-077 halved what a run costs, so the same allowance now
+goes about twice as far when it returns.
+
+Meanwhile `python scripts/local_matrix.py` runs every job in `ci.yml` under
+every version it names, and **fails on a version it could not check** rather
+than passing quietly. As of F9, Python 3.12 and 3.13 are green, the
+`bitwise-boundary` job is green with zero skips, and the evidence pack digest
+is identical across all three interpreters. Those six items are **locally
+verified**, per §1.9a — a strictly weaker claim than CI, since one machine
+cannot see a cross-machine float difference, and they stay marked that way
+until a runner has run them. Two ways a red is still not a red when runs do
+return: a superseded run reports `failure` with zero failed jobs, and a job
+that never got a runner reports `cancelled` — check whether a job ever
+*started*.
 
 Two pieces of engineering are named by measurement rather than guessed, and
-either is a good first item once CI is back. **B1's remaining order of magnitude**: the
+either is a good first item. **B1's remaining order of magnitude**: the
 kernel is a median 14.6x but end-to-end is 1.36x, because the hoist pre-pass
 is a median 55% of the runtime — interleave the pre-pass with the kernel per
 period so a hoisted variable is computed from the kernel's own slabs instead
@@ -1719,3 +1742,61 @@ answer: assert the mechanism, do not trust the condition.
 **What this does not do.** It does not build the compiled executor. B1 stays
 **not started**, with its remaining work — the DSL translation — unchanged in
 size but now with a specification to translate into.
+
+---
+
+### F9 — The matrix that ran, and the versions nobody checked (RFC-077) — effort S — **done**
+Unplanned, and forced. §1's definition of done opens with "full suite green
+**on CI, every Python version**", and for six merged items that clause was
+false with nothing in the repository saying so. The account's Actions minutes
+ran out during RFC-071; a $0 spending limit turns exhaustion into *no run
+object at all* rather than a failure; the only record was a paragraph in a
+handoff note.
+
+**Outcome (RFC-077).** Two things, one cheap and one that needed thought.
+
+**The workflow was buying nothing with half its minutes.** It triggered on
+`push: branches: ["**"]` *and* `pull_request`, so every push to a branch with
+an open PR ran all four jobs twice against one commit. Restricting `push` to
+`main` removes the duplicate and narrows coverage by zero commits, because
+every branch here reaches `main` through a PR. A `concurrency` group keyed by
+ref stops a force-pushed branch leaving superseded matrices running to
+completion — exempting `main`, where cancelling would discard the only
+evidence that a merged commit is green. What was deliberately *not* added is a
+`paths-ignore` for documentation: `test_working_agreement.py`,
+`test_documentation.py` and `test_architecture.py` assert against `CLAUDE.md`
+and `docs/`, so a docs-only diff is not a no-op here and skipping CI on one
+would skip exactly the tests it can break.
+
+**The substitute's design problem is the silence, not the matrix.** Running
+the suite under three interpreters is a shell loop. What makes
+`scripts/local_matrix.py` worth an RFC is that a machine with only one of them
+installed must not be able to produce a green report — the same shape as a
+parametrised test over an empty list, and more dangerous, because one Python
+is the normal state of a developer machine. So an unchecked version fails,
+`--allow-uncovered` prints the gap in the same sentence as the verdict, and
+two tests pin both to the **exit status** rather than the prose, because a
+caller in a shell script reads the status and never the text. Versions, steps
+and per-step `env` are read out of `ci.yml`, never restated: had `env` been
+dropped, the local `bitwise-boundary` job would run without
+`REQUIRE_COMPILE_EXTRA`, skip its measurement cases and report green —
+reintroducing one layer out the precise failure that variable exists to
+prevent.
+
+**What it found, on first use.** Python 3.12 and 3.13 are green, evidence pack
+byte-identical under each; nothing merged since RFC-071 had run on either. The
+`bitwise-boundary` job is green with **zero skips** and `REQUIRE_COMPILE_EXTRA`
+genuinely set — it had never executed anywhere. And the pack digest is
+**identical across all three interpreters** despite 3.11 resolving numpy 2.4.6
+and the others 2.5.1, the only byte differences being the recorded interpreter
+version in `environment.json` and `index.md`. That corroborates by a wholly
+different route the earlier finding that those two NumPy releases produce
+byte-identical transcendental bit patterns. The heterogeneous-NumPy matrix is
+no longer believed safe; it has been run.
+
+**What it is not.** Not CI, and the summary says so on every run: one machine,
+one architecture, one libm. `np.exp` and `**` are not bit-portable across
+microarchitectures and a pack digest is an identity *on a machine*, so no
+number of local interpreters substitutes for a second machine. A test asserts
+the summary keeps saying it, because a green report is exactly where an
+over-broad reproducibility claim would come back.

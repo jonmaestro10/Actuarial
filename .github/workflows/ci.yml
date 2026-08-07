@@ -1,9 +1,32 @@
 name: CI
 
+# `push` is deliberately restricted to main while `pull_request` covers
+# everything else. The pair `push: ["**"]` + `pull_request` fires *both* events
+# for every push to a PR branch, so each push ran the four jobs twice for one
+# commit's worth of signal. Nothing is less covered by this: every branch here
+# reaches main through a PR, so the matrix still runs on every commit that can
+# land — once instead of twice.
+#
+# There is no `paths-ignore` here and there must not be one. A docs-only change
+# is not a no-op in this repo: tests/test_working_agreement.py,
+# test_documentation.py and test_architecture.py assert against CLAUDE.md and
+# docs/, and the evidence pack embeds documented figures. Skipping CI on a
+# docs-only diff would skip exactly the tests that diff can break.
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
   pull_request:
+
+# A superseded run costs the same minutes as a live one. Force-pushing a branch
+# three times used to leave three full matrices running against commits nobody
+# would merge; only the newest can tell you anything.
+#
+# main is exempt by construction — the group is keyed by ref, and cancelling an
+# in-progress run on main would discard the only evidence that a merged commit
+# is green.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
