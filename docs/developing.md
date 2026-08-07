@@ -60,6 +60,10 @@ reached CI once.
 
 ### Before you merge — the whole matrix, locally
 
+**CI runs only on a push to `main`.** A pull request carries no checks at all,
+so this is not a second opinion — it is the only one you get before the code
+lands. Run it.
+
 ```bash
 python scripts/local_matrix.py            # every job in ci.yml, every version
 python scripts/local_matrix.py --list     # what would run, and on what

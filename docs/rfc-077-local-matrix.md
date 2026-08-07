@@ -62,6 +62,36 @@ and `docs/`, and the evidence pack embeds documented figures. A docs-only diff
 is not a no-op in this repository; skipping CI on one would skip precisely the
 tests that diff can break.
 
+### Then the other half: `pull_request` removed as well
+
+Measured after the first change, one run bills **seven minutes** — GitHub
+rounds each *job* up to the whole minute, so 24s of `bitwise-boundary` and
+three test jobs of 81–101s cost 1 + 2 + 2 + 2. Of the thirty most recent runs
+before the fix, **fourteen were `push` on a non-main branch**: 47% of all
+billing, buying a second copy of a result that already existed.
+
+The trigger is now `push: branches: ["main"]` and nothing else. A branch can be
+pushed and re-pushed as often as the work needs and nothing runs until it
+lands. The `concurrency` block went with it — it existed to cancel superseded
+*branch* runs, and on `main` it was already exempt, because cancelling there
+would discard the only evidence that a merged commit is green.
+
+**What this trades.** A pull request carries no checks, so `main` is where a
+failure is found: verify locally, merge, confirm, fix forward. Coverage of what
+*lands* is unchanged — every commit reaching `main` still meets the whole
+matrix — but the failure arrives after the merge rather than before it, and
+`main` can be red in between.
+
+That trade is only honest if the local check is real, which is what the rest of
+this RFC is about, and it raises `scripts/local_matrix.py` from a second
+opinion to **the only opinion a change gets before it lands**. Two consequences
+follow directly. Its refusal to pass a version it could not check stops being a
+nicety and becomes the thing standing between an unverified interpreter and
+`main`. And its one genuine blind spot — one machine, one architecture, one
+libm — is now unguarded until after a merge; RFC-072's correction is the worked
+example, an assertion about the silicon that survived the entire life of an
+item because it was only ever measured in one place.
+
 ## The design problem is the silence, not the matrix
 
 Running the suite under three interpreters is a shell loop. The thing that

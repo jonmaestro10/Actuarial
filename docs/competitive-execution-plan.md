@@ -94,16 +94,27 @@ them; the acceptance criteria assume them.
 9. **Ship in the order of §10 unless blocked.** Items are independently
    shippable; do not start a second item before the first's RFC is
    `implemented` and CI is green.
-9a. **When CI cannot run, say which claim you are making.** The account's
-   Actions minutes ran out during RFC-071 and a $0 spending limit turns that
-   into *no run object at all* rather than a failure, so six items were merged
-   on one interpreter. `python scripts/local_matrix.py` (RFC-077) is the
-   substitute: it reads `.github/workflows/ci.yml` and runs every job under
-   every version that file names, and a version it could not check **fails**
-   rather than going unmentioned. It is a strictly weaker claim than CI — one
-   machine, one architecture, one libm, so it cannot see the cross-machine
-   float difference CI caught once. An item verified that way is marked
-   **locally verified**, not done, and stays marked until a runner has run it.
+9a. **Run the matrix locally before you merge, and say which claim you are
+   making.** CI triggers only on a push to `main`, so a pull request carries no
+   checks and `python scripts/local_matrix.py` (RFC-077) is the only check a
+   change gets before it lands. It reads `.github/workflows/ci.yml` and runs
+   every job under every version that file names, and a version it could not
+   check **fails** rather than going unmentioned.
+
+   It remains a strictly weaker claim than CI — one machine, one architecture,
+   one libm. RFC-072's correction is the worked example and is worth knowing
+   before trusting a local green: the bitwise boundary asserted that §9.2's
+   operations differ from the compiler, which is true on an AVX-512 machine and
+   false on the runner, and it survived the entire life of the item because it
+   was only ever measured in one place.
+
+   So an item is **locally verified**, not done, until the push to `main` has
+   run it — which is now the moment after the merge rather than before. Watch
+   that run; `main` going red is a normal outcome of this arrangement and the
+   response is to fix forward, not to leave it. (The provenance of the term:
+   the account's Actions minutes ran out during RFC-071 and a $0 spending limit
+   turns that into *no run object at all* rather than a failure, so six items
+   were merged on one interpreter before CI returned and re-ran them.)
 
 ---
 
@@ -1295,11 +1306,16 @@ already pointed at.
 outage's cause was settled and was never a repository fault: a free GitHub
 plan, its included Actions minutes spent, and a default $0 spending limit that
 turns exhaustion into *no run object created at all* rather than a failed run.
-It resolved on the monthly reset. RFC-077 halved what a run costs — the
-duplicate `push` + `pull_request` pair is gone and superseded runs are
-cancelled — so the allowance now goes about twice as far. If it lapses again,
-the options are a spending limit or making the repository public, where free
-plans get unlimited Actions minutes.
+It resolved on the monthly reset. RFC-077 then cut what the workflow costs
+twice over: the duplicate `push` + `pull_request` pair went first, and then
+`pull_request` itself, leaving **`push` to `main` as the only trigger**. If it
+lapses again, the options are a spending limit or making the repository public,
+where free plans get unlimited Actions minutes.
+
+**So a pull request carries no checks.** Verify with
+`python scripts/local_matrix.py` before merging — it is now the only check a
+change gets before it lands — then let the push to `main` confirm it, and fix
+forward if it does not.
 
 **What the first green run changes.** Every item through F9 is now verified on
 CI across 3.11, 3.12 and 3.13 — the six that were merged on one interpreter no
@@ -1776,16 +1792,28 @@ handoff note.
 
 **The workflow was buying nothing with half its minutes.** It triggered on
 `push: branches: ["**"]` *and* `pull_request`, so every push to a branch with
-an open PR ran all four jobs twice against one commit. Restricting `push` to
-`main` removes the duplicate and narrows coverage by zero commits, because
-every branch here reaches `main` through a PR. A `concurrency` group keyed by
-ref stops a force-pushed branch leaving superseded matrices running to
-completion — exempting `main`, where cancelling would discard the only
-evidence that a merged commit is green. What was deliberately *not* added is a
-`paths-ignore` for documentation: `test_working_agreement.py`,
-`test_documentation.py` and `test_architecture.py` assert against `CLAUDE.md`
-and `docs/`, so a docs-only diff is not a no-op here and skipping CI on one
-would skip exactly the tests it can break.
+an open PR ran all four jobs twice against one commit — measured, fourteen of
+the thirty most recent runs, 47% of all billing. One run bills seven minutes,
+because GitHub rounds each *job* up to the whole minute.
+
+The trigger is now **`push: branches: ["main"]` and nothing else.** A branch
+can be pushed as often as the work needs and nothing runs until it lands. The
+`concurrency` block went with it: it existed to cancel superseded *branch*
+runs, and on `main` it was already exempt because cancelling there would
+discard the only evidence that a merged commit is green.
+
+**What that trades** is stated rather than discovered: a pull request carries
+no checks, so `main` is where a failure is found. Verify locally, merge,
+confirm, fix forward. Coverage of what *lands* is unchanged — every commit
+reaching `main` still meets the whole matrix — but the failure arrives after
+the merge, and `main` can be red in between. Which is what makes the second
+half of this item load-bearing rather than a convenience.
+
+What was deliberately *not* added is a `paths-ignore` for documentation:
+`test_working_agreement.py`, `test_documentation.py` and
+`test_architecture.py` assert against `CLAUDE.md` and `docs/`, so a docs-only
+diff is not a no-op here and skipping CI on one would skip exactly the tests it
+can break.
 
 **The substitute's design problem is the silence, not the matrix.** Running
 the suite under three interpreters is a shell loop. What makes
